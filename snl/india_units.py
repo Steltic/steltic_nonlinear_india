@@ -1,12 +1,12 @@
 """India SI boundary helpers for steltic_nonlinear_india (NL fork).
 
-HR/CFS India are SI-native N-mm-sec (wave 2 labels). NL keeps kip-in OpenSees/pushover/NLRHA for
-this wave (multi-day SI rewrite deferred) but shares the same conversion factors and
-apply_si_geometry for package stubs / shared briefs with steltic_india.
+HR/CFS India are SI-native N-mm-sec. NL Stages A–B (this wave):
+  - Stage A: report/viewer labels via display_scale (SI display from kip-in engine OK)
+  - Stage B: N-mm HR packages convert once at ingest (_nl_unit_bridge) → analysis stays kip-in
+OpenSees/pushover/NLRHA/DDM analysis remains kip-in until Stages C–D.
 
-Legacy kip+inch converters remain for remaining kip islands (report HTML labels, some
-design_post / AISC twin paths, USA archetypes). Opt in with cfg['units']='kip-in' or
-cfg['force_kip_in']=True.
+Legacy kip+inch converters remain for USA archetypes. Opt in with cfg['units']='kip-in' or
+cfg['force_kip_in']=True. Prefer cfg['units']='N-mm' for SI display / SI package handoff.
 
 load_plan RAG provenance strings stay in whatever units the standard cites (usually SI);
 do not rewrite RAG text at the conversion boundary.
@@ -17,6 +17,8 @@ from __future__ import annotations
 # Active unit system (module default = SI for India repos)
 # ---------------------------------------------------------------------------
 UNIT_SYSTEM = "kip-in"  # NL default; HR/CFS use N-mm
+# OpenSees analysis unit system until Stage D flip (display may still be SI via display_scale)
+ANALYSIS_UNITS = "kip-in"  # "kip-in" | "N-mm"
 
 ENGINE_UNITS = {
     "force": "N",
@@ -49,12 +51,12 @@ LEGACY_KIP_IN_UNITS = {
 
 # Remaining kip islands after wave 1 (honest inventory — not yet SI-native)
 KIP_ISLANDS = [
-    "NL OpenSees / pushover / NLRHA / DDM still kip-in (full SI deferred — see docs/SI_NL_MIGRATION_PLAN.md)",
+    "NL OpenSees / pushover / NLRHA / DDM analysis still kip-in (Stages A–B done; C–D pending — docs/SI_NL_MIGRATION_PLAN.md)",
     "hinge params / ASCE 41 scaffolding in ksi",
     "fibre sections E=29000 ksi / areas in² (Stage C twin pending)",
     "steltic_ddm portal_adapter _seis_V_kip / wind H kip / beamUniform kip/in",
     "record scaling & hazard USGS path imperial-tolerant; India zone path exists",
-    "NL report/viewer kip labels (Stage A display-only pending)",
+    "Many NL report HTML strings still hardcode kip (viewer unit_labels Stage A; full report sweep Stage C/D)",
 ]
 
 # Exact conversion factors
@@ -480,3 +482,260 @@ def conversion_cheatsheet() -> str:
         "Legacy kip-in: units='kip-in' / force_kip_in=True. "
         f"KIP_ISLANDS ({len(KIP_ISLANDS)}): " + "; ".join(KIP_ISLANDS[:3]) + "…"
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Stage A — dual display (engine may still be kip-in)
+# ---------------------------------------------------------------------------
+def analysis_unit_system(cfg: dict | None = None) -> str:
+    """OpenSees/pushover/NLRHA analysis units (kip-in until Stage D)."""
+    if cfg is not None and cfg.get("_nl_analysis_units"):
+        return str(cfg["_nl_analysis_units"])
+    return ANALYSIS_UNITS
+
+
+def display_scale(cfg: dict | None = None) -> dict:
+    """Factors + labels to present *analysis-engine* quantities in engineer-facing units.
+
+    NL Stages A–B: analysis remains kip-in. When SI display is requested
+    (`units='N-mm'` / `si_native` / `is_si`), convert kip→kN, in→m, kip-in→kN·m.
+    After Stage D (ANALYSIS_UNITS='N-mm'), matches HR (÷1000 / ÷1e6).
+    Legacy kip-in display: identity /12 for kip-ft.
+    """
+    analysis = analysis_unit_system(cfg)
+    want_si = is_si(cfg) if cfg is not None else (UNIT_SYSTEM == "N-mm")
+
+    if want_si and analysis == "N-mm":
+        return {
+            "si": True,
+            "force_div": 1000.0,          # N → kN
+            "force_lbl": "kN",
+            "force_raw_lbl": "N",
+            "moment_div": 1.0e6,          # N·mm → kN·m
+            "moment_lbl": "kN·m",
+            "moment_raw_lbl": "N·mm",
+            "length_div": 1000.0,         # mm → m
+            "length_lbl": "m",
+            "length_member_lbl": "mm",
+            "length_member_div": 1.0,
+            "stress_lbl": "MPa",
+            "pressure_lbl": "kN/m²",
+            "system": "N-mm-sec",
+            "E_default": 200000.0,
+            "Fy_default": 250.0,
+            "analysis": "N-mm",
+        }
+    if want_si and analysis == "kip-in":
+        # Stage A–B: kip-in engine numbers → SI display labels
+        return {
+            "si": True,
+            "force_div": KN_TO_KIP,       # kip / KN_TO_KIP = kN
+            "force_lbl": "kN",
+            "force_raw_lbl": "kip",
+            "moment_div": KNM_TO_KIPIN,   # kip-in / KNM_TO_KIPIN = kN·m
+            "moment_lbl": "kN·m",
+            "moment_raw_lbl": "kip-in",
+            "length_div": M_TO_IN,        # in / M_TO_IN = m
+            "length_lbl": "m",
+            "length_member_lbl": "mm",
+            "length_member_div": MM_TO_IN,  # in → mm (÷ MM_TO_IN == ×25.4)
+            "stress_lbl": "MPa",
+            "pressure_lbl": "kN/m²",
+            "system": "N-mm-sec (display; analysis kip-in)",
+            "E_default": 200000.0,
+            "Fy_default": 250.0,
+            "analysis": "kip-in",
+            "bridged_display": True,
+        }
+    return {
+        "si": False,
+        "force_div": 1.0,
+        "force_lbl": "kip",
+        "force_raw_lbl": "kip",
+        "moment_div": 12.0,               # kip-in → kip-ft
+        "moment_lbl": "kip-ft",
+        "moment_raw_lbl": "kip-in",
+        "length_div": 12.0,               # in → ft
+        "length_lbl": "ft",
+        "length_member_lbl": "in",
+        "length_member_div": 1.0,
+        "stress_lbl": "ksi",
+        "pressure_lbl": "psf",
+        "system": "kip-in",
+        "E_default": 29000.0,
+        "Fy_default": 50.0,
+        "analysis": analysis,
+    }
+
+
+def fmt_force(v, cfg: dict | None = None, digits: int = 1) -> str:
+    if v is None:
+        return "—"
+    sc = display_scale(cfg)
+    return f"{float(v) / sc['force_div']:.{digits}f} {sc['force_lbl']}"
+
+
+def fmt_moment(v, cfg: dict | None = None, digits: int = 1) -> str:
+    """Engine moment (kip-in Stages A–B, or N·mm after Stage D) → display string."""
+    if v is None:
+        return "—"
+    sc = display_scale(cfg)
+    return f"{float(v) / sc['moment_div']:.{digits}f} {sc['moment_lbl']}"
+
+
+def fmt_length(v, cfg: dict | None = None, digits: int = 2, member: bool = False) -> str:
+    if v is None:
+        return "—"
+    sc = display_scale(cfg)
+    if member:
+        return f"{float(v) / sc['length_member_div']:.{digits}f} {sc['length_member_lbl']}"
+    return f"{float(v) / sc['length_div']:.{digits}f} {sc['length_lbl']}"
+
+
+def demand_field_names(cfg: dict | None = None) -> dict:
+    """CSV / calc_package field names for the *package* unit system (HR export)."""
+    if is_si(cfg):
+        return {
+            "length": "length_mm",
+            "P_comp": "P_comp_N",
+            "P_tens": "P_tens_N",
+            "Mz": "Mz_Nmm",
+            "My": "My_Nmm",
+            "V": "V_N",
+            "Mx_display": "Mx_kNm",
+            "My_display": "My_kNm",
+            "M_conn": "M_kNm",
+            "P_conn": "P_N",
+            "V_conn": "V_N",
+            "axial": "axial_N",
+            "Fpx": "Fpx_N_by_level",
+            "Fpx_max": "Fpx_max_N",
+            "P_basis": "P_basis_N",
+            "conn_col": "demand_N_or_kNm",
+            "Lb": "Lb_mm",
+        }
+    return {
+        "length": "length_in",
+        "P_comp": "P_comp_kip",
+        "P_tens": "P_tens_kip",
+        "Mz": "Mz_kipin",
+        "My": "My_kipin",
+        "V": "V_kip",
+        "Mx_display": "Mx_kipft",
+        "My_display": "My_kipft",
+        "M_conn": "M_kipft",
+        "P_conn": "P_kip",
+        "V_conn": "V_kip",
+        "axial": "axial_kip",
+        "Fpx": "Fpx_kip_by_level",
+        "Fpx_max": "Fpx_max_kip",
+        "P_basis": "P_basis_kip",
+        "conn_col": "demand_kip_or_kipft",
+        "Lb": "Lb_in",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stage B — package boundary: N-mm HR package → kip-in analysis once
+# ---------------------------------------------------------------------------
+def detect_package_si_signals(
+    schedule_fieldnames: list | None = None,
+    sample_E: float | None = None,
+    max_node_coord: float | None = None,
+    cfg_units: str | None = None,
+) -> dict:
+    """Heuristic signals that an HR package is N-mm (not kip-in)."""
+    names = {str(n).strip() for n in (schedule_fieldnames or [])}
+    si_cols = bool(names & {"length_mm", "P_comp_N", "P_tens_N", "Mx_kNm", "My_kNm", "V_N", "Mz_Nmm"})
+    kip_cols = bool(names & {"length_in", "P_comp_kip", "Mx_kipft", "V_kip"})
+    e_si = sample_E is not None and 1.0e5 < float(sample_E) < 3.0e5
+    e_kip = sample_E is not None and 2.0e4 < float(sample_E) < 3.5e4
+    # mm plan: multi-metre bays → coords often > 5000; inch plans rarely exceed ~3000 for mid-rise
+    coord_si = max_node_coord is not None and float(max_node_coord) >= 5000.0
+    u = (cfg_units or "").lower().strip()
+    cfg_si = u in ("n-mm", "n-mm-s", "n-mm-sec", "si", "metric", "mm", "india_si", "india_metric")
+    return {
+        "si_schedule_cols": si_cols,
+        "kip_schedule_cols": kip_cols,
+        "E_looks_MPa": e_si,
+        "E_looks_ksi": e_kip,
+        "coords_look_mm": coord_si,
+        "cfg_units_si": cfg_si,
+        "likely_si": bool(si_cols or (e_si and not e_kip) or (coord_si and cfg_si) or (cfg_si and not kip_cols and e_si)),
+    }
+
+
+def schedule_row_to_kip_in(row: dict) -> dict:
+    """Normalize one member_schedule row to kip-in field names used by NL analysis."""
+    out = {
+        "member": (row.get("member") or "").strip(),
+        "section": (row.get("section") or "").strip(),
+        "governing_combo": row.get("governing_combo", "") or "",
+    }
+    # length
+    if row.get("length_in") not in (None, ""):
+        out["length_in"] = float(row["length_in"])
+    elif row.get("length_mm") not in (None, ""):
+        out["length_in"] = float(row["length_mm"]) * MM_TO_IN
+    else:
+        out["length_in"] = 0.0
+    # axial
+    if row.get("P_comp_kip") not in (None, ""):
+        out["P_comp_kip"] = float(row["P_comp_kip"])
+    elif row.get("P_comp_N") not in (None, ""):
+        out["P_comp_kip"] = float(row["P_comp_N"]) / KIP_TO_N
+    elif row.get("P_comp_kN") not in (None, ""):
+        out["P_comp_kip"] = float(row["P_comp_kN"]) * KN_TO_KIP
+    else:
+        out["P_comp_kip"] = 0.0
+    # moment display (kip-ft in schedule)
+    if row.get("Mx_kipft") not in (None, ""):
+        out["Mx_kipft"] = float(row["Mx_kipft"])
+    elif row.get("Mx_kNm") not in (None, ""):
+        out["Mx_kipft"] = float(row["Mx_kNm"]) * KNM_TO_KIPFT
+    elif row.get("Mz_Nmm") not in (None, ""):
+        out["Mx_kipft"] = (float(row["Mz_Nmm"]) / 1.0e6) * KNM_TO_KIPFT
+    else:
+        out["Mx_kipft"] = 0.0
+    return out
+
+
+def convert_elastic_section_mm_to_in(A, E, G, J, Iy, Iz) -> tuple:
+    """Convert elasticBeamColumn section props from N-mm (MPa, mm^n) → kip-in (ksi, in^n)."""
+    mm2 = MM_PER_IN ** 2
+    mm4 = MM_PER_IN ** 4
+    return (
+        float(A) / mm2,
+        float(E) * MPA_TO_KSI,
+        float(G) * MPA_TO_KSI,
+        float(J) / mm4,
+        float(Iy) / mm4,
+        float(Iz) / mm4,
+    )
+
+
+def mass_tonne_to_kip_sec2_in(m: float) -> float:
+    """OpenSees mass: tonne (N·s²/mm) → kip·s²/in."""
+    return float(m) * MM_PER_IN / KIP_TO_N
+
+
+def build_nl_unit_bridge(source: str = "N-mm", detail: dict | None = None) -> dict:
+    """Provenance block stored on calc['_nl_unit_bridge'] / cfg['_nl_unit_bridge']."""
+    return {
+        "from": source,
+        "to": "kip-in",
+        "analysis": "kip-in",
+        "stage": "B",
+        "factors": {
+            "mm_per_in": MM_PER_IN,
+            "kip_to_N": KIP_TO_N,
+            "MPa_to_ksi": MPA_TO_KSI,
+            "kNm_to_kipft": KNM_TO_KIPFT,
+        },
+        "detail": detail or {},
+        "note": (
+            "HR N-mm package converted once at NL ingest; OpenSees/pushover/NLRHA stay kip-in "
+            "until Stage D. Display may still use SI labels via display_scale."
+        ),
+    }

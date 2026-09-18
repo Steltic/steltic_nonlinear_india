@@ -1,4 +1,4 @@
-# India NL unit model (SI wave 2 — boundary + migration plan)
+# India NL unit model (SI wave 3 — Stages A–B)
 
 **Date:** 2026-09-18 Asia/Bangkok (UTC+7)
 
@@ -6,12 +6,18 @@
 
 | Layer | Unit system | Notes |
 |-------|-------------|-------|
-| Shared `snl/india_units.py` factors | Dual | `apply_si_geometry` → mm for stubs / HR package handoff |
-| Pushover / NLRHA / DDM OpenSees | **kip-in** | Default `UNIT_SYSTEM = "kip-in"`; `activate_kip_in()` before analysis |
+| Shared `snl/india_units.py` factors | Dual | `apply_si_geometry` → mm for stubs / HR handoff |
+| Stage A display | SI or kip labels | `display_scale(cfg)` — SI display from kip-in engine when `units='N-mm'` |
+| Stage B package ingest | Bridge | N-mm HR → kip-in once; `calc['_nl_unit_bridge']` |
+| Pushover / NLRHA / DDM OpenSees | **kip-in** | `ANALYSIS_UNITS = "kip-in"` until Stage D |
 | HR / CFS India engines | **N-mm-sec** | Native since wave 1 |
 
-**Why deferred:** 130+ NL tests assume kip-in fibre sections, hinge rotations, USGS/ASCE hazard scaffolding, and report strings. Flipping OpenSees mid-wave without a full fibre/hinge/mass rewrite would break the suite.
+## Feature flag
 
-## Wave 2 deliverable
+- `cfg['units']='N-mm'` (or `si_native` / metric) → SI **display** + SI package field names at HR boundary.
+- `cfg['units']='kip-in'` / `force_kip_in=True` → legacy kip path.
+- Analysis remains kip-in for both until Stage D.
 
-See `docs/SI_NL_MIGRATION_PLAN.md` for exact kip islands and a staged flip plan. This wave does **not** change analysis units.
+## Wave 3 deliverable
+
+Stages A–B of `docs/SI_NL_MIGRATION_PLAN.md`. Analysis units unchanged; 138 tests passing.

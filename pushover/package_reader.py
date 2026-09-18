@@ -43,12 +43,13 @@ class DesignBasis:
     Om0: Optional[float] = None
     Ie: Optional[float] = None
     system: Optional[str] = None
-    W_kip: Optional[float] = None            # effective seismic weight (report)
-    V_design_kip: Optional[float] = None     # ELF base shear (report)
+    W_kip: Optional[float] = None            # effective seismic weight (report; kip after bridge)
+    V_design_kip: Optional[float] = None     # ELF base shear (report; kip after bridge)
     T_design_s: Optional[float] = None       # design period used for Cs (report)
     L_floor_psf: Optional[float] = None
     heights_in: Optional[list] = None
     site_class: Optional[str] = None
+    package_units: Optional[str] = None      # "kip-in" | "N-mm" | "N-mm→kip-in"
     sources: dict = field(default_factory=dict)   # field -> where it came from
 
 
@@ -149,15 +150,28 @@ def parse_model_script(path: Path) -> ElasticModel:
 
 # --------------------------------------------------------------------------- schedule / calc package
 def read_schedule(path: Path) -> dict:
+    """Read member_schedule.csv; normalize SI (N-mm) columns to kip-in analysis fields.
+
+    Accepts USA kip columns (length_in, P_comp_kip, Mx_kipft) and India HR SI columns
+    (length_mm, P_comp_N / P_comp_kN, Mx_kNm, …). Always returns kip-in keys for the NL engine.
+    """
+    try:
+        from snl.india_units import schedule_row_to_kip_in
+    except Exception:  # pragma: no cover
+        schedule_row_to_kip_in = None
     out = {}
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             try:
-                out[int(row["ele_tag"])] = {"member": row["member"].strip(), "section": row["section"].strip(),
-                                            "length_in": float(row.get("length_in") or 0),
-                                            "P_comp_kip": float(row.get("P_comp_kip") or 0),
-                                            "Mx_kipft": float(row.get("Mx_kipft") or 0),
-                                            "governing_combo": row.get("governing_combo", "")}
+                tag = int(row["ele_tag"])
+                if schedule_row_to_kip_in is not None:
+                    out[tag] = schedule_row_to_kip_in(row)
+                else:
+                    out[tag] = {"member": row["member"].strip(), "section": row["section"].strip(),
+                                "length_in": float(row.get("length_in") or 0),
+                                "P_comp_kip": float(row.get("P_comp_kip") or 0),
+                                "Mx_kipft": float(row.get("Mx_kipft") or 0),
+                                "governing_combo": row.get("governing_combo", "")}
             except Exception:
                 continue
     return out
@@ -192,6 +206,9 @@ def _basis_from_cfg(cfg_py: Path, b: DesignBasis):
             b.heights_in = [float(v) for v in ast.literal_eval(mo.group(1))]; b.sources["heights_in"] = "cfg.py"
         except Exception:
             pass
+    mo = re.search(r"['\"]?units['\"]?\s*[:=]\s*['\"]([^'\"]+)['\"]", src)
+    if mo:
+        b.package_units = mo.group(1); b.sources["package_units"] = "cfg.py"
 
 
 def _basis_from_report(report_html: Path, b: DesignBasis):
@@ -213,8 +230,29 @@ def _basis_from_report(report_html: Path, b: DesignBasis):
         for k, i in (("R", 1), ("Cd", 2), ("Om0", 3), ("Ie", 4)):
             if getattr(b, k) is None:
                 setattr(b, k, float(mo.group(i))); b.sources[k] = "report.html"
-    grab("W_kip", r"Seismic weight W\s*=\s*" + _NUM)
-    grab("V_design_kip", r"Base shear ΣF\s*=\s*" + _NUM)
+    # Prefer unit-tagged force lines (kN first for India SI reports, then kip / bare)
+    if b.W_kip is None:
+        mo = re.search(r"Seismic weight W\s*=\s*" + _NUM + r"\s*kN", txt)
+        if mo:
+            try:
+                from snl.india_units import KN_TO_KIP
+                b.W_kip = float(mo.group(1)) * KN_TO_KIP
+                b.sources["W_kip"] = "report.html (kN→kip)"
+            except Exception:
+                pass
+    if b.W_kip is None:
+        grab("W_kip", r"Seismic weight W\s*=\s*" + _NUM + r"(?:\s*kip)?")
+    if b.V_design_kip is None:
+        mo = re.search(r"Base shear[^0-9]*" + _NUM + r"\s*kN", txt)
+        if mo:
+            try:
+                from snl.india_units import KN_TO_KIP
+                b.V_design_kip = float(mo.group(1)) * KN_TO_KIP
+                b.sources["V_design_kip"] = "report.html (kN→kip)"
+            except Exception:
+                pass
+    if b.V_design_kip is None:
+        grab("V_design_kip", r"Base shear ΣF\s*=\s*" + _NUM + r"(?:\s*kip)?")
     grab("T_design_s", r"design period T\s*=\s*min\([^)]*\)\s*=\s*" + _NUM)
 
 
@@ -248,8 +286,90 @@ def load(path: str | os.PathLike) -> Package:
     calc = json.load(open(files["calc"])) if files["calc"].exists() else {}
     basis = read_basis(root, calc)
     name = calc.get("building") or root.name
-    return Package(root=root, name=name, model=model, schedule=schedule, calc=calc, basis=basis,
-                   files={k: str(v) for k, v in files.items() if v.exists()})
+    pkg = Package(root=root, name=name, model=model, schedule=schedule, calc=calc, basis=basis,
+                  files={k: str(v) for k, v in files.items() if v.exists()})
+    apply_nl_unit_bridge(pkg)  # Stage B: N-mm HR → kip-in analysis (no-op if already kip-in)
+    return pkg
+
+
+def _schedule_csv_fieldnames(path: Path) -> list:
+    if not path.exists():
+        return []
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f).fieldnames or [])
+
+
+def apply_nl_unit_bridge(pkg: "Package") -> "Package":
+    """Stage B: if package is N-mm, convert model/basis once to kip-in; set calc['_nl_unit_bridge'].
+
+    Schedule rows are already normalized to kip-in by read_schedule. Idempotent when
+    bridge already recorded or package is kip-in.
+    """
+    if not isinstance(pkg.calc, dict):
+        pkg.calc = {}
+    if pkg.calc.get("_nl_unit_bridge"):
+        return pkg
+    try:
+        from snl import india_units as U
+    except Exception:
+        return pkg
+
+    sched_path = Path(pkg.files["schedule"]) if pkg.files.get("schedule") else (pkg.root / "design" / "member_schedule.csv")
+    fieldnames = _schedule_csv_fieldnames(sched_path)
+    sample_E = next((e.get("E") for e in pkg.model.elements if e.get("E") is not None), None)
+    max_c = 0.0
+    for xyz in pkg.model.nodes.values():
+        max_c = max(max_c, max(abs(float(v)) for v in xyz))
+    signals = U.detect_package_si_signals(
+        schedule_fieldnames=fieldnames,
+        sample_E=sample_E,
+        max_node_coord=max_c,
+        cfg_units=pkg.basis.package_units,
+    )
+    calc_units = str(pkg.calc.get("units") or "").lower()
+    if calc_units in ("n-mm", "n-mm-sec", "si", "metric"):
+        signals = dict(signals, likely_si=True, cfg_units_si=True)
+
+    if not signals.get("likely_si"):
+        pkg.basis.package_units = pkg.basis.package_units or "kip-in"
+        return pkg
+
+    # Convert model geometry + section props mm/MPa → in/ksi
+    n_nodes = 0
+    for tag, xyz in list(pkg.model.nodes.items()):
+        pkg.model.nodes[tag] = tuple(float(v) * U.MM_TO_IN for v in xyz)
+        n_nodes += 1
+    n_mass = 0
+    for tag, mvec in list(pkg.model.masses.items()):
+        pkg.model.masses[tag] = [
+            U.mass_tonne_to_kip_sec2_in(v) if i < 3 else float(v)
+            for i, v in enumerate(mvec)
+        ]
+        n_mass += 1
+    n_ele = 0
+    for e in pkg.model.elements:
+        if e.get("A") is not None and e.get("E") is not None:
+            A, E, G, J, Iy, Iz = U.convert_elastic_section_mm_to_in(
+                e["A"], e["E"], e.get("G", e["E"] / 2.6), e.get("J", 0.0),
+                e.get("Iy", 0.0), e.get("Iz", 0.0),
+            )
+            e["A"], e["E"], e["G"], e["J"], e["Iy"], e["Iz"] = A, E, G, J, Iy, Iz
+            n_ele += 1
+
+    if pkg.basis.heights_in:
+        h0 = pkg.basis.heights_in[0]
+        if h0 is not None and float(h0) >= 500:  # mm storeys
+            pkg.basis.heights_in = [float(h) * U.MM_TO_IN for h in pkg.basis.heights_in]
+            pkg.basis.sources["heights_in"] = (
+                (pkg.basis.sources.get("heights_in") or "cfg") + " (mm→in bridge)"
+            )
+
+    detail = dict(signals, n_nodes=n_nodes, n_mass_nodes=n_mass, n_elements=n_ele)
+    bridge = U.build_nl_unit_bridge(source="N-mm", detail=detail)
+    pkg.calc["_nl_unit_bridge"] = bridge
+    pkg.basis.package_units = "N-mm→kip-in"
+    pkg.basis.sources["unit_bridge"] = "apply_nl_unit_bridge Stage B"
+    return pkg
 
 
 def summary(p: Package) -> str:
@@ -259,9 +379,11 @@ def summary(p: Package) -> str:
         k = p.schedule.get(e["tag"], {}).get("member", e.get("etype", "?"))
         kinds[k] = kinds.get(k, 0) + 1
     b = p.basis
-    return ("package %s @ %s\n  nodes %d, elements %d %s, diaphragms %d, fixed nodes %d, mass nodes %d\n"
+    bridge = (p.calc or {}).get("_nl_unit_bridge")
+    bridge_s = (" bridged %s→%s" % (bridge.get("from"), bridge.get("to"))) if bridge else ""
+    return ("package %s @ %s%s\n  nodes %d, elements %d %s, diaphragms %d, fixed nodes %d, mass nodes %d\n"
             "  basis: SDS=%s SD1=%s R=%s Cd=%s Om0=%s Ie=%s system=%s W=%s kip V=%s kip T=%s s\n  sources: %s"
-            % (p.name, p.root, len(m.nodes), len(m.elements), kinds, len(m.diaphragms), len(m.fixes),
+            % (p.name, p.root, bridge_s, len(m.nodes), len(m.elements), kinds, len(m.diaphragms), len(m.fixes),
                len(m.masses), b.SDS, b.SD1, b.R, b.Cd, b.Om0, b.Ie, b.system, b.W_kip, b.V_design_kip,
                b.T_design_s, b.sources))
 

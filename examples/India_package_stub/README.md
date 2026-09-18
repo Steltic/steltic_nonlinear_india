@@ -43,4 +43,4 @@ python -m nlrha scale <real_steltic_india_package> --target is1893
 ## Units
 
 Metric briefs: `from snl.india_units import apply_metric_geometry` at the cfg boundary.
-Engine internals remain kip+inch (full N-mm rewrite deferred).
+Stages A–B: SI display via `display_scale`; N-mm HR packages convert once at `package_reader.apply_nl_unit_bridge` → analysis stays kip-in until Stage D.
