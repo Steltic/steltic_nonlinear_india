@@ -1,9 +1,11 @@
 """India SI boundary helpers for steltic_nonlinear_india (NL fork).
 
-HR/CFS India are SI-native N-mm-sec. NL Stages A–B (this wave):
-  - Stage A: report/viewer labels via display_scale (SI display from kip-in engine OK)
-  - Stage B: N-mm HR packages convert once at ingest (_nl_unit_bridge) → analysis stays kip-in
-OpenSees/pushover/NLRHA/DDM analysis remains kip-in until Stages C–D.
+HR/CFS India are SI-native N-mm-sec. NL Stages A–D (wave 4):
+  - Stage A: report/viewer labels via display_scale
+  - Stage B: N-mm HR packages convert once at ingest → kip-in analysis (default)
+  - Stage C: fibre E/areas SI twin when analysis units='N-mm'
+  - Stage D (partial): ANALYSIS_UNITS may be N-mm for India jobs; portal + NLRHA g=9810 path
+Default ANALYSIS_UNITS remains kip-in so USA archetypes / ~138 tests stay green.
 
 Legacy kip+inch converters remain for USA archetypes. Opt in with cfg['units']='kip-in' or
 cfg['force_kip_in']=True. Prefer cfg['units']='N-mm' for SI display / SI package handoff.
@@ -17,7 +19,7 @@ from __future__ import annotations
 # Active unit system (module default = SI for India repos)
 # ---------------------------------------------------------------------------
 UNIT_SYSTEM = "kip-in"  # NL default; HR/CFS use N-mm
-# OpenSees analysis unit system until Stage D flip (display may still be SI via display_scale)
+# OpenSees analysis unit system. Default kip-in; set to N-mm for India native jobs (Stage D).
 ANALYSIS_UNITS = "kip-in"  # "kip-in" | "N-mm"
 
 ENGINE_UNITS = {
@@ -32,9 +34,9 @@ ENGINE_UNITS = {
     "E_steel_MPa": 200000.0,
     "G_steel_MPa": 76923.07692307692,  # E/2.6
     "note": (
-        "NL wave: boundary helpers only. HR/CFS engines are N-mm-sec; NL OpenSees remains "
-        "kip-in until NL SI rewrite. apply_si_geometry normalizes briefs to mm for stubs; "
-        "call activate_kip_in() before pushover/NLRHA until NL engine flips."
+        "NL wave 4: Stages A–C + partial D. Default ANALYSIS_UNITS=kip-in; "
+        "set_analysis_units('N-mm') / native_nmm for India OpenSees. "
+        "Fibre twin E=2e5 MPa; NLRHA g_accel; portal dual-path."
     ),
 }
 
@@ -51,12 +53,12 @@ LEGACY_KIP_IN_UNITS = {
 
 # Remaining kip islands after wave 1 (honest inventory — not yet SI-native)
 KIP_ISLANDS = [
-    "NL OpenSees / pushover / NLRHA / DDM analysis still kip-in (Stages A–B done; C–D pending — docs/SI_NL_MIGRATION_PLAN.md)",
-    "hinge params / ASCE 41 scaffolding in ksi",
-    "fibre sections E=29000 ksi / areas in² (Stage C twin pending)",
-    "steltic_ddm portal_adapter _seis_V_kip / wind H kip / beamUniform kip/in",
-    "record scaling & hazard USGS path imperial-tolerant; India zone path exists",
-    "Many NL report HTML strings still hardcode kip (viewer unit_labels Stage A; full report sweep Stage C/D)",
+    "ANALYSIS_UNITS default still kip-in (set N-mm per India job via set_analysis_units / cfg)",
+    "hinge params / ASCE 41 / ModIMK scaffolding still ksi (not Stage C fibre)",
+    "NLRHA ch16_gravity still kip/psf idealisation (g=9810 Path scaling is Stage D)",
+    "steltic_ddm grid beam_udl still kip/in (portal_beam_udl has N/mm twin)",
+    "Many NL report HTML strings still hardcode kip",
+    "IMK / acceptance E_KSI hardcodes — fibre twin only for Stage C",
 ]
 
 # Exact conversion factors
@@ -489,7 +491,7 @@ def conversion_cheatsheet() -> str:
 # Stage A — dual display (engine may still be kip-in)
 # ---------------------------------------------------------------------------
 def analysis_unit_system(cfg: dict | None = None) -> str:
-    """OpenSees/pushover/NLRHA analysis units (kip-in until Stage D)."""
+    """OpenSees/pushover/NLRHA analysis units (default kip-in; N-mm when activated)."""
     if cfg is not None and cfg.get("_nl_analysis_units"):
         return str(cfg["_nl_analysis_units"])
     return ANALYSIS_UNITS
@@ -739,3 +741,88 @@ def build_nl_unit_bridge(source: str = "N-mm", detail: dict | None = None) -> di
             "until Stage D. Display may still use SI labels via display_scale."
         ),
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Stage C–D — analysis unit activation + steel / g helpers
+# ---------------------------------------------------------------------------
+def set_analysis_units(units: str) -> str:
+    """Set module ANALYSIS_UNITS to 'kip-in' or 'N-mm'. Returns the active value."""
+    global ANALYSIS_UNITS
+    u = str(units or "").strip()
+    if u.lower() in ("n-mm", "n-mm-s", "n-mm-sec", "si", "metric", "mm"):
+        ANALYSIS_UNITS = "N-mm"
+        activate_si()
+    elif u.lower() in ("kip-in", "kip+inch", "kip_in", "imperial", "usa", "in"):
+        ANALYSIS_UNITS = "kip-in"
+        activate_kip_in()
+    else:
+        raise ValueError(f"unsupported analysis units {units!r}")
+    return ANALYSIS_UNITS
+
+
+def wants_native_nmm_analysis(cfg: dict | None = None) -> bool:
+    """True when OpenSees analysis should stay N-mm (skip Stage B kip bridge)."""
+    if cfg is not None:
+        if cfg.get("force_kip_in") or wants_legacy_kip_in(cfg):
+            return False
+        explicit = cfg.get("_nl_analysis_units") or cfg.get("analysis_units")
+        if explicit is not None:
+            return str(explicit).lower().startswith("n-mm") or str(explicit).lower() in ("si", "metric")
+        if cfg.get("analysis_si") or cfg.get("si_native_analysis"):
+            return True
+        # India job with units N-mm and no force_kip_in → prefer native when flagged
+        if cfg.get("native_nmm") or cfg.get("si_analysis"):
+            return True
+    return ANALYSIS_UNITS == "N-mm"
+
+
+def activate_analysis_for_cfg(cfg: dict) -> str:
+    """Align module ANALYSIS_UNITS with cfg; return active analysis system."""
+    if wants_native_nmm_analysis(cfg) or (
+        is_si(cfg) and (cfg.get("analysis_si") or cfg.get("native_nmm")
+                        or str(cfg.get("_nl_analysis_units") or "").lower().startswith("n-mm"))
+    ):
+        cfg["_nl_analysis_units"] = "N-mm"
+        return set_analysis_units("N-mm")
+    if wants_legacy_kip_in(cfg) or not is_si(cfg):
+        cfg.setdefault("_nl_analysis_units", "kip-in")
+        return set_analysis_units("kip-in")
+    # SI display only (Stages A–B): keep analysis kip-in
+    cfg.setdefault("_nl_analysis_units", "kip-in")
+    return analysis_unit_system(cfg)
+
+
+def g_accel(cfg: dict | None = None) -> float:
+    """Gravitational acceleration in analysis length/time² units (in/s² or mm/s²)."""
+    if analysis_unit_system(cfg) == "N-mm":
+        return float(ENGINE_UNITS["g_mm_s2"])
+    return float(LEGACY_KIP_IN_UNITS["g_in_s2"])
+
+
+def steel_E(cfg: dict | None = None) -> float:
+    """Young's modulus in analysis stress units (ksi or MPa)."""
+    if analysis_unit_system(cfg) == "N-mm":
+        return float(ENGINE_UNITS["E_steel_MPa"])
+    return float(LEGACY_KIP_IN_UNITS["E_steel_ksi"])
+
+
+def steel_G(cfg: dict | None = None) -> float:
+    if analysis_unit_system(cfg) == "N-mm":
+        return float(ENGINE_UNITS["G_steel_MPa"])
+    return float(LEGACY_KIP_IN_UNITS["G_steel_ksi"])
+
+
+def steel_Fy_default(cfg: dict | None = None) -> float:
+    """Default yield stress (50 ksi or 250 MPa / Fe410-ish)."""
+    if analysis_unit_system(cfg) == "N-mm":
+        return 250.0
+    return 50.0
+
+
+def fibre_length_scale(cfg: dict | None = None) -> float:
+    """Multiply inch CSV geometry → analysis length (1.0 kip-in; 25.4 for N-mm)."""
+    if analysis_unit_system(cfg) == "N-mm":
+        return MM_PER_IN
+    return 1.0

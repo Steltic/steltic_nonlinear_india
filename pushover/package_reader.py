@@ -334,6 +334,22 @@ def apply_nl_unit_bridge(pkg: "Package") -> "Package":
         pkg.basis.package_units = pkg.basis.package_units or "kip-in"
         return pkg
 
+    # Stage D: keep native N-mm for analysis when cfg requests it (skip kip bridge)
+    cfg_probe = dict(pkg.calc or {})
+    if pkg.basis.package_units:
+        cfg_probe.setdefault("units", pkg.basis.package_units)
+    if U.wants_native_nmm_analysis(cfg_probe):
+        U.set_analysis_units("N-mm")
+        pkg.calc["_nl_analysis_units"] = "N-mm"
+        pkg.calc["_nl_unit_bridge"] = {
+            "from": "N-mm", "to": "N-mm", "analysis": "N-mm", "stage": "D",
+            "note": "Native N-mm analysis — Stage B kip bridge skipped",
+            "detail": dict(signals),
+        }
+        pkg.basis.package_units = "N-mm"
+        pkg.basis.sources["unit_bridge"] = "native N-mm (Stage D)"
+        return pkg
+
     # Convert model geometry + section props mm/MPa → in/ksi
     n_nodes = 0
     for tag, xyz in list(pkg.model.nodes.items()):

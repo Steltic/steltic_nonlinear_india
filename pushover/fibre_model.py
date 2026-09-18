@@ -49,15 +49,38 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
     ops.uniaxialMaterial("Elastic", 1, RIGID_T)
     ops.uniaxialMaterial("Elastic", 2, RIGID_R)
     mt = (prm.get("material") or {})
-    Fy = float(mt.get("Fy_ksi", 50.0)) * float(mt.get("Ry_expected", 1.0))
-    builder = FiberSectionBuilder(ops, Fy=Fy, hardening=0.01, residual=residual, elastic=False, mat_tag0=1000)
+    # Stage C: analysis units from package calc / prm → SI fibre E/Fy/areas when N-mm
+    cfg_u = {}
+    if isinstance(getattr(pkg, "calc", None), dict):
+        cfg_u.update(pkg.calc)
+    if isinstance(prm, dict):
+        cfg_u.update({k: prm[k] for k in ("units", "_nl_analysis_units", "analysis_units",
+                                          "analysis_si", "native_nmm", "force_kip_in") if k in prm})
+    try:
+        from snl import india_units as U
+        anal = U.analysis_unit_system(cfg_u) if cfg_u else U.ANALYSIS_UNITS
+        if anal == "N-mm" or U.wants_native_nmm_analysis(cfg_u):
+            units = "N-mm"
+            Fy = float(mt.get("Fy_MPa", mt.get("Fy", U.steel_Fy_default(cfg_u))))
+            Fy *= float(mt.get("Ry_expected", 1.0))
+            E = float(mt.get("E_MPa", U.steel_E({"_nl_analysis_units": "N-mm"})))
+        else:
+            units = "kip-in"
+            Fy = float(mt.get("Fy_ksi", 50.0)) * float(mt.get("Ry_expected", 1.0))
+            E = None
+    except Exception:
+        units = "kip-in"
+        Fy = float(mt.get("Fy_ksi", 50.0)) * float(mt.get("Ry_expected", 1.0))
+        E = None
+    builder = FiberSectionBuilder(ops, Fy=Fy, E=E, hardening=0.01, residual=residual,
+                                  elastic=False, mat_tag0=1000, units=units)
     # denser fibre grid than default GMNIA (8,2)/(12,1) — probe "finer mesh for plasticity"
     builder_nf = dict(nf_flange=nf_flange, nf_web=nf_web)
     hinges = {}
     mat = MAT_BASE
     stats = dict(col=0, beam=0, brace=0, brace_nonlinear=0, force_controlled=0, released_ends=0,
                  panel_zones=0, panel_zone_mode="rigid", plasticity="fibre", member_nseg=nseg,
-                 fibre_eles=[], fibre_secs=0)
+                 fibre_eles=[], fibre_secs=0, fibre_units=units)
     sec_cache = {}  # (section, kind) -> secTag
     nseg = max(1, int(nseg))
     pin_count = 0

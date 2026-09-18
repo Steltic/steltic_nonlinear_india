@@ -42,7 +42,18 @@ class GMNIAModel:
         self.nm, self.cfg = nm, cfg
         self.nsub_col, self.nsub_beam, self.nsub_brace = nsub
         self.residual = residual
-        self.Fy = Fy if Fy is not None else float(cfg.get("Fy", 50.0))
+        # Stage C/D: Fy default 250 MPa when analysis N-mm, else 50 ksi
+        try:
+            from snl import india_units as U
+            if U.wants_native_nmm_analysis(cfg) or U.analysis_unit_system(cfg) == "N-mm":
+                self._fibre_units = "N-mm"
+                self.Fy = Fy if Fy is not None else float(cfg.get("Fy", cfg.get("Fy_MPa", 250.0)))
+            else:
+                self._fibre_units = "kip-in"
+                self.Fy = Fy if Fy is not None else float(cfg.get("Fy", 50.0))
+        except Exception:
+            self._fibre_units = "kip-in"
+            self.Fy = Fy if Fy is not None else float(cfg.get("Fy", 50.0))
         self.hardening = hardening
         self.elastic = elastic
         self.fast = fast
@@ -112,7 +123,8 @@ class GMNIAModel:
         ops.uniaxialMaterial("Elastic", 1, K_TRANS)
         ops.uniaxialMaterial("Elastic", 2, K_ROT)
         self.builder = FiberSectionBuilder(ops, Fy=self.Fy, hardening=self.hardening,
-                                           residual=self.residual, elastic=self.elastic, mat_tag0=1000)
+                                           residual=self.residual, elastic=self.elastic, mat_tag0=1000,
+                                           units=getattr(self, "_fibre_units", "kip-in"))
         for m in nm.members:
             self._add_member(m)
         for master, slaves in nm.diaphragms.items():

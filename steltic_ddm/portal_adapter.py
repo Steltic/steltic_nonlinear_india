@@ -95,7 +95,16 @@ def _wall_col_nodes(nm, side="L"):
     return [t for t, v in nm.nodes.items() if abs(v[0] - x) < 1.0 and t not in bases]
 
 
+def _analysis_is_nmm(cfg) -> bool:
+    try:
+        from snl import india_units as U
+        return U.analysis_unit_system(cfg) == "N-mm" or U.wants_native_nmm_analysis(cfg)
+    except Exception:
+        return False
+
+
 def _seis_V_kip(cfg):
+    """Legacy kip base shear for one frame (ASCE-style SDS/R/Ie × W_frame_kip)."""
     s = cfg.get("seis") or {}
     Wf = s.get("W_frame_kip")
     if not Wf:
@@ -103,19 +112,71 @@ def _seis_V_kip(cfg):
     return float(s["SDS"]) / (float(s.get("R", 3.0)) / float(s.get("Ie", 1.0))) * float(Wf)
 
 
+def _seis_V(cfg):
+    """Portal seismic base shear in analysis force units (kip or N).
+
+    Stage D: when analysis is N-mm, accepts W_frame_N / W_frame_kN, or converts W_frame_kip.
+    Sa/g factor still dimensionless (SDS or Ah).
+    """
+    s = cfg.get("seis") or {}
+    sa = float(s.get("SDS") or s.get("Ah") or 0.0)
+    R = float(s.get("R", 3.0)); Ie = float(s.get("Ie", s.get("I", 1.0)))
+    if not sa or not R:
+        return 0.0
+    coeff = sa / (R / Ie) if R else 0.0
+    if _analysis_is_nmm(cfg):
+        if s.get("W_frame_N") is not None:
+            W = float(s["W_frame_N"])
+        elif s.get("W_frame_kN") is not None:
+            W = float(s["W_frame_kN"]) * 1000.0
+        elif s.get("W_frame_kip") is not None:
+            from snl.india_units import KIP_TO_N
+            W = float(s["W_frame_kip"]) * KIP_TO_N
+        else:
+            return 0.0
+        return coeff * W
+    return _seis_V_kip(cfg)
+
+
 def _wind_H_kip(cfg, case="W"):
-    """Net transverse horizontal force (kip) on ONE frame spacing from wall pressures."""
+    """Net transverse horizontal force (kip) on ONE frame spacing from wall pressures (psf × ft²)."""
     pr = _wind_pressures(cfg)
     if case == "W2" and pr.get("case_neg"):
         pr = dict(pr); pr.update(pr["case_neg"])
     eave = float(cfg["eave_ft"])
     sp = float(cfg["spacing_ft"])
-    # wall_wind positive (push +x), wall_lee typically negative (suction on lee = +x push)
     ww = float(pr["wall_wind"]); wl = float(pr["wall_lee"])
-    # Force on windward wall (+x) + force from lee (pressure sign: negative suction pulls lee outward = -x on lee wall
-    # which is also +x on the building). Net H ≈ (ww - wl) * area for ww>0, wl<0.
     H = (ww - wl) * eave * sp / 1000.0
     return H, pr
+
+
+def _wind_H(cfg, case="W"):
+    """Net transverse H in analysis force units (kip or N). Stage D SI uses eave_mm/spacing_mm + kN/m²."""
+    if not _analysis_is_nmm(cfg):
+        return _wind_H_kip(cfg, case=case)
+    # SI: pressures kN/m², lengths mm → N
+    pr = _wind_pressures(cfg)
+    if case == "W2" and pr.get("case_neg"):
+        pr = dict(pr); pr.update(pr["case_neg"])
+    if cfg.get("eave_mm") is not None:
+        eave_m = float(cfg["eave_mm"]) / 1000.0
+    elif cfg.get("eave_m") is not None:
+        eave_m = float(cfg["eave_m"])
+    else:
+        eave_m = float(cfg.get("eave_ft", 0.0)) * 0.3048
+    if cfg.get("spacing_mm") is not None:
+        sp_m = float(cfg["spacing_mm"]) / 1000.0
+    elif cfg.get("spacing_m") is not None:
+        sp_m = float(cfg["spacing_m"])
+    else:
+        sp_m = float(cfg.get("spacing_ft", 0.0)) * 0.3048
+    ww = float(pr["wall_wind"]); wl = float(pr["wall_lee"])
+    # If pressures look like psf (>> 5 typical kN/m²), convert
+    if max(abs(ww), abs(wl)) > 20:
+        from snl.india_units import PSF_TO_KN_PER_M2
+        ww *= PSF_TO_KN_PER_M2; wl *= PSF_TO_KN_PER_M2
+    H_kN = (ww - wl) * eave_m * sp_m
+    return H_kN * 1000.0, pr  # N
 
 
 def portal_combos(cfg, nm=None):
@@ -153,7 +214,7 @@ def portal_combos(cfg, nm=None):
         wfac = factors.get("W") or factors.get("W2")
         if wfac:
             case = "W2" if "W2" in factors else "W"
-            H, _pr = _wind_H_kip(cfg, case=case)
+            H, _pr = _wind_H(cfg, case=case)
             H *= float(wfac)
             # split across eave nodes (both frames, both walls) → net +X
             nodes = eaves or []
@@ -164,7 +225,7 @@ def portal_combos(cfg, nm=None):
             else:
                 lat[1] = (H, 0.0, 0.0)  # placeholder; apply_lateral will no-op if missing
         if "E" in factors:
-            V = _seis_V_kip(cfg) * float(factors["E"])
+            V = _seis_V(cfg) * float(factors["E"])
             # one-bay model ≈ one frame spacing of lateral; W_frame is already per spacing
             nodes = eaves or []
             if nodes:
@@ -196,18 +257,15 @@ def portal_prune(cases, policy="default"):
 
 
 def portal_beam_udl(cfg, nm, member, seg_index, nseg, fD, fL, fLr):
-    """kip/in downward on primary rafter sub-elements (global -Z via local beamUniform)."""
-    # only primary X rafters
+    """Distributed gravity on primary rafter sub-elements (OpenSees beamUniform local).
+
+    Legacy: kip/in. Stage D N-mm: N/mm (pressures kN/m², spacing m).
+    """
     sec = str(member.section).upper()
     if member.kind != "beam" or member.dirn != "X":
         return 0.0
     if sec.startswith("800Z") or sec.startswith("600Z") or "Z250" in sec:
         return 0.0
-    sp = float(cfg.get("spacing_ft", 15.0))
-    D = float(cfg.get("D_roof", 6.5)) + float(cfg.get("collateral", 0.0))
-    # roof live/snow: use projection psf stored on cfg
-    roof_psf = float(cfg.get("_portal_roof_psf") or cfg.get("snow") or cfg.get("Lr") or 20.0)
-    # unbalanced: crude half-span factor via member mid x
     sc = cfg.get("_portal_snow_case")
     unb = 1.0
     if sc in ("S_unb_L", "S_unb_R") and fLr:
@@ -221,11 +279,29 @@ def portal_beam_udl(cfg, nm, member, seg_index, nseg, fD, fL, fLr):
             unb = fw if left else fl
         else:
             unb = fl if left else fw
+
+    if _analysis_is_nmm(cfg):
+        # pressures in kN/m²; spacing in m
+        if cfg.get("spacing_mm") is not None:
+            sp_m = float(cfg["spacing_mm"]) / 1000.0
+        elif cfg.get("spacing_m") is not None:
+            sp_m = float(cfg["spacing_m"])
+        else:
+            sp_m = float(cfg.get("spacing_ft", 15.0)) * 0.3048
+        D = float(cfg.get("D_roof", 0.3)) + float(cfg.get("collateral", 0.0))  # kN/m²
+        roof_p = float(cfg.get("_portal_roof_psf") or cfg.get("snow") or cfg.get("Lr") or 1.0)
+        # if roof_p looks like psf, convert
+        if roof_p > 20:
+            from snl.india_units import PSF_TO_KN_PER_M2
+            roof_p *= PSF_TO_KN_PER_M2
+        p = fD * D + fLr * roof_p * unb  # kN/m²
+        w_kNpm = p * (sp_m / 2.0)  # kN/m on one frame rafter
+        return w_kNpm  # N/mm  (== kN/m numerically)
+
+    sp = float(cfg.get("spacing_ft", 15.0))
+    D = float(cfg.get("D_roof", 6.5)) + float(cfg.get("collateral", 0.0))
+    roof_psf = float(cfg.get("_portal_roof_psf") or cfg.get("snow") or cfg.get("Lr") or 20.0)
     p = fD * D + fLr * roof_psf * unb
-    # tributary: full spacing on the pair of frames is already one bay; each frame's rafter
-    # gets half the bay? Export is ONE bay (2 frames) with purlins spanning the bay — roof
-    # load should sit on both frames' rafters sharing the spacing. Apply full spacing to
-    # each rafter line would double-count. Use spacing/2 per frame rafter.
     w_plf = p * (sp / 2.0) / 1000.0  # kip/ft
     return w_plf / 12.0  # kip/in
 

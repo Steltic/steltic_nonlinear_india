@@ -1,5 +1,8 @@
 """
-sections_fiber.py -- fibre-section builders for the GMNIA model (kip, inch, ksi).
+sections_fiber.py -- fibre-section builders for the GMNIA model.
+
+Default: kip, inch, ksi (USA / legacy). Stage C twin: units='N-mm' → MPa, mm, mm²
+(E=2e5 MPa) with IS 808 shapes preferred when label matches; AISC inch dims ×25.4.
 
 Sections are built from the SAME AISC shape database Steltic uses (aisc_shapes.csv: d, tw, bf, tf
 for W-shapes; A, Ix for HSS with the outside dimensions parsed from the label). Fillets / k-area
@@ -25,8 +28,12 @@ import csv, math, os, re
 
 E_KSI = 29000.0
 G_KSI = 11200.0
+E_MPA = 200000.0
+G_MPA = E_MPA / 2.6
+MM_PER_IN = 25.4
 
 _CSV_CACHE = None
+_IS808_CACHE = None
 
 
 def shapes_csv_path():
@@ -61,6 +68,38 @@ def shapes():
     return _CSV_CACHE
 
 
+def is808_csv_path():
+    """Locate is808_shapes.csv (bundled under steltic_ddm/data or STELTIC_ENGINE_DIR)."""
+    p = os.environ.get("IS808_CSV")
+    if p and os.path.exists(p):
+        return p
+    eng = os.environ.get("STELTIC_ENGINE_DIR")
+    if eng and os.path.exists(os.path.join(eng, "is808_shapes.csv")):
+        return os.path.join(eng, "is808_shapes.csv")
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "is808_shapes.csv")
+    if os.path.exists(here):
+        return here
+    return None
+
+
+def is808_shapes():
+    global _IS808_CACHE
+    if _IS808_CACHE is None:
+        _IS808_CACHE = {}
+        path = is808_csv_path()
+        if not path:
+            return _IS808_CACHE
+        with open(path, newline="") as f:
+            for r in csv.DictReader(f):
+                lab = (r.get("AISC_Manual_Label") or r.get("Label") or "").upper().replace(" ", "")
+                if lab:
+                    _IS808_CACHE[lab] = r
+                des = (r.get("Designation_IS") or "").upper().replace(" ", "")
+                if des:
+                    _IS808_CACHE.setdefault(des, r)
+    return _IS808_CACHE
+
+
 def _f(v):
     try:
         return float(v)
@@ -68,10 +107,17 @@ def _f(v):
         return None
 
 
-def shape(label):
-    r = shapes().get(str(label).upper().strip())
+def shape(label, prefer_is808=False):
+    key = str(label).upper().strip().replace(" ", "")
+    if prefer_is808:
+        r = is808_shapes().get(key)
+        if r is not None:
+            return r
+    r = shapes().get(key)
     if r is None:
-        raise KeyError("section %r not in aisc_shapes.csv" % label)
+        r = is808_shapes().get(key)
+    if r is None:
+        raise KeyError("section %r not in aisc_shapes.csv / is808_shapes.csv" % label)
     return r
 
 
@@ -120,10 +166,25 @@ def cfs_section_props(label):
 class FiberSectionBuilder:
     """Stateful builder: hands out unique material tags and records what it made."""
 
-    def __init__(self, ops, Fy=50.0, E=E_KSI, hardening=0.002, residual="lehigh", sigma_rc=0.3,
-                 mat_tag0=1000, elastic=False):
+    def __init__(self, ops, Fy=None, E=None, hardening=0.002, residual="lehigh", sigma_rc=0.3,
+                 mat_tag0=1000, elastic=False, units="kip-in", G=None):
+        """units='kip-in' (default) or 'N-mm' (Stage C SI twin: E MPa, dims/areas mm)."""
         self.ops = ops
-        self.Fy, self.E, self.b = Fy, E, hardening
+        u = str(units or "kip-in").strip()
+        self.units = "N-mm" if u.lower() in ("n-mm", "n-mm-s", "n-mm-sec", "si", "metric", "mm") else "kip-in"
+        if self.units == "N-mm":
+            self.E = float(E if E is not None else E_MPA)
+            self.G = float(G if G is not None else G_MPA)
+            self.Fy = float(Fy if Fy is not None else 250.0)
+            self.length_scale = MM_PER_IN  # inch CSV → mm
+            self.prefer_is808 = True
+        else:
+            self.E = float(E if E is not None else E_KSI)
+            self.G = float(G if G is not None else G_KSI)
+            self.Fy = float(Fy if Fy is not None else 50.0)
+            self.length_scale = 1.0
+            self.prefer_is808 = False
+        self.b = hardening
         self.residual = residual
         self.sigma_rc = sigma_rc
         self.next_mat = mat_tag0
@@ -153,12 +214,18 @@ class FiberSectionBuilder:
 
     # ---- W-shape ---------------------------------------------------------------------------
     def w_shape(self, secTag, label, axis="y", nf_flange=(8, 2), nf_web=(12, 1), residual=None):
-        """Fibre W-section. axis="y": depth along local y (Steltic column); "z": depth along local z (beam)."""
-        r = shape(label)
+        """Fibre W/I-section. axis="y": depth along local y (column); "z": depth along local z (beam).
+
+        Stage C: when units='N-mm', inch CSV dims × length_scale (25.4) → mm; E/Fy/G in MPa.
+        Prefers is808_shapes.csv when available for Indian designations (MB/HB/UB/…).
+        """
+        r = shape(label, prefer_is808=self.prefer_is808)
+        sc = self.length_scale
         d, tw, bf, tf = (_f(r["d"]), _f(r["tw"]), _f(r["bf"]), _f(r["tf"]))
         if None in (d, tw, bf, tf):
             raise ValueError("%s has no d/tw/bf/tf in the CSV" % label)
-        J = _f(r["J"]) or 1.0
+        d, tw, bf, tf = d * sc, tw * sc, bf * sc, tf * sc
+        J = (_f(r["J"]) or 1.0) * (sc ** 4)
         hw = d - 2 * tf
         Af, Aw = bf * tf, hw * tw
         res = self.residual if residual is None else residual
@@ -173,7 +240,7 @@ class FiberSectionBuilder:
         else:
             def sig_fl(zfrac): return 0.0
             sig_web = 0.0
-        self.ops.section("Fiber", secTag, "-GJ", G_KSI * J)
+        self.ops.section("Fiber", secTag, "-GJ", self.G * J)
         nb, nt = nf_flange
         dz = bf / nb
         nfib = 0
@@ -200,7 +267,7 @@ class FiberSectionBuilder:
                 else:
                     self.ops.fiber(zc, yc, dy * dzw, m)
                 nfib += 1
-        self.log.append((secTag, label, "W", nfib, "residual=%s axis=%s" % (res, axis)))
+        self.log.append((secTag, label, "W", nfib, "residual=%s axis=%s units=%s" % (res, axis, self.units)))
         return dict(A=2 * Af + Aw, Ix=2 * (bf * tf ** 3 / 12 + Af * ((d - tf) / 2) ** 2) + tw * hw ** 3 / 12,
                     Iy=2 * tf * bf ** 3 / 12 + hw * tw ** 3 / 12, d=d, bf=bf, tf=tf, tw=tw, nfib=nfib)
 
@@ -212,12 +279,15 @@ class FiberSectionBuilder:
         dims = hss_dims(label)
         if dims is None:
             raise ValueError("%s is not a rectangular HSS label" % label)
-        H, B, tn = dims
+        sc = self.length_scale
+        H, B, tn = dims[0] * sc, dims[1] * sc, dims[2] * sc
         t = tn * t_design_factor
-        J = _f(r["J"]) or 1.0
+        J = (_f(r["J"]) or 1.0) * (sc ** 4)
         A_csv = _f(r["A"])
+        if A_csv is not None:
+            A_csv = A_csv * (sc ** 2)
         res = self.residual if residual is None else residual
-        self.ops.section("Fiber", secTag, "-GJ", G_KSI * J)
+        self.ops.section("Fiber", secTag, "-GJ", self.G * J)
         # walls as strips: two flanges (width B, thick t) at +/-(H-t)/2 ; two webs (height H-2t) at +/-(B-t)/2
         A_model = 2 * B * t + 2 * (H - 2 * t) * t
         scale = (A_csv / A_model) if A_csv else 1.0
@@ -287,7 +357,7 @@ class FiberSectionBuilder:
         hw = max(d - 2.0 * t, d * 0.85)
         A_model = n_ply * (hw * t + 2.0 * bf * t + (2.0 * lip * t if lip > 1.5 * t else 0.0))
         scale = A / max(A_model, 1e-9)
-        self.ops.section("Fiber", secTag, "-GJ", max(G_KSI * J, 1.0))
+        self.ops.section("Fiber", secTag, "-GJ", max(self.G * J * (self.length_scale ** 4 if self.units == "N-mm" else 1.0), 1.0))
         nfib = 0
         mat = self._mat(0.0)
         def add_rect(y0, z0, hy, hz, ny=4, nz=2):
@@ -316,10 +386,12 @@ class FiberSectionBuilder:
         return dict(A=A, H=d, B=bf, t=t, nfib=nfib, Ix=Ix, Iy=Iy, J=J)
 
     def build(self, secTag, label, kind, axis=None):
-        lab = str(label).upper()
+        lab = str(label).upper().replace(" ", "")
         if lab.startswith("HSS") and hss_dims(lab):
             return self.hss_rect(secTag, lab, residual=("none" if self.residual == "none" else "cf_hss_membrane"))
-        if lab.startswith(("W", "HP", "M", "S")) and not lab.startswith("MC"):
+        # AISC W/HP/M/S or IS 808 MB/HB/UB/JB/SC/… I-sections
+        _is_i = lab.startswith(("W", "HP", "M", "S", "MB", "HB", "UB", "JB", "SC", "NPB", "WPB", "ISMB", "ISMC"))
+        if _is_i and not lab.startswith("MC"):
             return self.w_shape(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
         props = cfs_section_props(label)
         if props:

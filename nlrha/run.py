@@ -8,7 +8,16 @@ import openseespy.opensees as ops
 from pushover import nonlinear_model as NM
 from . import model as MD
 
-G_IN = 386.4
+G_IN = 386.4  # legacy; Stage D uses snl.india_units.g_accel
+
+
+def _g_accel(pkg=None):
+    try:
+        from snl import india_units as U
+        cfg = pkg.calc if (pkg is not None and isinstance(getattr(pkg, "calc", None), dict)) else None
+        return U.g_accel(cfg)
+    except Exception:
+        return G_IN
 
 
 def _apply_gravity(loads):
@@ -55,8 +64,9 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
     # bidirectional excitation, identical factor on both components (16.2.3.2), components per 16.2.4 orientation
     ax = rec["a1"] if rec["x_comp"] == 1 else rec["a2"]; ay = rec["a2"] if rec["x_comp"] == 1 else rec["a1"]
     dt_rec = rec["dt"]; sf = rec["sf"]
-    ops.timeSeries("Path", 11, "-dt", dt_rec, "-values", *(ax * G_IN * sf).tolist())
-    ops.timeSeries("Path", 12, "-dt", dt_rec, "-values", *(ay * G_IN * sf).tolist())
+    g_acc = _g_accel(pkg)  # 386.4 in/s² or 9810 mm/s²
+    ops.timeSeries("Path", 11, "-dt", dt_rec, "-values", *(ax * g_acc * sf).tolist())
+    ops.timeSeries("Path", 12, "-dt", dt_rec, "-values", *(ay * g_acc * sf).tolist())
     ops.pattern("UniformExcitation", 11, 1, "-accel", 11)
     ops.pattern("UniformExcitation", 12, 2, "-accel", 12)
     ops.wipeAnalysis()
