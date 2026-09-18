@@ -1,6 +1,6 @@
 """India SI boundary helpers for steltic_nonlinear_india (NL fork).
 
-HR/CFS India wave 1 is SI-native N-mm-sec. NL keeps kip-in OpenSees/pushover/NLRHA for
+HR/CFS India are SI-native N-mm-sec (wave 2 labels). NL keeps kip-in OpenSees/pushover/NLRHA for
 this wave (multi-day SI rewrite deferred) but shares the same conversion factors and
 apply_si_geometry for package stubs / shared briefs with steltic_india.
 
@@ -49,9 +49,12 @@ LEGACY_KIP_IN_UNITS = {
 
 # Remaining kip islands after wave 1 (honest inventory — not yet SI-native)
 KIP_ISLANDS = [
-    "NL OpenSees / pushover / NLRHA / DDM still kip-in (full SI deferred)",
+    "NL OpenSees / pushover / NLRHA / DDM still kip-in (full SI deferred — see docs/SI_NL_MIGRATION_PLAN.md)",
     "hinge params / ASCE 41 scaffolding in ksi",
-    "record scaling & hazard USGS path imperial-tolerant",
+    "fibre sections E=29000 ksi / areas in² (Stage C twin pending)",
+    "steltic_ddm portal_adapter _seis_V_kip / wind H kip / beamUniform kip/in",
+    "record scaling & hazard USGS path imperial-tolerant; India zone path exists",
+    "NL report/viewer kip labels (Stage A display-only pending)",
 ]
 
 # Exact conversion factors
