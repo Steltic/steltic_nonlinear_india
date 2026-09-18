@@ -23,7 +23,9 @@ def _load(args):
         print("[%s] %s" % (sev, msg[:160]))
     b = pkg.basis
     if b.SDS is None or b.SD1 is None:
-        sys.exit("design basis incomplete (SDS/SD1) -- add cfg.py to the package")
+        # India packages may carry Z/Ah instead of SDS/SD1 — warn, do not hard-exit.
+        print("[WARN] design basis missing SDS/SD1 (USA fields). India jobs use IS 1893 Z/Ah via india_hazard; "
+              "ensure cfg has seismic_zone / load_plan. Continuing.")
     TL = 8.0
     try:                                                  # TL from cfg if present
         import re
@@ -55,8 +57,15 @@ def _target(args, pkg):
     from . import site_hazard as SH
     path = getattr(args, "site_hazard", None) or os.path.join(str(pkg.root), "nlrha", "site_hazard.json")
     if not os.path.exists(path):
-        sys.exit("--target %s needs a site hazard file: run `python -m nlrha hazard <package> --lat .. --lon ..` first (looked for %s)" % (kind, path))
+        hint = "--zone III" if kind == "is1893" else "--lat .. --lon .."
+        sys.exit("--target %s needs a site hazard file: run `python -m nlrha hazard <package> %s` first (looked for %s)" % (kind, hint, path))
     hz = json.load(open(path, encoding="utf-8"))
+    if kind == "is1893" or (hz.get("jurisdiction") == "india" and kind in ("is1893", "design")):
+        from . import india_hazard as IH
+        tgt = IH.target_from_india_hazard(hz, "is1893")
+        pf = float(getattr(args, "pulse_fraction", None) or 0.0)
+        print("[target] %s; India IS 1893 design spectrum; pulse share %.0f%%" % (tgt[2], 100 * pf))
+        return tgt, None, pf, hz
     cs_i = 0
     if kind == "cs" and getattr(args, "cs_period", None):
         cs_i = min(range(len(hz["targets"]["cs"])), key=lambda i: abs(hz["targets"]["cs"][i]["T_star"] - float(args.cs_period)))
@@ -70,43 +79,138 @@ def _target(args, pkg):
 
 
 def cmd_hazard(args):
-    """Site-specific hazard: USGS design maps + disaggregation -> nlrha/site_hazard.json (+ site_hazard.html)."""
-    from . import site_hazard as SH, model as MD
+    """Site hazard -> nlrha/site_hazard.json.
+
+    India fork: IS 1893 zone/Z/soil via nlrha.india_hazard when --india / --zone /
+    cfg seismic fields are set. USGS ASCE 7-22 path remains scaffolding (--usgs).
+    """
+    from . import site_hazard as SH, model as MD, india_authority as IA
+    import re
     pkg, prm, ch16, TL = _load(args)
+    cfg = {}
+    try:
+        src = (pkg.root / "cfg.py").read_text(encoding="utf-8", errors="replace")
+        for key in ("seismic_zone", "zone", "soil_type", "importance_factor", "R", "jurisdiction"):
+            mo = re.search(r"[\"']?%s[\"']?\s*[:=]\s*[\"']?([\w.]+)[\"']?" % key, src, re.I)
+            if mo:
+                cfg[key] = mo.group(1)
+    except Exception:
+        pass
+    if getattr(args, "zone", None):
+        cfg["seismic_zone"] = args.zone
+    if getattr(args, "soil_type", None):
+        cfg["soil_type"] = args.soil_type
+    if getattr(args, "importance", None) is not None:
+        cfg["importance_factor"] = args.importance
+    if getattr(args, "R_factor", None) is not None:
+        cfg["R"] = args.R_factor
+    if getattr(args, "Z", None) is not None:
+        cfg.setdefault("india_hazard", {})
+        if isinstance(cfg["india_hazard"], dict):
+            cfg["india_hazard"]["Z"] = args.Z
+
+    use_india = bool(getattr(args, "india", False)) or bool(getattr(args, "zone", None))
+    use_usgs = bool(getattr(args, "usgs", False))
+    if not use_india and not use_usgs:
+        ih = cfg.get("india_hazard") if isinstance(cfg.get("india_hazard"), dict) else {}
+        if cfg.get("seismic_zone") or cfg.get("zone") or ih.get("Z") is not None:
+            use_india = True
+        elif getattr(args, "lat", None) is not None and getattr(args, "lon", None) is not None:
+            use_usgs = True
+        else:
+            use_india = True
+
     if args.t1:
         T1x = T1y = float(args.t1); T90 = None
+        lo, hi = 0.2 * T1x, 2.0 * T1x
     else:
-        loads, gtab, split = MD.ch16_gravity(pkg, ch16)
-        PG, modal, lo, hi = _modal_and_range(pkg, prm, ch16, loads)
-        T1x, T1y, T90 = modal["T1x"], modal["T1y"], modal["T90"]
-    from . import ground_motions as GM
-    lo, hi = GM.period_range(T1x, T1y, T90, ch16["period_range"]["upper_factor"])
+        try:
+            loads, gtab, split = MD.ch16_gravity(pkg, ch16)
+            PG, modal, lo, hi = _modal_and_range(pkg, prm, ch16, loads)
+            T1x, T1y, T90 = modal["T1x"], modal["T1y"], modal["T90"]
+            from . import ground_motions as GM
+            lo, hi = GM.period_range(T1x, T1y, T90, ch16["period_range"]["upper_factor"])
+        except Exception as ex:  # noqa: BLE001
+            print("[hazard] modal build skipped (%s) — using T1=1.0 s" % ex)
+            T1x = T1y = 1.0; T90 = None; lo, hi = 0.2, 2.0
+
+    out = args.out or os.path.join(str(pkg.root), "nlrha"); os.makedirs(out, exist_ok=True)
+
+    if use_india and not use_usgs:
+        from . import india_hazard as IH
+        print("[hazard] India path: IS 1893 zone/Z/spectrum (USGS not used)")
+        Z = None
+        if isinstance(cfg.get("india_hazard"), dict):
+            Z = cfg["india_hazard"].get("Z")
+        try:
+            hz = IH.build_india_site_hazard(
+                zone=cfg.get("seismic_zone") or cfg.get("zone") or getattr(args, "zone", None),
+                soil=cfg.get("soil_type") or getattr(args, "soil_type", None) or "II",
+                I=float(cfg.get("importance_factor") or getattr(args, "importance", None) or 1.0),
+                R=float(cfg.get("R") or getattr(args, "R_factor", None) or 5.0),
+                Z=Z if Z is not None else getattr(args, "Z", None),
+                T1x=T1x, T1y=T1y, T_lower=lo, T_upper=hi, cfg=cfg,
+            )
+        except ValueError as e:
+            sys.exit(
+                "India hazard: %s\nPass --zone II|III|IV|V (optional --soil-type/--importance/--R-factor) "
+                "or --usgs --lat --lon for USA scaffolding." % e
+            )
+        path = os.path.join(out, "site_hazard.json")
+        json.dump(hz, open(path, "w", encoding="utf-8"), indent=1)
+        print("wrote", path)
+        s = hz["site"]
+        print("[hazard] zone %s Z=%.2f soil=%s I=%.2f R=%.2f | T1x=%.3f T1y=%.3f" % (
+            s["seismic_zone"], s["Z"], s["soil_type"], s["importance_I"], s["response_reduction_R"], T1x, T1y))
+        tgt = hz["targets"]["is1893_design"]
+        print("[hazard] IS 1893 design Ah spectrum: %d periods (%s)" % (len(tgt["periods"]), tgt.get("clause")))
+        for src in hz.get("sources") or []:
+            print("[hazard] cite:", src)
+        return
+
+    if args.lat is None or args.lon is None:
+        sys.exit("USGS hazard scaffolding needs --lat and --lon (or use --india --zone …)")
     from . import acceptance as AC
     rc = AC.risk_category(pkg, args.risk_category)
     design = json.load(open(args.design_json)) if args.design_json else None
     deaggs = json.load(open(args.deagg_json)) if args.deagg_json else None
     sigma = json.load(open(args.sigma)) if args.sigma else None
     cps = [float(x) for x in (args.cs_period or [])] or None
-    hz = SH.build_site_hazard(args.lat, args.lon, T1x, T1y, site_class=args.site_class, risk_category={"I_II": "II"}.get(rc, rc), vs30=args.vs30,
-                              return_period=args.return_period, T_lower=lo, T_upper=hi, conditioning_periods=cps, sigma_model=sigma,
-                              design=design, deaggs=deaggs, fetch=not args.offline)
-    out = args.out or os.path.join(str(pkg.root), "nlrha"); os.makedirs(out, exist_ok=True)
+    print("[hazard] USGS ASCE scaffolding (india_authoritative=false) — not India authority")
+    hz = SH.build_site_hazard(
+        args.lat, args.lon, T1x, T1y, site_class=args.site_class,
+        risk_category={"I_II": "II"}.get(rc, rc), vs30=args.vs30,
+        return_period=args.return_period, T_lower=lo, T_upper=hi,
+        conditioning_periods=cps, sigma_model=sigma,
+        design=design, deaggs=deaggs, fetch=not args.offline,
+    )
+    hz = dict(hz)
+    hz["india_authoritative"] = False
+    hz["jurisdiction"] = "usa_scaffolding"
     path = os.path.join(out, "site_hazard.json")
     json.dump(hz, open(path, "w", encoding="utf-8"), indent=1)
     print("wrote", path)
     d = hz["design"]
-    print("[hazard] SDS %.3f SD1 %.3f (package %.3f / %.3f) SMS %.3f SM1 %.3f TL %s SDC %s" % (d["sds"], d["sd1"], pkg.basis.SDS, pkg.basis.SD1, d["sms"], d["sm1"], d["tl"], d["sdc"]))
+    print("[hazard] SDS %.3f SD1 %.3f (package %.3f / %.3f) SMS %.3f SM1 %.3f TL %s SDC %s" % (
+        d["sds"], d["sd1"], pkg.basis.SDS, pkg.basis.SD1, d["sms"], d["sm1"], d["tl"], d["sdc"]))
     for c in hz["targets"]["cs"]:
-        print("[hazard] CS at T* %.2f s: M %.2f R %.1f km eps %.2f (%s, %d yr)" % (c["T_star"], c["M"] or 0, c["R_km"] or 0, c["eps"], c["imt"], c["return_period"]))
+        print("[hazard] CS at T* %.2f s: M %.2f R %.1f km eps %.2f (%s, %d yr)" % (
+            c["T_star"], c["M"] or 0, c["R_km"] or 0, c["eps"], c["imt"], c["return_period"]))
     if hz.get("envelope"):
-        print("[hazard] CS envelope / MCE_R over %.2f-%.2f s: min %.2f, >= MCE_R over %.0f%% of the range" % (lo, hi, hz["envelope"]["min_ratio_to_mcer"], 100 * hz["envelope"]["covered_share"]))
+        print("[hazard] CS envelope / MCE_R over %.2f-%.2f s: min %.2f, >= MCE_R over %.0f%% of the range" % (
+            lo, hi, hz["envelope"]["min_ratio_to_mcer"], 100 * hz["envelope"]["covered_share"]))
     nf = hz["near_fault"]
-    print("[hazard] near-fault: %s" % ("YES -- %s, pulse share %.0f%%" % (", ".join("%s (M %.1f, %.0f km, %.0f%%)" % (x["name"], x["M"], x["R_km"], x["contribution_pct"]) for x in nf["sources"][:4]), 100 * nf["pulse_fraction"]) if nf["near_fault"] else "no"))
+    print("[hazard] near-fault: %s" % (
+        "YES -- %s, pulse share %.0f%%" % (
+            ", ".join("%s (M %.1f, %.0f km, %.0f%%)" % (x["name"], x["M"], x["R_km"], x["contribution_pct"])
+                      for x in nf["sources"][:4]),
+            100 * nf["pulse_fraction"],
+        ) if nf["near_fault"] else "no"))
     if abs(d["sds"] - (pkg.basis.SDS or 0)) > 0.05 or abs(d["sd1"] - (pkg.basis.SD1 or 0)) > 0.05:
         print("!! the package's SDS/SD1 differ from the USGS values for this site -- the linear design basis needs a second look")
     try:
         _hazard_html(out, hz, lo, hi)
-    except Exception as ex:                                            # noqa: BLE001
+    except Exception as ex:  # noqa: BLE001
         print("[hazard] figure skipped:", ex)
 
 
@@ -300,21 +404,29 @@ def main(argv=None):
         p.add_argument("--records-set", nargs="*", default=None, help="record set folder(s): indexed sets (index.json) and/or user folders of PEER .AT2 / CSV pairs (indexed on the fly); default = the shipped FEMA P-695 far-field set")
         p.add_argument("--risk-category", help="I, II, III or IV (default: read from cfg.py, else from Ie)")
         if name in ("scale", "run"):
-            p.add_argument("--target", default="code", choices=["code", "mcer", "cs"], help="scaling target: code = 1.5 x the package's design spectrum; mcer = the USGS multi-period MCE_R; cs = conditional spectrum at T* (both need nlrha hazard first)")
+            p.add_argument("--target", default="code", choices=["code", "mcer", "cs", "is1893"], help="scaling target: is1893 = IS 1893 Ah design spectrum; code/mcer/cs = USA scaffolding (mcer/cs need USGS hazard)")
             p.add_argument("--site-hazard", help="site_hazard.json written by `nlrha hazard` (default <package>/nlrha/site_hazard.json)")
             p.add_argument("--cs-period", type=float, help="which conditioning period of the site hazard to use with --target cs (default: the first)")
             p.add_argument("--pulse-fraction", type=float, default=None, help="share of the suite reserved for pulse-type records (default: the near-fault screen of the site hazard, else 0)")
             p.add_argument("--sf-bounds", help="keep only records whose shape-fit scale factor lies in lo-hi (e.g. 0.25-4)")
         if name == "hazard":
-            p.add_argument("--lat", type=float, required=True); p.add_argument("--lon", type=float, required=True)
-            p.add_argument("--vs30", type=float, help="Vs30 for the disaggregation (default: the USGS site-class value)")
-            p.add_argument("--return-period", type=int, default=2475, help="disaggregation return period in years (default 2475)")
-            p.add_argument("--cs-period", nargs="*", help="conditioning period(s) for the conditional spectra (default: the longer first-mode period)")
+            p.add_argument("--lat", type=float, default=None, help="latitude (USGS scaffolding path)")
+            p.add_argument("--lon", type=float, default=None, help="longitude (USGS scaffolding path)")
+            p.add_argument("--india", action="store_true", help="force IS 1893 zone/Z hazard path (default on this fork when zone set)")
+            p.add_argument("--usgs", action="store_true", help="force USGS ASCE 7-22 scaffolding (not India authority)")
+            p.add_argument("--zone", help="IS 1893 seismic zone II|III|IV|V")
+            p.add_argument("--soil-type", dest="soil_type", help="IS 1893 soil type I|II|III (rock/medium/soft)")
+            p.add_argument("--importance", type=float, help="IS 1893 importance factor I (Table 8)")
+            p.add_argument("--R-factor", dest="R_factor", type=float, help="IS 1893 response reduction factor R")
+            p.add_argument("--Z", type=float, help="override zone factor Z (cite in nl_plan if not Table 3)")
+            p.add_argument("--vs30", type=float, help="Vs30 for USGS disaggregation (scaffolding)")
+            p.add_argument("--return-period", type=int, default=2475, help="USGS disaggregation return period years (default 2475)")
+            p.add_argument("--cs-period", nargs="*", help="conditioning period(s) for USGS conditional spectra")
             p.add_argument("--t1", type=float, help="skip the model build and use this first-mode period (s)")
-            p.add_argument("--sigma", help="JSON {periods:[...], sigma:[...]} overriding the built-in sigma_ln(T) curve")
-            p.add_argument("--offline", action="store_true", help="do not call the USGS services; use --design-json / --deagg-json")
-            p.add_argument("--design-json", help="saved response of the USGS ASCE 7-22 service (fetch_design output)")
-            p.add_argument("--deagg-json", help="saved disaggregations {\"T*\": fetch_disagg output}")
+            p.add_argument("--sigma", help="JSON {periods:[...], sigma:[...]} overriding sigma_ln(T) (USGS CS)")
+            p.add_argument("--offline", action="store_true", help="do not call USGS; use --design-json / --deagg-json")
+            p.add_argument("--design-json", help="saved USGS ASCE 7-22 fetch_design output (scaffolding)")
+            p.add_argument("--deagg-json", help="saved USGS disaggregations (scaffolding)")
         if name == "report":
             p.add_argument("--pushover-dir")
         if name == "run":

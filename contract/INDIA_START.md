@@ -56,3 +56,19 @@ Do **not** assume AISC shape labels forever — India packages may use IS 808 de
 2. Never treat `nlrha/ch16_params.json` as India-authoritative (`india_authoritative=false`).
 3. Never enable ASCE §16.1.2 drift relief without a retrieved India analogue.
 4. Prefer live RAG every job (same philosophy as steltic_india `load_plan` / `india_seismic`).
+
+## Hazard (do not assume USGS)
+
+```bash
+python -m nlrha hazard <steltic_india_package> --zone III --soil-type II \
+  --importance 1.0 --R-factor 5.0 [--t1 1.0]
+# writes nlrha/site_hazard.json from IS 1893 Table 3 + 6.4.2 Ah(T)
+python -m nlrha scale <package> --target is1893
+```
+
+USGS path: `python -m nlrha hazard … --usgs --lat … --lon …` (scaffolding only).
+
+## Package stub
+
+`examples/India_package_stub/` — cfg / nl_plan / interface notes for steltic_india packages.
+Metric helpers: `snl.india_units.apply_metric_geometry`.

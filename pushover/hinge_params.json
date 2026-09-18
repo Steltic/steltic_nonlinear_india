@@ -1,5 +1,9 @@
 {
   "_README": [
+    "INDIA FORK (steltic_nonlinear_india): ASCE 41 / AISC 342 hinge + acceptance analogue is",
+    "found:false in /workspace/engineering_rag_india (IS 1893 has no NSP/hinge tables; IS 800 \u00a74.5",
+    "is static plastic analysis only \u2014 not IO/LS/CP). Keep verified=false. See",
+    "nlrha.india_authority.hinge_analogue_status(). Do not invent ASCE\u2192IS hinge maps.",
     "Nonlinear component modelling parameters + acceptance criteria used by the Pushover Analyst.",
     "STATUS: the numbers below are PLACEHOLDER DEFAULTS written from memory of ASCE 41-17 Table 9-7.1",
     "(beams) and the Lignos-based ASCE 41-17 column expressions. They are NOT verified against a licensed",
@@ -153,5 +157,9 @@
       "modifier when mode=scissors (double-counting). Not a full 8-bar Krawinkler rectangle (no geometric rigid offsets).",
       "Pin-released gravity framing is excluded. Units: kip-in-sec."
     ]
+  },
+  "india_hinge_analogue": {
+    "found": false,
+    "see": "nlrha.india_authority.hinge_analogue_status"
   }
 }

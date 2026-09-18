@@ -1,0 +1,56 @@
+{
+  "jurisdiction": "india",
+  "retrieval": [
+    {
+      "stem": "IS_1893_Part_1_2016",
+      "query": "7.7.4 Time History Method",
+      "found": true,
+      "cite": "7.7.4",
+      "excerpt": "Time history method shall be based on an appropriate ground motion (preferably compatible with the design acceleration spectrum in the desired range of natural periods) and shall be performed using accepted principles of earthquake structural dynamics."
+    },
+    {
+      "stem": "IS_1893_Part_1_2016",
+      "query": "7.11.1.1",
+      "found": true,
+      "cite": "7.11.1.1",
+      "excerpt": "Storey drift in any storey shall not exceed 0.004 times the storey height, under the action of design base of shear VB with no load factors mentioned in 6.3, that is, with partial safety factor for all loads taken as 1.0."
+    },
+    {
+      "stem": "IS_1893_Part_1_2016",
+      "query": "Table 3 Seismic Zone Factor Z",
+      "found": true,
+      "cite": "Table 3 / 6.4.2",
+      "excerpt": "Z: II=0.10, III=0.16, IV=0.24, V=0.36"
+    },
+    {
+      "stem": "IS_1893_Part_1_2016",
+      "query": "plastic hinge OR pushover OR acceptance criteria",
+      "found": false,
+      "cite": null,
+      "note": "ASCE 41 hinge analogue found:false — leave hinge_params verified:false"
+    }
+  ],
+  "hazard": {
+    "zone": "III",
+    "soil": "II",
+    "I": 1.0,
+    "R": 5.0
+  },
+  "drift_relief_analogue": {
+    "found": false,
+    "note": "No IS 1893 waiver of 7.11.1.1 after time-history — ASCE 16.1.2 remains disabled"
+  },
+  "rules": {
+    "storey_drift_limit_ratio": {
+      "found": true,
+      "value": 0.004,
+      "stem": "IS_1893_Part_1_2016",
+      "clause": "7.11.1.1",
+      "cite": "IS 1893 (Part 1):2016 7.11.1.1"
+    }
+  },
+  "hinge_source": {
+    "found": false,
+    "note": "No India NSP/hinge acceptance tables in corpus"
+  }
+}

@@ -75,6 +75,60 @@ IS_ANCHORS = {
         "clause": "7.7.5",
         "note": "Response Spectrum Method — not a drop-in for ASCE 7 Ch.16 suite rules.",
     },
+    "zone_factor_Z": {
+        "found": True,
+        "stem": PRIMARY_STEM,
+        "clause": "Table 3",
+        "cite": "Clause 6.4.2",
+        "note": "Seismic Zone Factor Z: II=0.10, III=0.16, IV=0.24, V=0.36.",
+        "Z": {"II": 0.10, "III": 0.16, "IV": 0.24, "V": 0.36},
+    },
+    "design_Ah": {
+        "found": True,
+        "stem": PRIMARY_STEM,
+        "clause": "6.4.2",
+        "note": "Ah = (Z/2)·(Sa/g)/(R/I); Sa/g from soil-type expressions in 6.4.2.",
+        "excerpt": (
+            "The design horizontal seismic coefficient Ah for a structure shall be determined by: "
+            "Ah = (Z/2)·(Sa/g)/(R/I) where Z = seismic zone factor given in Table 3; "
+            "I = importance factor; R = response reduction factor; "
+            "(Sa/g) = design acceleration coefficient for different soil types."
+        ),
+    },
+    "importance_factor": {
+        "found": True,
+        "stem": PRIMARY_STEM,
+        "clause": "7.2.3 / Table 8",
+        "note": "I = 1.5 important/lifeline; 1.2 residential/commercial >200 persons; 1.0 other. Not ASCE Risk Category.",
+        "I_default_rows": {"important_lifeline": 1.5, "residential_commercial_gt200": 1.2, "other": 1.0},
+    },
+    "time_history_excerpt": {
+        "found": True,
+        "stem": PRIMARY_STEM,
+        "clause": "7.7.4",
+        "excerpt": (
+            "Time history method shall be based on an appropriate ground motion "
+            "(preferably compatible with the design acceleration spectrum in the desired "
+            "range of natural periods) and shall be performed using accepted principles of "
+            "earthquake structural dynamics."
+        ),
+        "note": (
+            "This is the honest India replacement for Ch.16 *selection compatibility* intent. "
+            "It does NOT supply suite size, RotD100 floor, 2×Table 12.12-1, or RC unacceptable counts."
+        ),
+    },
+    "storey_drift_excerpt": {
+        "found": True,
+        "stem": PRIMARY_STEM,
+        "clause": "7.11.1.1",
+        "limit_ratio": 0.004,
+        "excerpt": (
+            "Storey drift in any storey shall not exceed 0.004 times the storey height, "
+            "under the action of design base of shear VB with no load factors mentioned in 6.3, "
+            "that is, with partial safety factor for all loads taken as 1.0."
+        ),
+        "note": "Replaces ASCE Table 12.12-1 / Cd·δe/Ie and Ch.16 2×Table 12.12-1 mean drift for India deliverables.",
+    },
 }
 
 # Explicit gaps — do NOT fabricate ASCE analogues.
@@ -84,10 +138,16 @@ ASCE_GAPS = [
         "found": False,
         "usa": "ASCE/SEI 41-23 NSP + AISC 342-22 component tables",
         "note": (
-            "No IS 1893 / IS 800 pushover (NSP) procedure or steel hinge tables in the "
-            "India corpus. Pushover engine remains scaffolding; hinge_params verified:false "
-            "until an AHJ-accepted source is retrieved and cited."
+            "No IS 1893 / IS 800 pushover (NSP) procedure or steel hinge / acceptance "
+            "(IO/LS/CP) tables in the India corpus. IS 800:2007 §4.5 Plastic Analysis addresses "
+            "static plastic design (plastic/compact sections, hinge stiffeners) — NOT an ASCE 41 "
+            "analogue for nonlinear static performance acceptance. Pushover hinge_params stay "
+            "verified:false until an AHJ-accepted source is retrieved and cited. Do not invent."
         ),
+        "corpus_checks": {
+            "IS_1893 plastic hinge|pushover|acceptance criteria": "found:false",
+            "IS_800_2007 plastic hinge (4.5.x)": "found:true but static plastic analysis only — not NSP acceptance",
+        },
     },
     {
         "id": "asce_7_ch16_suite_acceptance",
@@ -119,8 +179,10 @@ ASCE_GAPS = [
         "found": False,
         "usa": "USGS ASCE 7-22 multi-period MCE_R + NSHM disaggregation",
         "note": (
-            "India site hazard is zone factor Z / design spectrum from IS 1893 RAG "
-            "(steltic_india load_plan / seis). USGS MCE_R path is USA scaffolding only."
+            "India site hazard is zone factor Z / design spectrum Ah(T) from IS 1893 "
+            "6.4.2 / Table 3 via nlrha.india_hazard.build_india_site_hazard (or cfg "
+            "seismic_zone / india_hazard / nl_plan.hazard). USGS MCE_R path is USA "
+            "scaffolding only — do not assume USGS for India jobs."
         ),
     },
     {
@@ -314,3 +376,89 @@ def summary_findings(findings: list[tuple[str, str]]) -> str:
     for sev, msg in findings:
         lines.append("  %s: %s" % (sev, msg))
     return "\n".join(lines)
+
+
+def india_acceptance_rules() -> dict:
+    """Honest India replacements for Ch.16 *numerics* that RAG supports.
+
+    Implement / cite only these. Everything else in ch16_params.json stays scaffolding.
+    """
+    drift = IS_ANCHORS["storey_drift_excerpt"]
+    th = IS_ANCHORS["time_history_excerpt"]
+    return {
+        "jurisdiction": JURISDICTION,
+        "stem": PRIMARY_STEM,
+        "replace_ch16_where_honest": {
+            "storey_drift_limit_ratio": {
+                "value": drift["limit_ratio"],
+                "clause": drift["clause"],
+                "excerpt": drift["excerpt"],
+                "replaces": "ASCE Table 12.12-1 and Ch.16 2×Table 12.12-1 mean drift limits",
+            },
+            "dynamic_disp_no_7_7_3_scale": {
+                "clause": IS_ANCHORS["dynamic_disp_no_scale"]["clause"],
+                "note": IS_ANCHORS["dynamic_disp_no_scale"]["note"],
+                "replaces": "ASCE Cd/Ie drift amplification handling (not applicable)",
+            },
+            "time_history_spectrum_compatibility": {
+                "clause": th["clause"],
+                "excerpt": th["excerpt"],
+                "replaces": "ASCE 16.2 target-spectrum selection intent (NOT suite size / RotD100 / RC counts)",
+                "hazard_module": "nlrha.india_hazard",
+            },
+            "design_spectrum_Ah": {
+                "clause": IS_ANCHORS["design_Ah"]["clause"],
+                "excerpt": IS_ANCHORS["design_Ah"]["excerpt"],
+                "zone_Z": IS_ANCHORS["zone_factor_Z"]["Z"],
+            },
+        },
+        "still_found_false": [g["id"] for g in ASCE_GAPS],
+        "note": (
+            "Do not copy n_motions=11, RotD100 ≥ 90% floor, peak-drift unacceptable "
+            "factors, or Risk-Category rows into India deliverables without retrieved IS text."
+        ),
+    }
+
+
+def hinge_analogue_status() -> dict:
+    """ASCE 41 / AISC 342 hinge + acceptance analogue — always found:false unless plan overrides."""
+    gap = next(g for g in ASCE_GAPS if g["id"] == "asce_41_nsp")
+    return {
+        "found": False,
+        "usa": gap["usa"],
+        "note": gap["note"],
+        "corpus_checks": gap.get("corpus_checks"),
+        "hinge_params_path": "pushover/hinge_params.json",
+        "hinge_params_verified": False,
+        "action": (
+            "Leave UNVERIFIED banner; do not invent IO/LS/CP from IS 800 §4.5 plastic analysis. "
+            "If AHJ accepts a foreign standard, cite it in nl_plan.hinge_source with found:true."
+        ),
+    }
+
+
+def storey_drift_limit_ratio(cfg_or_job=None, job_dir: str | None = None) -> dict:
+    """Return the India storey drift limit (0.004) with citation; honour nl_plan override if retrieved."""
+    plan = find_nl_plan(cfg_or_job, job_dir=job_dir) or {}
+    rules = plan.get("rules") if isinstance(plan.get("rules"), dict) else {}
+    if isinstance(rules.get("storey_drift_limit_ratio"), dict):
+        r = rules["storey_drift_limit_ratio"]
+        if r.get("found") is True and r.get("value") is not None:
+            return {
+                "found": True,
+                "value": float(r["value"]),
+                "stem": r.get("stem") or PRIMARY_STEM,
+                "clause": r.get("clause") or "7.11.1.1",
+                "cite": r.get("cite"),
+                "source": "nl_plan.rules",
+            }
+    a = IS_ANCHORS["storey_drift_limit"]
+    return {
+        "found": True,
+        "value": float(a["limit_ratio"]),
+        "stem": a["stem"],
+        "clause": a["clause"],
+        "cite": "%s §%s" % (a["stem"], a["clause"]),
+        "excerpt": IS_ANCHORS["storey_drift_excerpt"]["excerpt"],
+        "source": "IS_ANCHORS",
+    }
