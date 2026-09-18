@@ -70,6 +70,8 @@ disaggregation (16.2.2), reserving the pulse share for records flagged `pulse` i
 beyond the shipped FEMA P-695 far-field set with `--records-set <folder> ...`: folders of PEER `.AT2` pairs (NGA-West2
 downloads with their `_SearchResults.csv`) or two-column CSVs are indexed on the fly (`python -m nlrha library <folder>`).
 See `docs/README_nlrha.md`.
+**India:** prefer `python -m nlrha hazard <package> --zone III --soil-type II` (IS 1893 Ah via `nlrha.india_hazard`). USGS only with `--usgs --lat --lon` (scaffolding). Scale with `--target is1893`.
+
 
 ## Design criteria document (16.1.4)
 
