@@ -27,6 +27,30 @@ def _tag(ok, a="PASS", b="NG"):
     return '<span class="ok">%s</span>' % a if ok else '<span class="ng">%s</span>' % b
 
 
+def _ul(pkg=None):
+    """SI vs kip labels for HTML when India / N-mm display is active."""
+    try:
+        from snl.india_units import report_force_length_labels, is_si
+        if isinstance(pkg, dict):
+            cfg = dict(pkg)
+        elif pkg is not None:
+            calc = getattr(pkg, "calc", None) or {}
+            cfg = dict(calc) if isinstance(calc, dict) else {}
+            basis = getattr(pkg, "basis", None)
+            if basis is not None:
+                cfg.setdefault("units", getattr(basis, "package_units", None) or cfg.get("units"))
+            if cfg.get("_nl_unit_bridge") or cfg.get("native_nmm") or str(cfg.get("_nl_analysis_units") or "").startswith("N-mm"):
+                cfg.setdefault("units", "N-mm")
+        else:
+            cfg = {}
+        if is_si(cfg):
+            cfg.setdefault("units", "N-mm")
+        return report_force_length_labels(cfg)
+    except Exception:
+        return dict(force="kip", length="in", length_disp="ft", moment="kip-ft", stress="ksi",
+                    pressure="psf", system="kip-in", si=False, stiffness="kip/in", analysis="kip-in")
+
+
 def fig_scaling(gm):
     T = np.array(gm["periods"]); tgt = np.array(gm["target"]); mean = np.array(gm["suite_mean_rotd100"])
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
@@ -60,14 +84,16 @@ def fig_brace(results, label):
     if not r: return None
     h = np.array(r["brace_hist"]); fig, ax = plt.subplots(figsize=(5.2, 4))
     ax.plot(h[:, 0], h[:, 1], color="#1a3d7c", lw=0.9); ax.axhline(0, color="#999", lw=0.6); ax.axvline(0, color="#999", lw=0.6)
-    ax.set_xlabel("axial deformation (in)"); ax.set_ylabel("axial force (kip)"); ax.grid(alpha=.3)
+    ax.set_xlabel("axial deformation"); ax.set_ylabel("axial force"); ax.grid(alpha=.3)
     ax.set_title("Sample brace hysteresis — %s, %s" % (label, r["label"][:30]), fontsize=10)
     return _png(fig)
 
 
 def write(outdir, pkg, ch16, prm, gm, results, acc, grav_table, grav_split, modal, elapsed_s, pushover_pkg=None):
     os.makedirs(outdir, exist_ok=True); b = pkg.basis; ts = datetime.datetime.now().isoformat(timespec="seconds")
+    ul = _ul(pkg)
     v = acc["verdict"]; H = []
+    H.append('<div class="sub">Analysis / display units: <b>%s</b></div>' % ul.get("system", "kip-in"))
     H.append("<style>%s</style><title>NLRHA supplement — %s</title>" % (CSS, pkg.name))
     H.append("<h1>Nonlinear response history (ASCE 7-22 Chapter 16) supplement — %s</h1>" % pkg.name)
     H.append('<div class="sub">Supplement to the Steltic AISC 360/341 package <code>%s</code> and its pushover supplement · generated %s · Non Linear Dynamic Bot prototype · %.0f s</div>' % (pkg.root.name, ts, elapsed_s))
@@ -92,7 +118,7 @@ def write(outdir, pkg, ch16, prm, gm, results, acc, grav_table, grav_split, moda
                           ("T<sub>1X</sub> / T<sub>1Y</sub> of hinge model (s)", "%.3f / %.3f" % (modal["T1x"], modal["T1y"]), "eigen, 16.2.3.1"),
                           ("Period range for scaling (s)", "%.2f – %.2f" % (gm["T_lower"], gm["T_upper"]), "16.2.3.1: ≤0.2 T<sub>min</sub> & 90% mass … ≥ 2 T<sub>max</sub>"),
                           ("Viscous damping", "%.1f%% Rayleigh at T<sub>1</sub> and 0.2 T<sub>1</sub> (elastic elements + mass)" % (100 * ch16["damping"]["xi_used"]), "16.3.5 (≤ 2.5%)"),
-                          ("Gravity in the analysis", "1.0 D + 0.5 L, L = %.0f%% of unreduced (≤100 psf) · Σ0.5L/ΣD = %.2f → no-live case %s" % (100 * ch16["gravity"]["live_factor_le100psf"], grav_split["ratio"], "required" if grav_split["no_live_case_needed"] else "not required (exception)"), "16.3.2"),
+                          ("Gravity in the analysis", "1.0 D + 0.5 L, L = %.0f%% of unreduced (≤100 psf / Ch.16 live found:false for IS) · Σ0.5L/ΣD = %.2f → no-live case %s · force unit %s" % (100 * ch16["gravity"]["live_factor_le100psf"], grav_split["ratio"], "required" if grav_split["no_live_case_needed"] else "not required (exception)", ul["force"]), "16.3.2"),
                           ("P-Δ", "column P-Δ transforms retained from the design model; gravity on all column nodes", "16.3.3"),
                           ("Accidental torsion", "not applied (no Type 1 irregularity declared in the package)", "16.3.4")):
         H.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (lab, val, src))
@@ -118,7 +144,7 @@ def write(outdir, pkg, ch16, prm, gm, results, acc, grav_table, grav_split, moda
                      % (gm.get("target_label") or "MCE_R = 1.5 x design spectrum"))
     H.append("</table><p>Record set: %s. One amplitude factor per pair; no spectral matching. %s</p>" % (sets, site_note))
 
-    H.append("<h2>4. Response per record</h2><table><tr><th>Record</th><th>SF</th><th>converged</th><th>peak story drift</th><th>peak roof X / Y (in)</th><th>residual drift</th><th>unacceptable?</th><th>steps · s</th></tr>")
+    H.append("<h2>4. Response per record</h2><table><tr><th>Record</th><th>SF</th><th>converged</th><th>peak story drift</th><th>peak roof X / Y (%s)</th><th>residual drift</th><th>unacceptable?</th><th>steps · s</th></tr>" % ul["length"])
     for p in acc["per_record"]:
         H.append("<tr><td>%s</td><td>%.2f</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%d · %.0f</td></tr>"
                  % (p["label"], p["sf"], ("yes" if p["converged"] else "NO") + (" (retried at dt/2)" if p.get("retry") else ""), ("%.2f%%" % (100 * p["peak_drift"])) if p["converged"] else "—",
@@ -131,7 +157,7 @@ def write(outdir, pkg, ch16, prm, gm, results, acc, grav_table, grav_split, moda
     if fb: H.append('<figure><img src="%s"><figcaption>Axial force–deformation history of one brace under one record (Hysteretic backbone, no cyclic deterioration — see banner).</figcaption></figure>' % fb)
 
     H.append("<h2>5. Element acceptance (16.4.2)</h2><h3>Deformation-controlled — mean of the per-record peaks (Q<sub>u</sub>) vs CP and vs the valid modelling range b</h3>")
-    H.append("<table><tr><th>Group</th><th>Section</th><th>elev. (in)</th><th>n</th><th>Q<sub>u</sub></th><th>CP limit</th><th>b (valid range)</th><th>D/C CP</th><th>D/C valid</th></tr>")
+    H.append("<table><tr><th>Group</th><th>Section</th><th>elev. (%s)</th><th>n</th><th>Q<sub>u</sub></th><th>CP limit</th><th>b (valid range)</th><th>D/C CP</th><th>D/C valid</th></tr>" % ul["length"])
     for r in acc["deformation_groups"]:
         if r["kind"] == "brace":
             H.append("<tr><td>brace</td><td>%s</td><td>%d</td><td>%d</td><td>%.2f in comp · %.2f in tens</td><td>%.2f · %.2f in</td><td>%.2f · %.2f in</td><td>%.2f</td><td>%.2f</td></tr>"
@@ -140,7 +166,7 @@ def write(outdir, pkg, ch16, prm, gm, results, acc, grav_table, grav_split, moda
             H.append("<tr><td>%s hinge</td><td>%s</td><td>%d</td><td>%d</td><td>%.4f rad</td><td>%.4f</td><td>%.4f</td><td>%.2f</td><td>%.2f</td></tr>"
                      % (r["kind"], r["section"], r["z_in"], r["n"], r["Qu_rad"], r["CP"], r["b"], r["DC_CP"], r["DC_valid"]))
     H.append("</table><h3>Force-controlled — braced-frame and gravity columns, axial (critical; φ = 0.9 per AISC 360, B = 1.0)</h3>")
-    H.append("<table><tr><th>Section</th><th>elev. (in)</th><th>Q<sub>u</sub> mean peak (kip)</th><th>Q<sub>ns</sub> gravity (kip)</th><th>Demand (16.4-1)</th><th>φBR<sub>n</sub> (E3, K=1, weak axis)</th><th>KL/r</th><th>D/C</th></tr>")
+    H.append("<table><tr><th>Section</th><th>elev. (%s)</th><th>Q<sub>u</sub> mean peak (%s)</th><th>Q<sub>ns</sub> gravity (%s)</th><th>Demand (16.4-1)</th><th>φBR<sub>n</sub> (E3, K=1, weak axis)</th><th>KL/r</th><th>D/C</th></tr>" % (ul["length"], ul["force"], ul["force"]))
     for r in acc["force_controlled_columns"]:
         H.append("<tr><td>%s</td><td>%.0f</td><td>%.0f</td><td>%.0f</td><td>%.0f</td><td>%.0f</td><td>%.0f</td><td>%.2f %s</td></tr>"
                  % (r["section"], r["z_in"], r["Qu"], r["Qns"], r["demand"], r["phiBRn"], r["KLr"], r["DC"], _tag(r["DC"] <= 1.0, "ok", "NG")))
@@ -157,8 +183,8 @@ def write(outdir, pkg, ch16, prm, gm, results, acc, grav_table, grav_split, moda
             H.append("<tr><td>MCE<sub>R</sub>-level roof displacement — %s</td><td>C<sub>d</sub>δ<sub>e</sub>: see Ch. 8 of report.html</td><td>δ<sub>t</sub> BSE-2N = %.1f in</td><td>mean of peaks = %.1f in</td></tr>"
                      % (d, n2.get("target_disp_in", float("nan")), float(np.mean(roofs)) if roofs else float("nan")))
             H.append("<tr><td>Max story drift at MCE<sub>R</sub> — %s</td><td>—</td><td>%.2f%%</td><td>%.2f%% (suite statistic)</td></tr>" % (d, 100 * a2.get("max_story_drift", float("nan")), 100 * mean_d))
-            H.append("<tr><td>Overstrength / demand — %s</td><td>V = %s kip (R = %s)</td><td>Ω = %.1f, V<sub>max</sub> = %.0f kip</td><td>direct MCE<sub>R</sub> demand; no R, Ω<sub>0</sub>, C<sub>d</sub></td></tr>"
-                     % (d, b.V_design_kip, b.R, P.get("p695", {}).get("Omega", float("nan")), P.get("p695", {}).get("Vmax_kip", float("nan"))))
+            H.append("<tr><td>Overstrength / demand — %s</td><td>V = %s %s (R = %s)</td><td>Ω = %.1f, V<sub>max</sub> = %.0f %s</td><td>direct MCE<sub>R</sub> demand; no R, Ω<sub>0</sub>, C<sub>d</sub></td></tr>"
+                     % (d, b.V_design_kip, ul["force"], b.R, P.get("p695", {}).get("Omega", float("nan")), P.get("p695", {}).get("Vmax_kip", float("nan")), ul["force"]))
         H.append("</table>")
     H.append("<h2>7. Open items before this supplement is issued</h2><ol>")
     for it in ("Component backbones are unverified placeholders (steltic_pushover/hinge_params.json) — retrieve ASCE 41-23 / AISC 342-22 through Query file manager; add cyclic deterioration (16.3.1).",

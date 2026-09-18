@@ -1,11 +1,12 @@
 """India SI boundary helpers for steltic_nonlinear_india (NL fork).
 
-HR/CFS India are SI-native N-mm-sec. NL Stages A–D (wave 4):
+HR/CFS India are SI-native N-mm-sec. NL Stages A–D (wave 5 COMPLETE for India stack):
   - Stage A: report/viewer labels via display_scale
   - Stage B: N-mm HR packages convert once at ingest → kip-in analysis (default)
   - Stage C: fibre E/areas SI twin when analysis units='N-mm'
-  - Stage D (partial): ANALYSIS_UNITS may be N-mm for India jobs; portal + NLRHA g=9810 path
-Default ANALYSIS_UNITS remains kip-in so USA archetypes / ~138 tests stay green.
+  - Stage D: ANALYSIS_UNITS N-mm for India jobs; portal + grid beam_udl + NLRHA g=9810;
+    report HTML SI labels; IMK/Ch.16 live remain found:false (no IS analogue — do not invent).
+Default ANALYSIS_UNITS remains kip-in so USA archetypes / suite stay green; India cfg can auto-activate.
 
 Legacy kip+inch converters remain for USA archetypes. Opt in with cfg['units']='kip-in' or
 cfg['force_kip_in']=True. Prefer cfg['units']='N-mm' for SI display / SI package handoff.
@@ -34,9 +35,9 @@ ENGINE_UNITS = {
     "E_steel_MPa": 200000.0,
     "G_steel_MPa": 76923.07692307692,  # E/2.6
     "note": (
-        "NL wave 4: Stages A–C + partial D. Default ANALYSIS_UNITS=kip-in; "
-        "set_analysis_units('N-mm') / native_nmm for India OpenSees. "
-        "Fibre twin E=2e5 MPa; NLRHA g_accel; portal dual-path."
+        "NL wave 5: Stages A–D complete for India stack. Default ANALYSIS_UNITS=kip-in; "
+        "India jobs: set_analysis_units('N-mm') / native_nmm / jurisdiction+units. "
+        "Fibre+grid UDL+portal+g_accel SI; IMK/Ch.16 live found:false."
     ),
 }
 
@@ -51,14 +52,12 @@ LEGACY_KIP_IN_UNITS = {
     "G_steel_ksi": 11200.0,
 }
 
-# Remaining kip islands after wave 1 (honest inventory — not yet SI-native)
+# Hard leftovers after wave 5 (SI rewrite COMPLETE for India stack — islands below are gated/found:false)
 KIP_ISLANDS = [
-    "ANALYSIS_UNITS default still kip-in (set N-mm per India job via set_analysis_units / cfg)",
-    "hinge params / ASCE 41 / ModIMK scaffolding still ksi (not Stage C fibre)",
-    "NLRHA ch16_gravity still kip/psf idealisation (g=9810 Path scaling is Stage D)",
-    "steltic_ddm grid beam_udl still kip/in (portal_beam_udl has N/mm twin)",
-    "Many NL report HTML strings still hardcode kip",
-    "IMK / acceptance E_KSI hardcodes — fibre twin only for Stage C",
+    "IMK / hinge_models / ASCE 41 acceptance still ksi — IS hinge analogue found:false (prefer fibre Stage C for N-mm)",
+    "NLRHA Ch.16 live idealisation still psf-threshold rooted (16.3.2 40%/80% of unreduced live) — no IS suite; found:false",
+    "Module ANALYSIS_UNITS default remains kip-in for USA archetypes; India jobs opt in via jurisdiction+units or native_nmm",
+    "Some ASCE Ch.16 / P-695 narrative strings in reports remain USA-clause wording (labels SI when India/N-mm)",
 ]
 
 # Exact conversion factors
@@ -763,7 +762,11 @@ def set_analysis_units(units: str) -> str:
 
 
 def wants_native_nmm_analysis(cfg: dict | None = None) -> bool:
-    """True when OpenSees analysis should stay N-mm (skip Stage B kip bridge)."""
+    """True when OpenSees analysis should stay N-mm (skip Stage B kip bridge).
+
+    Wave 5: India jurisdiction + units N-mm (or SI display cfg) defaults to native N-mm
+    unless force_kip_in / legacy kip-in is set. Module default ANALYSIS_UNITS stays kip-in.
+    """
     if cfg is not None:
         if cfg.get("force_kip_in") or wants_legacy_kip_in(cfg):
             return False
@@ -772,8 +775,12 @@ def wants_native_nmm_analysis(cfg: dict | None = None) -> bool:
             return str(explicit).lower().startswith("n-mm") or str(explicit).lower() in ("si", "metric")
         if cfg.get("analysis_si") or cfg.get("si_native_analysis"):
             return True
-        # India job with units N-mm and no force_kip_in → prefer native when flagged
         if cfg.get("native_nmm") or cfg.get("si_analysis"):
+            return True
+        # Optional wave 5: India job with SI units → native N-mm (tests stay green via force_kip_in on USA)
+        juris = str(cfg.get("jurisdiction") or (cfg.get("load_plan") or {}).get("jurisdiction") or "").lower()
+        indiaish = juris in ("india", "is", "is_bis", "bis") or bool(cfg.get("india"))
+        if indiaish and is_si(cfg):
             return True
     return ANALYSIS_UNITS == "N-mm"
 
@@ -826,3 +833,55 @@ def fibre_length_scale(cfg: dict | None = None) -> float:
     if analysis_unit_system(cfg) == "N-mm":
         return MM_PER_IN
     return 1.0
+
+
+
+# ---------------------------------------------------------------------------
+# Wave 5 — honest leftovers (found:false) + report label helper
+# ---------------------------------------------------------------------------
+def imk_hinge_si_status() -> dict:
+    """IMK / ASCE 41 hinge scaffolding vs India SI — do not invent IS NSP tables."""
+    return {
+        "found": False,
+        "island": "IMK / hinge_models / hinge_params.json",
+        "analysis_when_nmm": "prefer Stage C fibre (FiberSectionBuilder units=N-mm); IMK stays ASCE 41 / ksi",
+        "note": (
+            "No IS 1893 / IS 800 NSP hinge acceptance analogue in corpus. "
+            "Leaving ModIMKPeakOriented arithmetic in ksi is intentional; "
+            "do not invent IO/LS/CP from IS 800 §4.5 plastic analysis."
+        ),
+        "action": "Use fibre plasticity for native N-mm India jobs; keep UNVERIFIED banner on IMK path.",
+    }
+
+
+def ch16_live_si_status() -> dict:
+    """Ch.16 live-load idealisation remains psf-threshold rooted — no IS suite replacement."""
+    return {
+        "found": False,
+        "island": "nlrha.model.ch16_gravity live factors",
+        "note": (
+            "ASCE 7 §16.3.2 live reduction thresholds (40%/80% of unreduced live at 100 psf) "
+            "have no IS 1893 time-history suite analogue. Force unit follows g_accel (9810) when "
+            "analysis is N-mm; live pressure still uses psf thresholds (converted) unless AHJ "
+            "supplies an IS suite in nl_plan."
+        ),
+        "action": "Keep gated; document found:false; do not invent IS Ch.16 suite numerics.",
+    }
+
+
+def report_force_length_labels(cfg: dict | None = None) -> dict:
+    """Short labels for HTML reports (kip/in vs kN/m) from display_scale."""
+    sc = display_scale(cfg)
+    return {
+        "force": sc["force_lbl"],
+        "force_raw": sc.get("force_raw_lbl", sc["force_lbl"]),
+        "length": sc["length_member_lbl"] if sc.get("si") else "in",
+        "length_disp": sc["length_lbl"],
+        "moment": sc["moment_lbl"],
+        "stress": sc["stress_lbl"],
+        "pressure": sc["pressure_lbl"],
+        "system": sc["system"],
+        "si": sc["si"],
+        "analysis": sc.get("analysis", analysis_unit_system(cfg)),
+        "stiffness": (sc["force_lbl"] + "/" + (sc["length_member_lbl"] if sc.get("si") else "in")),
+    }

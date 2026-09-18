@@ -10,7 +10,19 @@ from dataclasses import dataclass, asdict
 from . import sections_db as SDB
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-E_KSI = 29000.0
+E_KSI = 29000.0  # ASCE 41 / AISC 342 scaffolding (ksi). India SI: found:false — see snl.india_units.imk_hinge_si_status(); prefer fibre Stage C for N-mm.
+
+
+def hinge_unit_system_note(units: str | None = None) -> dict:
+    """Honest status when analysis wants N-mm: IMK stays ksi (no IS NSP analogue)."""
+    try:
+        from snl.india_units import imk_hinge_si_status, analysis_unit_system
+        st = imk_hinge_si_status()
+        st["requested_units"] = units or analysis_unit_system()
+        return st
+    except Exception:
+        return {"found": False, "requested_units": units, "note": "IMK ksi scaffolding; no IS hinge analogue"}
+
 
 
 def load_params(path: str | None = None) -> dict:

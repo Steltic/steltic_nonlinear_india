@@ -119,8 +119,20 @@ def _bays_adjacent(present_k, i, j, dirn):
     return n
 
 
+def _analysis_is_nmm(cfg) -> bool:
+    try:
+        from snl import india_units as U
+        return U.analysis_unit_system(cfg) == "N-mm" or U.wants_native_nmm_analysis(cfg)
+    except Exception:
+        return False
+
+
 def beam_udl(cfg, nm, pres, member, seg_index, nseg, fD, fL, fLr):
-    """kip/in on sub-element seg_index (0..nseg-1) of a grid beam -- Steltic static_model.apply_gravity."""
+    """Distributed gravity on grid beam sub-elements (OpenSees beamUniform local).
+
+    Legacy: kip/in (psf × inch tributary). Stage D / wave 5 N-mm: N/mm (kN/m² × mm).
+    Portal frames delegate to portal_beam_udl (already dual-path).
+    """
     from . import portal_adapter as PA
     if PA.is_portal(cfg):
         return PA.portal_beam_udl(cfg, nm, member, seg_index, nseg, fD, fL, fLr)
@@ -134,26 +146,50 @@ def beam_udl(cfg, nm, pres, member, seg_index, nseg, fD, fL, fLr):
     pD = (byD.get(k) if k in byD else (cfg["D_roof"] if roof else cfg["D_floor"])) + extra.get(k, 0.0)
     byL = cfg.get("L_by_level") or {}
     pL = 0.0 if roof else (byL.get(k) if k in byL else cfg["L_floor"])
-    pLr = (cfg.get("snow") or 20.0) if roof else 0.0
+    nmm = _analysis_is_nmm(cfg)
+    # Default snow: 20 psf (kip path) or 1.0 kN/m² (SI)
+    snow_default = 1.0 if nmm else 20.0
+    pLr = (cfg.get("snow") if cfg.get("snow") is not None else snow_default) if roof else 0.0
     p = fD * pD + fL * pL + fLr * pLr
     nb = _bays_adjacent(pres.get(k, set()), i, j, member.dirn)
     SX, SY = cfg["SX"], cfg["SY"]
     other = SY if member.dirn == "X" else SX
     wcap = other / 2.0
-    th = cfg["heights"][k - 1] / 12.0
-    th = th / 2.0 if roof else th
     clad = cfg.get("clad", 0.0)
-    wclad = fD * clad * th / 12000.0 if (clad and nb == 1) else 0.0
     x1, y1, _ = nm.nodes[member.n1]; x2, y2, _ = nm.nodes[member.n2]
     L = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
     s0 = L * seg_index / nseg; s1 = L * (seg_index + 1) / nseg; smid = 0.5 * (s0 + s1)
-    width_in = min(smid, L - smid, wcap)
-    return nb * p * (width_in / 12.0) / 12000.0 + wclad
+    width = min(smid, L - smid, wcap)
+
+    if nmm:
+        # Pressures kN/m²; lengths mm → return N/mm (== kN/m numerically).
+        # If pressures look like psf (typical floor > ~5 kN/m² is rare; >20 almost certainly psf), convert.
+        try:
+            from snl.india_units import PSF_TO_KN_PER_M2
+        except Exception:
+            PSF_TO_KN_PER_M2 = 0.04788025898033585
+        if max(abs(pD), abs(pL), abs(pLr), abs(float(clad or 0.0))) > 20:
+            p *= PSF_TO_KN_PER_M2
+            clad = float(clad or 0.0) * PSF_TO_KN_PER_M2
+        th_m = float(cfg["heights"][k - 1]) / 1000.0
+        th_m = th_m / 2.0 if roof else th_m
+        wclad = fD * float(clad or 0.0) * th_m if (clad and nb == 1) else 0.0  # kN/m = N/mm
+        return nb * p * (width / 1000.0) + wclad
+
+    th = cfg["heights"][k - 1] / 12.0
+    th = th / 2.0 if roof else th
+    wclad = fD * clad * th / 12000.0 if (clad and nb == 1) else 0.0
+    return nb * p * (width / 12.0) / 12000.0 + wclad
 
 
-def combo_summary(c):
+def combo_summary(c, cfg=None):
     label, fD, fL, fLr, lat, col_only = c
     d, s = lateral_direction(lat)
     V = sum(abs(v[0]) + abs(v[1]) for v in lat.values())
-    return dict(label=label, fD=fD, fL=fL, fLr=fLr, lateral_dir=d, sign=s, base_shear_kip=round(V, 1),
-                col_only=col_only, kind=("gravity" if d is None else ("wind" if "W" in label else "seismic")))
+    out = dict(label=label, fD=fD, fL=fL, fLr=fLr, lateral_dir=d, sign=s,
+               col_only=col_only, kind=("gravity" if d is None else ("wind" if "W" in label else "seismic")))
+    if cfg is not None and _analysis_is_nmm(cfg):
+        out["base_shear_N"] = round(V, 1)
+    else:
+        out["base_shear_kip"] = round(V, 1)
+    return out

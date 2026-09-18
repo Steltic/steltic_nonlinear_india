@@ -25,8 +25,9 @@ def ch16_gravity(pkg, ch16, live_psf=None, roof_live_psf=20.0):
     """16.3.2: 1.0 D + 0.5 L, L = 40% of unreduced live (<= 100 psf) / 80% (> 100 psf). D from the recorded seismic
     mass (D + cladding). Spread equally over each level's column nodes (same idealisation as the pushover tool).
 
-    Stage D note: when ANALYSIS_UNITS is N-mm, mass×g uses g=9810 and forces are N; live still uses
-    the kip/psf idealisation unless cfg marks native SI live (remaining island — see migration plan).
+    Wave 5 / Stage D: when ANALYSIS_UNITS is N-mm, mass×g uses g=9810 and forces are N.
+    Live idealisation remains ASCE 7 §16.3.2 psf-threshold rooted — IS suite found:false
+    (snl.india_units.ch16_live_si_status). Do not invent IS 1893 Ch.16 live factors.
     """
     g = ch16["gravity"]
     lv = NM.levels(pkg)

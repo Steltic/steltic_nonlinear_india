@@ -1,29 +1,37 @@
 # NL → N-mm migration plan (India)
 
 **Date:** 2026-09-18 Asia/Bangkok (UTC+7)  
-**Constraint:** Prefer not to break the ~138+ test suite. Default analysis stays kip-in until a job opts into N-mm.
+**Constraint:** Prefer not to break the suite (≥146). Default analysis stays kip-in until a job opts into N-mm.
 
 ## Exact kip islands (inventory)
 
 | Area | Files (representative) | Quantity / hardcode |
 |------|------------------------|---------------------|
-| Unit module default | `snl/india_units.py` | `ANALYSIS_UNITS = "kip-in"` default; `set_analysis_units('N-mm')` for India jobs |
-| Package geometry | `pushover/package_reader.py`, `steltic_ddm/ingest.py` | Stage B bridge → kip-in; **Stage D** skips bridge when `native_nmm` / `_nl_analysis_units='N-mm'` |
-| Fibre / hinge models | `pushover/fibre_model.py`, `pushover/hinge_models.py`, `steltic_ddm/sections_fiber.py` | **Stage C** fibre twin E=2e5 MPa / mm² / IS 808; IMK hinges still ksi |
-| Pushover analysis | `pushover/nonlinear_model.py`, `pushover/cli.py`, `pushover/postprocess.py` | V in kip unless native N-mm package |
-| NLRHA | `nlrha/model.py`, `nlrha/run.py`, `nlrha/cli.py` | **Stage D** Path accel uses `g_accel` (9810 mm/s²); ch16 live still psf-rooted |
-| DDM / GMNIA | `steltic_ddm/portal_adapter.py`, `steltic_ddm/loads.py` | **Stage D** portal `_seis_V` / `_wind_H` / `portal_beam_udl` dual-path; grid `beam_udl` still kip/in |
-| Hazard | `nlrha/site_hazard.py`, `nlrha/india_hazard.py` | Sa/g; India zone path exists |
-| Viewers / reports | `*/viewer3d.py`, `*/report*.py` | Stage A display; many kip HTML strings remain |
+| Unit module default | `snl/india_units.py` | `ANALYSIS_UNITS = "kip-in"` default; India jurisdiction+units → native N-mm (wave 5) |
+| Package geometry | `pushover/package_reader.py`, `steltic_ddm/ingest.py` | Stage B bridge → kip-in; **Stage D** skips when `native_nmm` / `_nl_analysis_units='N-mm'` |
+| Fibre / hinge models | `pushover/fibre_model.py`, `pushover/hinge_models.py`, `steltic_ddm/sections_fiber.py` | **Stage C** fibre twin; **IMK found:false** (no IS NSP analogue — prefer fibre for N-mm) |
+| Pushover analysis | `pushover/nonlinear_model.py`, `pushover/cli.py` | V in analysis units when native N-mm |
+| NLRHA | `nlrha/model.py`, `nlrha/run.py` | Path accel `g_accel`=9810; **Ch.16 live found:false** (psf thresholds gated) |
+| DDM / GMNIA | `steltic_ddm/portal_adapter.py`, `steltic_ddm/loads.py` | Portal + **grid `beam_udl` dual-path** (wave 5) |
+| Hazard | `nlrha/site_hazard.py`, `nlrha/india_hazard.py` | Sa/g; India zone path |
+| Viewers / reports | `*/viewer3d.py`, `*/report*.py` | Stage A + **wave 5 SI HTML labels** when India/N-mm |
 
 ## Staged flip
 
-1. **Stage A — dual display only** ✅ (wave 3): `display_scale` / `fmt_force` / `fmt_moment` / `demand_field_names`; pushover viewer `unit_labels`. Engine kip-in.
-2. **Stage B — package boundary** ✅ (wave 3): N-mm HR package → kip-in once at ingest (`apply_nl_unit_bridge`); `calc['_nl_unit_bridge']`. Tests green.
-3. **Stage C — fibre/E/Fy SI twin** ✅ (wave 4): `FiberSectionBuilder(units='N-mm')` → E=2e5 MPa, dims×25.4 / IS 808 preferred; wired from `fibre_model` / GMNIA when analysis N-mm.
-4. **Stage D — OpenSees N-mm path** 🟡 **partial** (wave 4): `ANALYSIS_UNITS` can be N-mm; portal seismic/UDL N-mm twin; NLRHA `g_accel`=9810; native package skips kip bridge. **Remaining:** grid `beam_udl`, IMK/hinge ksi, ch16 live psf idealisation, report HTML sweep, default flip.
+1. **Stage A — dual display** ✅ (wave 3)
+2. **Stage B — package boundary** ✅ (wave 3)
+3. **Stage C — fibre/E/Fy SI twin** ✅ (wave 4)
+4. **Stage D — OpenSees N-mm path** ✅ (wave 5 complete for India stack)
+   - Grid `beam_udl` N/mm twin
+   - Report HTML SI labels via `report_force_length_labels`
+   - India jurisdiction + units N-mm → `wants_native_nmm_analysis`
+   - IMK / Ch.16 live: **found:false** (do not invent IS analogues)
 
 ## Gate
 
 - load_plan / IS 1893 RAG gate remains mandatory for India jobs (unchanged).
-- Do not invent IS analogues for ASCE Ch.16 / S400 Ω stacks — `found:false` stays honest.
+- Do not invent IS analogues for ASCE Ch.16 / S400 Ω / ASCE 41 hinges — `found:false` stays honest.
+
+## Wave 5 outcome
+
+**SI rewrite COMPLETE for India stack** (hard leftovers listed in `KIP_ISLANDS` / `imk_hinge_si_status` / `ch16_live_si_status`).
