@@ -216,7 +216,7 @@ class Loop(threading.Thread):
         plan = apply_edits(plan, self.edits, jd)
         self.state["plan"] = F.plan_as_json(plan)
         json.dump(self.state["plan"], open(os.path.join(self.dir, "plan.json"), "w", encoding="utf-8"), indent=1)
-        open(os.path.join(self.dir, "brief.txt"), "w", encoding="utf-8").write(plan["brief"])
+        open(os.path.join(self.dir, "brief.txt"), "w", encoding="utf-8").write(plan.get("brief") or "")
         if not plan.get("eligible"):
             self._step("plan", "failed", "; ".join(plan.get("reasons") or ["not eligible"]))
             self._set("failed", error="not eligible: " + "; ".join(plan.get("reasons") or []), finished=now(), passed=False)

@@ -14,7 +14,13 @@ def _load(args):
     from . import model as MD
     pkg = PR.load(args.package); print(PR.summary(pkg))
     prm = HM.load_params(args.params)
-    ch16 = json.load(open(os.path.join(os.path.dirname(__file__), "ch16_params.json")))
+    from . import india_authority as IA
+    ch16 = IA.load_ch16_params()
+    print(IA.authority_banner().splitlines()[0])
+    print("[india_authority] ch16_params india_authoritative=%s verified=%s" % (
+        ch16.get("india_authoritative"), ch16.get("verified")))
+    for sev, msg in IA.validate_nl_plan(job_dir=str(pkg.root)):
+        print("[%s] %s" % (sev, msg[:160]))
     b = pkg.basis
     if b.SDS is None or b.SD1 is None:
         sys.exit("design basis incomplete (SDS/SD1) -- add cfg.py to the package")

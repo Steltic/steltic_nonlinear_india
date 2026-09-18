@@ -33,28 +33,25 @@ def test_read_job_roles_groups_and_tons():
 
 
 def test_drift_plan_rc_iv_shows_the_prize_but_is_not_eligible():
+    """India fork: ASCE 16.1.2 found:false → always ineligible; numbers still surfaced."""
     p = F.drift_plan(F.read_job(EX22))
-    assert not p["eligible"] and any("Risk Category IV" in r for r in p["reasons"])
+    assert not p["eligible"]
+    assert any("16.1.2" in r and "found:false" in r for r in p["reasons"])
+    assert p.get("india_drift_relief", {}).get("found") is False
     n = p["numbers"]
-    assert abs(n["nlrha_mean_drift"] - 0.01463) < 1e-4 and n["nlrha_limit"] == 0.02 and abs(n["margin"] - 0.269) < 0.01
+    assert abs(n["nlrha_mean_drift"] - 0.01463) < 1e-4 and n["nlrha_limit"] == 0.02
     assert abs(n["linear_drift"] - 0.0091) < 1e-6 and n["linear_limit"] == 0.01
-    assert "27%" in n["prize"]
 
 
 def test_drift_plan_rc_iii_relief_and_brief():
+    """India fork: even RC III stays ineligible — no ASCE 16.1.2 analogue without nl_plan."""
     jd = F.read_job(_rc3_twin())
     p = F.drift_plan(jd)
-    assert p["eligible"], p["reasons"]
-    n, r = p["numbers"], p["relief"]
-    assert abs(n["scale"] - 0.9 * 0.03 / 0.014627) < 0.01
-    assert r["linear_target"] == n["new_cfg_drift_limit"] and r["linear_target"] <= r["nlrha_limit"]
-    assert r["clause"] == "ASCE 7-22 16.1.2" and r["nlrha_verdict"] == "ACCEPTABLE" and r["risk_category"] == "III"
-    b = p["brief"]
-    assert b.startswith("=== SNL FEEDBACK LOOP: drift ===") and "drift_relief_16_1_2 = {" in b and ("cfg['drift_limit'] = %.4f" % r["linear_target"]) in b
-    json.loads(b.split("drift_relief_16_1_2 = ", 1)[1].split("\n", 1)[0])       # the block in the brief is valid JSON
-    # options: a lower target fraction gives a lower target
-    p2 = F.drift_plan(jd, {"target_fraction": 0.8})
-    assert p2["numbers"]["new_cfg_drift_limit"] < n["new_cfg_drift_limit"]
+    assert not p["eligible"], p["reasons"]
+    assert any("found:false" in r for r in p["reasons"])
+    assert p.get("india_drift_relief", {}).get("found") is False
+    n = p["numbers"]
+    assert n.get("nlrha_mean_drift") is not None
 
 
 def test_resize_plan_joins_system_role_to_member_dc():

@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "steltic-nonlinear"
+name = "steltic-nonlinear-india"
 version = "0.2.0"
-description = "Steltic_nonlinear (SNL): Pushover (ASCE 41 NSP), NLRHA (ASCE 7-22 Ch. 16) and DDM (GMNIA system capacity) on a Steltic steel design package, with 3-D viewers and the four-analyses comparison"
+description = "steltic_nonlinear_india (SNL-IN): India fork — IS 1893-oriented NLRHA + pushover scaffolding + DDM on a steltic_india HR package; ASCE Ch.16/41 retained as non-authoritative scaffolding behind RAG gates"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = {text = "MIT"}
@@ -23,7 +23,7 @@ mesh-converge = "mesh_convergence.driver:cli_main"
 packages = ["snl", "pushover", "nlrha", "steltic_ddm", "records", "mesh_convergence"]
 
 [tool.setuptools.package-data]
-snl = ["four_analyses.css", "loop_ui/*"]
+snl = ["four_analyses.css", "loop_ui/*", "india_collection_stems.json"]
 pushover = ["aisc_shapes.csv", "hinge_params.json", "viewer_core.html", "vendor/*"]
 nlrha = ["ch16_params.json", "viewer_core.html", "vendor/*"]
 steltic_ddm = ["data/*", "viewer_core.html", "vendor/*"]

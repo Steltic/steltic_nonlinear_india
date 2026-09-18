@@ -5,7 +5,8 @@ design_pipeline.combos. CFS portal one-bay packs use structure_kind=portal,
 cfs_frame.lrfd_combos, and no diaphragm masters. This module:
 
   * detects portal packages
-  * regenerates ASCE 7-22 §2.3 combos via cfs_frame.lrfd_combos
+  * regenerates combos via cfs_frame.lrfd_combos (USA ASCE scaffolding;
+    India CFS engine uses load_plan — set STELTIC_ENGINE_DIR to steltic_CFS_india)
   * maps them to the DDM tuple (label, fD, fL, fLr, lateral, col_only)
   * supplies roof gravity UDL + eave/wall lateral nodal loads
   * runs a no-master transfer gate (periods + eave unit lateral)
