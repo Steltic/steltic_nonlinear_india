@@ -1,44 +1,28 @@
-# Steltic_nonlinear (SNL) — the three nonlinear checks of a Steltic steel design, in one repository and one bot
+# steltic_nonlinear_india (SNL-IN) — India nonlinear checks on a steltic_india design package
 
-`Steltic_nonlinear` takes the output package of **Steltic** (the HR Steel App design: `report.html`, `cfg.py`,
-`model_opensees.py`, `design/…`, `viewer_3d.html`) and runs the three nonlinear analyses that the Steltic Grok Bot set
-previously spread over three repositories and three bots:
+India fork of [`Steltic/steltic_nonlinear`](https://github.com/Steltic/steltic_nonlinear) (USA ASCE 41 / ASCE 7 Ch.16).
+**Do not modify the USA repo from this worktree.** Target publish: `Steltic/steltic_nonlinear_india` (bundle → Git manager).
 
-| step | engine | question | outputs |
+| step | engine | India authority | outputs |
 |---|---|---|---|
-| **Pushover** | `pushover/` (ASCE 41-23 NSP, AISC 342-22 components) | mechanism, system strength Ω, target displacements, IO/LS/CP acceptance | `pushover/pushover_report.html`, `pushover_package.json`, `hinge_params_used.json`, curves, `pushover_viewer_3d.html` |
-| **NLRHA** | `nlrha/` (ASCE 7-22 Chapter 16) | mean drifts and element demands under ≥ 11 MCE<sub>R</sub> pairs, Section 16.4 acceptance for the Risk Category | `nlrha/nlrha_report.html`, `nlrha_package.json`, `gm_scaling.json`, `raw_results.pkl`, `nlrha_viewer_3d.html` |
-| **DDM** | `steltic_ddm/` (GMNIA system capacity) | load factor λ<sub>u</sub> of every ASCE 7 combination against φ<sub>s</sub>λ<sub>u</sub> ≥ 1 | `ddm_report.html`, `ddm_results.json`, `model_gmnia.py`, `ddm_viewer_3d.html` |
-| **Comparison** | `snl/compare.py` | the Steltic design values beside the three results | `four_analyses.html`, `snl_summary.json`, `steltic_viewer_bundle.html` |
+| **Pushover** | `pushover/` | **found:false** for IS NSP/hinge tables — ASCE 41/AISC 342 scaffolding + UNVERIFIED params until RAG/AHJ source | `pushover/*` viewers |
+| **NLRHA** | `nlrha/` | **IS 1893 Part 1:2016 §7.7 / 7.7.4** via LIVE RAG → `nl_plan`; `ch16_params.json` = ASCE scaffolding only (`india_authoritative=false`) | `nlrha/*` |
+| **DDM** | `steltic_ddm/` | Combinations from **steltic_india `load_plan`** (IS 875 / IS 1893 RAG), not hardcoded ASCE 7 §2.3 | `ddm_*` |
+| **Comparison** | `snl/compare.py` | Same three-analysis + viewers architecture | `four_analyses.html`, hub |
 
-One command does all of it:
+Corpus: **`/workspace/engineering_rag_india`** only. Gates: `nlrha/india_authority.py`, `contract/INDIA_START.md`.
 
-```bash
-python -m snl run Ex22_SMF.zip --params ex22_hinge_params.json --steltic-engine /path/to/steltic/steel_engine
-```
+> **Prototype. Not for construction.** ASCE §16.1.2 drift relief is **found:false** on this fork (feedback drift loop ineligible unless `nl_plan.drift_relief_analogue` is retrieved). Every result must be sealed by a licensed PE.
 
-The Grok Bot **Steltic Nonlinear (SNL)** is set up like every other Steltic bot: create the bot, paste the two prompts in
-`prompts/bootstrap_prompts.md` — Prompt 1 loads the skills (`Skill_querying_PACKAGED.md` from `steltic_grokbot` +
-`skills/Skill_SNL_PACKAGED.md` from here), Prompt 2 starts "Clone https://github.com/Steltic/Steltic_nonlinear …" and
-installs, proves the example and sets the per-job protocol. The bot then wraps the command in the engineering protocol: it retrieves the component parameters from ASCE/SEI 41-23 → ANSI/AISC 342-22
-through Query file manager, fills the job copy of `hinge_params.json`, runs, judges each result with its own rules
-(BPON levels for the Risk Category, Chapter 16 RC rules, the transfer gate and φ<sub>s</sub> class), and writes the
-four-analyses narrative.
+## Critical difference from USA steltic_nonlinear
 
-> **Prototype. Not for construction.** The repository `pushover/hinge_params.json` is a placeholder (red UNVERIFIED
-> banner until a job copy filled from the standards is passed with `--params`); φ<sub>s</sub> is a literature value;
-> Chapter 16 requires design criteria (16.1.4) and independent review (16.5). Every result must be checked and sealed by a
-> licensed professional engineer.
+| | USA | India (this fork) |
+|--|--|--|
+| HR package | steltic (AISC / ASCE 7) | **steltic_india** (IS 800 / IS 808 / `load_plan`) |
+| NLRHA code | ASCE 7-22 Ch.16 authoritative in `ch16_params.json` | IS 1893 via **live RAG**; Ch.16 file is scaffolding |
+| Drift relief | §16.1.2 RC I–III | **found:false** — do not fabricate |
+| STELTIC_ENGINE_DIR | `steltic/steel_engine` | **`steltic_india/steel_engine`** |
 
-## For videos and demonstrations see [stelticai.com](https://stelticai.com)
-
-## Product defaults
-
-See [`docs/PRODUCT_DEFAULTS.md`](docs/PRODUCT_DEFAULTS.md) (rules 1–9) and [`docs/FIBRE_MESH_CONVERGENCE.md`](docs/FIBRE_MESH_CONVERGENCE.md).
-
-- **NSP / HR DDM:** fibre + mesh 10%
-- **NLRHA:** ModIMK → PZ×1 → fibre+mesh; dual-gate; early abort on 2 NC
-- **CFS DDM:** Tier 2 fidelity gate (no shell)
 
 ## Install
 
@@ -46,7 +30,7 @@ See [`docs/PRODUCT_DEFAULTS.md`](docs/PRODUCT_DEFAULTS.md) (rules 1–9) and [`d
 git clone <this repo> Steltic_nonlinear && cd Steltic_nonlinear
 python3.12 -m venv .venv && . .venv/bin/activate        # openseespy: Python 3.10–3.12 only
 pip install -e .                                        # openseespy, numpy, scipy, matplotlib; ground motions ship in records/
-export STELTIC_ENGINE_DIR=/path/to/steltic/steel_engine # the DDM regenerates the ASCE 7 combinations with Steltic's design_pipeline
+export STELTIC_ENGINE_DIR=/path/to/steltic_india/steel_engine  # India: load_plan combos via india_loads
 python -m snl inspect examples/Ex22_SMF                 # read the design basis
 python -m snl report  examples/Ex22_SMF                 # rebuild the four-analyses sheet from the shipped outputs (no analysis)
 ```
@@ -77,7 +61,7 @@ NLRHA 30–90 min (dt 0.01 s), DDM 30–70 min.
 ## Site-specific ground motions (16.2)
 
 `python -m nlrha hazard <package> --lat 34.05 --lon -118.25 --site-class D [--cs-period 1.0 0.3] [--t1 1.1]` pulls the
-ASCE 7-22 multi-period MCE<sub>R</sub> spectrum from the USGS design-maps service and the mean M / R / ε (with the
+USA-scaffolding USGS ASCE 7-22 multi-period MCE<sub>R</sub> (not India authority) spectrum from the USGS design-maps service and the mean M / R / ε (with the
 contributing faults) from the USGS NSHM disaggregation at the conditioning period, builds conditional (mean) spectra
 (Baker 2011 form, Baker & Jayaram 2008 correlation), screens the site for near-fault sources and the pulse share that
 implies, and writes `nlrha/site_hazard.json` + `site_hazard.html`. `nlrha run --target mcer|cs` then selects and
@@ -86,6 +70,8 @@ disaggregation (16.2.2), reserving the pulse share for records flagged `pulse` i
 beyond the shipped FEMA P-695 far-field set with `--records-set <folder> ...`: folders of PEER `.AT2` pairs (NGA-West2
 downloads with their `_SearchResults.csv`) or two-column CSVs are indexed on the fly (`python -m nlrha library <folder>`).
 See `docs/README_nlrha.md`.
+**India:** prefer `python -m nlrha hazard <package> --zone III --soil-type II` (IS 1893 Ah via `nlrha.india_hazard`). USGS only with `--usgs --lat --lon` (scaffolding). Scale with `--target is1893`.
+
 
 ## Design criteria document (16.1.4)
 

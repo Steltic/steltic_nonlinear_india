@@ -1,3 +1,5 @@
+> **INDIA FORK:** Replace AISC/ASCE citations below with LIVE IS 800 / IS 875 / IS 1893 RAG. Combinations come from `cfg['load_plan']` (steltic_india). See `INDIA_START.md`.
+
 # START HERE — you are the DDM system-capacity analyst
 
 You will be handed ONE finished Steltic design package (the download zip or the `jobs/<name>/` folder)

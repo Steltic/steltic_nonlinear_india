@@ -99,28 +99,15 @@ def test_resize_loop_with_user_edits():
 
 
 def test_drift_loop_and_promotion():
+    """India fork: ASCE 16.1.2 drift relief found:false — loop refuses eligibility (no promotion)."""
     job = _job(rc3=True); hr = FH.FakeHR(base_zip=FH.make_base_zip(src=job))
     try:
         lp, _ = _run(job, "drift", hr)
         st = lp.state
-        assert st["status"] == "verified", (st.get("error"), [c["text"] for c in (st.get("comparison") or {}).get("checks", {}).get("items", [])])
-        rel = st["plan"]["relief"]
-        cand_cfg = open(os.path.join(job, "feedback", lp.id, "candidate", "cfg.py")).read()
-        assert "drift_relief_16_1_2" in cand_cfg and ("drift_limit=%.4f" % rel["linear_target"]) in cand_cfg
-        c = st["comparison"]
-        assert c["drift"]["candidate_limit"] > c["drift"]["base_limit"] and c["tons"]["delta"] < 0
-        # promotion: HR Steel base job replaced (previous archived), hub project archived + replaced, marker written
-        lines = []
-        st2 = L.promote(job, lp.id, hr.url, base_building="Ex22_SMF", on_log=lines.append)
-        assert st2["status"] == "promoted" and st2["archived"]["hr"].startswith("Ex22_SMF__") and hr.archived
-        assert b"drift_relief_16_1_2" in FH._read(hr.jobs["Ex22_SMF"])["cfg.py"]
-        assert "drift_relief_16_1_2" in open(os.path.join(job, "cfg.py")).read()
-        dor = json.load(open(os.path.join(job, "design", "design_of_record.json")))
-        assert dor["loop"] == lp.id and dor["passed"] and "16.4" not in dor["supersedes"]
-        arch = os.listdir(os.path.join(job, "archive"))
-        assert len(arch) == 1 and os.path.exists(os.path.join(job, "archive", arch[0], "cfg.py")) and os.path.exists(os.path.join(job, "archive", arch[0], "nlrha", "nlrha_package.json"))
-        assert not os.path.exists(os.path.join(job, "nlrha", "nlrha_package.json"))       # the promoted design has no Chapter 16 result yet (verify=none)
-        assert L.load_state(job, lp.id)["status"] == "promoted"
+        assert st["status"] == "failed"
+        err = st.get("error") or ""
+        assert "not eligible" in err or "found:false" in err or "16.1.2" in err
+        assert "Ex22_SMF__drift" not in hr.jobs
     finally:
         hr.close()
 
@@ -143,7 +130,7 @@ def test_loop_reports_hr_pause_and_errors():
     job = _job()
     lp = L.Loop(job, "mechanism", verify="none", hr_url="http://127.0.0.1:9", base_building="Ex22_SMF"); lp.start(); lp.join(60)
     assert lp.state["status"] == "failed" and "not reachable" in lp.state["error"]
-    # not eligible (RC IV drift)
+    # not eligible (India: ASCE 16.1.2 found:false — RC IV or otherwise)
     job = _job(); hr = FH.FakeHR()
     try:
         lp, _ = _run(job, "drift", hr)

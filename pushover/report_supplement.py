@@ -31,7 +31,8 @@ def _png(fig):
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def fig_capacity(run, nsp, p695):
+def fig_capacity(run, nsp, p695, ul=None):
+    ul = ul or dict(force="kip", length="in")
     u = np.asarray(run["rec"]["u"]); V = np.asarray(run["rec"]["V"])
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
     ax.plot(u, V, color="#1a3d7c", lw=2, label="pushover (%s)" % run["direction"])
@@ -40,12 +41,12 @@ def fig_capacity(run, nsp, p695):
         ax.plot([0, n["uy"], n["target_disp_in"]], [0, n["Vy"], n["Vy"] + n["alpha1"] * n["Ke"] * (n["target_disp_in"] - n["uy"])],
                 "--", color=colors[lvl], lw=1.2, label="bilinear idealisation (%s)" % lvl)
         ax.axvline(n["target_disp_in"], color=colors[lvl], lw=1, ls=":")
-        ax.text(n["target_disp_in"], V.max() * 0.05, " δt %s = %.1f in" % (lvl, n["target_disp_in"]), color=colors[lvl],
+        ax.text(n["target_disp_in"], V.max() * 0.05, " δt %s = %.1f %s" % (lvl, n["target_disp_in"], ul["length"]), color=colors[lvl],
                 rotation=90, va="bottom", fontsize=8.5)
     if p695["V_design_kip"]:
-        ax.axhline(p695["V_design_kip"], color="#777", lw=1, ls="-.", label="ELF design base shear V = %.0f kip" % p695["V_design_kip"])
+        ax.axhline(p695["V_design_kip"], color="#777", lw=1, ls="-.", label="ELF design base shear V = %.0f %s" % (p695["V_design_kip"], ul["force"]))
     ax.axhline(0.8 * p695["Vmax_kip"], color="#999", lw=0.8, ls=":")
-    ax.set_xlabel("roof displacement (in)"); ax.set_ylabel("base shear (kip)")
+    ax.set_xlabel("roof displacement (%s)" % ul["length"]); ax.set_ylabel("base shear (%s)" % ul["force"])
     ax.set_title("Capacity curve — push %s (first-mode pattern, P-Δ on)" % run["direction"], fontsize=11)
     ax.grid(alpha=.3); ax.legend(fontsize=8, loc="lower right")
     return _png(fig)
@@ -86,13 +87,41 @@ def _tag(ok, txt_ok="PASS", txt_ng="NG"):
     return '<span class="ok">%s</span>' % txt_ok if ok else '<span class="ng">%s</span>' % txt_ng
 
 
+def _ul(pkg_or_cfg=None):
+    """Report unit labels (kip/in or SI) from package/calc/cfg."""
+    try:
+        from snl.india_units import report_force_length_labels, is_si
+        if isinstance(pkg_or_cfg, dict):
+            cfg = dict(pkg_or_cfg)
+        elif pkg_or_cfg is not None:
+            calc = getattr(pkg_or_cfg, "calc", None) or {}
+            cfg = dict(calc) if isinstance(calc, dict) else {}
+            basis = getattr(pkg_or_cfg, "basis", None)
+            if basis is not None:
+                cfg.setdefault("units", getattr(basis, "package_units", None) or cfg.get("units"))
+            if cfg.get("_nl_unit_bridge") or cfg.get("native_nmm") or cfg.get("_nl_analysis_units") == "N-mm":
+                cfg.setdefault("units", "N-mm")
+        else:
+            cfg = {}
+        if is_si(cfg) or cfg.get("display_units") == "N-mm":
+            cfg.setdefault("units", "N-mm")
+        return report_force_length_labels(cfg)
+    except Exception:
+        return dict(force="kip", length="in", length_disp="ft", moment="kip-ft", stress="ksi",
+                    pressure="psf", system="kip-in", si=False, stiffness="kip/in", analysis="kip-in")
+
+
+
+
 def write(outdir, pkg, prm, runs, results, gravity_table, hinge_stats, elapsed_s):
     os.makedirs(outdir, exist_ok=True)
     b = pkg.basis
+    ul = _ul(pkg)
     ts = datetime.datetime.now().isoformat(timespec="seconds")
     H = []
     H.append("<style>%s</style><title>Pushover supplement — %s</title>" % (CSS, pkg.name))
     H.append("<h1>Nonlinear static (pushover) supplement — %s</h1>" % pkg.name)
+    H.append('<div class="sub">Analysis / display units: <b>%s</b></div>' % ul.get("system", "kip-in"))
     H.append('<div class="sub">Supplement to the Steltic AISC 360/341 design package <code>%s</code> · generated %s · '
              'Pushover Analyst prototype · analysis time %.0f s</div>' % (pkg.root.name, ts, elapsed_s))
     if not prm.get("verified"):
@@ -107,8 +136,9 @@ def write(outdir, pkg, prm, runs, results, gravity_table, hinge_stats, elapsed_s
     H.append("<h2>1. Design basis carried over from the linear package</h2>")
     H.append("<table><tr><th>Item</th><th>Value</th><th>Source in package</th></tr>")
     for k, lab in (("system", "Seismic force-resisting system"), ("SDS", "S<sub>DS</sub> (g)"), ("SD1", "S<sub>D1</sub> (g)"), ("R", "R"),
-                   ("Cd", "C<sub>d</sub>"), ("Om0", "Ω<sub>0</sub>"), ("Ie", "I<sub>e</sub>"), ("W_kip", "Effective seismic weight W (kip)"),
-                   ("V_design_kip", "ELF design base shear V (kip)"), ("T_design_s", "Design period T (s)"), ("L_floor_psf", "Floor live load (psf)")):
+                   ("Cd", "C<sub>d</sub>"), ("Om0", "Ω<sub>0</sub>"), ("Ie", "I<sub>e</sub>"), ("W_kip", "Effective seismic weight W (%s)" % ul["force"]),
+                   ("V_design_kip", "ELF design base shear V (%s)" % ul["force"]), ("T_design_s", "Design period T (s)"),
+                   ("L_floor_psf", "Floor live load (%s)" % ul["pressure"])):
         H.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (lab, _f(getattr(b, k)), b.sources.get(k, "—")))
     H.append("</table>")
     _pz = (prm.get("panel_zones") or {}).get("mode", "rigid")
@@ -120,8 +150,9 @@ def write(outdir, pkg, prm, runs, results, gravity_table, hinge_stats, elapsed_s
              % (len(pkg.model.nodes), len(pkg.model.elements), sum(len(r["hinge_tags"]) for r in runs.values()) // max(len(runs), 1),
                 hinge_stats["col"], hinge_stats["beam"], hinge_stats["force_controlled"], hinge_stats["released_ends"],
                 _pz, (" (%d FR joints)" % _npz) if str(_pz).lower() == "scissors" else ""))
-    H.append("<h3>Gravity load present during the push: %s</h3><table><tr><th>Level</th><th>z (in)</th><th>Q<sub>D</sub> (kip)</th>"
-             "<th>0.25 Q<sub>L</sub> (kip)</th><th>Q<sub>G</sub> applied (kip)</th><th>column nodes</th><th>footprint (ft²)</th></tr>" % prm["gravity_for_pushover"]["expr"])
+    H.append("<h3>Gravity load present during the push: %s</h3><table><tr><th>Level</th><th>z (%s)</th><th>Q<sub>D</sub> (%s)</th>"
+             "<th>0.25 Q<sub>L</sub> (%s)</th><th>Q<sub>G</sub> applied (%s)</th><th>column nodes</th><th>footprint</th></tr>"
+             % (prm["gravity_for_pushover"]["expr"], ul["length"], ul["force"], ul["force"], ul["force"]))
     for r in gravity_table:
         H.append("<tr><td>%d</td><td>%.0f</td><td>%.0f</td><td>%.0f</td><td>%.0f</td><td>%d</td><td>%d</td></tr>"
                  % (r["level"], r["z_in"], r["WD_kip"], r["QL25_kip"], r["QG_kip"], r["nodes"], r["area_ft2"]))
@@ -133,15 +164,15 @@ def write(outdir, pkg, prm, runs, results, gravity_table, hinge_stats, elapsed_s
         H.append("<h2>2%s. Push %s — capacity curve and ASCE 41 NSP</h2>" % (d.lower(), d))
         H.append('<figure><img src="%s"><figcaption>Figure. Base shear vs roof displacement, bilinear idealisation (ASCE 41 §7.4.3.2.4) '
                  'and target displacements for BSE-1N (design) and BSE-2N (MCE<sub>R</sub>). Run stopped: %s.</figcaption></figure>'
-                 % (fig_capacity(run, R["nsp"], R["p695"]), run["stop_reason"]))
+                 % (fig_capacity(run, R["nsp"], R["p695"], ul=ul), run["stop_reason"]))
         H.append("<p>Load pattern: mode %d of the hinge model (T<sub>1</sub> = %.3f s, %.0f%% of mass in %s); lateral force at each level "
                  "∝ m<sub>k</sub>φ<sub>k</sub> (§7.4.3.2.3). Control node: roof diaphragm master.</p>"
                  % (run["pattern"]["mode"], run["pattern"]["T1"], 100 * run["pattern"]["meff_frac"], d))
         H.append("<table><tr><th>NSP quantity</th>" + "".join("<th>%s</th>" % l for l in R["nsp"]) + "</tr>")
         rows = (("Spectral S<sub>XS</sub> / S<sub>X1</sub> (g)", lambda n: "%.2f / %.2f" % (n["SXS"], n["SX1"])),
                 ("Effective period T<sub>e</sub> = T<sub>i</sub>√(K<sub>i</sub>/K<sub>e</sub>) (s)", lambda n: _f(n["Te"], 3)),
-                ("K<sub>i</sub> / K<sub>e</sub> (kip/in)", lambda n: "%.0f / %.0f" % (n["Ki"], n["Ke"])),
-                ("Idealised V<sub>y</sub> (kip) · Δ<sub>y</sub> (in)", lambda n: "%.0f · %.2f" % (n["Vy"], n["uy"])),
+                ("K<sub>i</sub> / K<sub>e</sub> (%s)" % ul["stiffness"], lambda n: "%.0f / %.0f" % (n["Ki"], n["Ke"])),
+                ("Idealised V<sub>y</sub> (%s) · Δ<sub>y</sub> (%s)" % (ul["force"], ul["length"]), lambda n: "%.0f · %.2f" % (n["Vy"], n["uy"])),
                 ("Post-yield slope α<sub>1</sub>", lambda n: _f(n["alpha1"], 3)),
                 ("S<sub>a</sub>(T<sub>e</sub>) (g)", lambda n: _f(n["Sa"], 3)),
                 ("C<sub>0</sub> (Γ<sub>1</sub>φ<sub>roof</sub>) · C<sub>1</sub> · C<sub>2</sub>", lambda n: "%.3f · %.3f · %.3f" % (n["C0"], n["C1"], n["C2"])),
@@ -155,8 +186,8 @@ def write(outdir, pkg, prm, runs, results, gravity_table, hinge_stats, elapsed_s
 
         p = R["p695"]
         H.append("<h3>FEMA P-695-style factors from this curve</h3><table><tr><th>Factor</th><th>Value</th><th>Design basis</th><th>Reading</th></tr>")
-        H.append("<tr><td>Overstrength Ω = V<sub>max</sub>/V</td><td>%s (V<sub>max</sub> = %.0f kip, V<sub>max</sub>/W = %.2f)</td><td>Ω<sub>0</sub> = %s</td><td>%s</td></tr>"
-                 % (_f(p["Omega"]), p["Vmax_kip"], p["Vmax_over_W"], _f(b.Om0, 1),
+        H.append("<tr><td>Overstrength Ω = V<sub>max</sub>/V</td><td>%s (V<sub>max</sub> = %.0f %s, V<sub>max</sub>/W = %.2f)</td><td>Ω<sub>0</sub> = %s</td><td>%s</td></tr>"
+                 % (_f(p["Omega"]), p["Vmax_kip"], ul["force"], p["Vmax_over_W"], _f(b.Om0, 1),
                     "system overstrength far exceeds the tabulated Ω<sub>0</sub> — heavy drift/serviceability-governed sections; capacity-design forces bounded by Ω<sub>0</sub>Q<sub>E</sub> are not an upper bound here"
                     if (p["Omega"] or 0) > 1.5 * (b.Om0 or 3) else "within the usual range of the tabulated Ω<sub>0</sub>"))
         H.append("<tr><td>Period-based ductility μ<sub>T</sub> = δ<sub>u</sub>/δ<sub>y,eff</sub></td><td>%s (δ<sub>u</sub> = %.1f in %s; δ<sub>y,eff</sub> = %.2f in, T = %.2f s)</td><td>R = %s, C<sub>d</sub> = %s</td><td>%s</td></tr>"
@@ -180,9 +211,9 @@ def write(outdir, pkg, prm, runs, results, gravity_table, hinge_stats, elapsed_s
         for lvl, acc in R["acc"].items():
             perf = "LS" if lvl == "BSE-1N" else "CP"
             H.append("<p><b>%s → δ<sub>t</sub> = %.2f in (step %d) · performance level checked: %s · worst D/C: IO %.2f, LS %.2f, CP %.2f %s · "
-                     "max story drift %.2f%% · max column axial %s kip</b></p>"
+                     "max story drift %.2f%% · max column axial %s %s</b></p>"
                      % (lvl, acc["roof_disp_in"], acc["step"], perf, acc["worst_DC"]["IO"], acc["worst_DC"]["LS"], acc["worst_DC"]["CP"],
-                        _tag(acc["worst_DC"][perf] <= 1.0), 100 * acc["max_story_drift"], _f(acc["col_N_max_kip"], 0)))
+                        _tag(acc["worst_DC"][perf] <= 1.0), 100 * acc["max_story_drift"], _f(acc["col_N_max_kip"], 0), ul["force"]))
             H.append("<table><tr><th>Hinge group</th><th>Section</th><th>elev. (in)</th><th>hinges</th><th>yielded</th><th>θ<sub>pl,max</sub> (rad) · braces: |Δ|<sub>max</sub> (in)</th>"
                      "<th>IO limit</th><th>LS limit</th><th>CP limit</th><th>D/C IO</th><th>D/C LS</th><th>D/C CP</th></tr>")
             for g in acc["groups"]:

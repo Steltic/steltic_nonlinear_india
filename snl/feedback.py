@@ -5,7 +5,8 @@ ddm_results.json). Each loop reads what the analyses measured, decides whether t
 eligible, builds a machine-derived CHANGE SET and the exact brief HR Steel's design agent applies
 through its *Continue* path. Nothing here talks to a server; snl/loop.py does that.
 
-    drift      Design drift to the measured response instead of C_d (ASCE 7-22 16.1.2, RC I-III only).
+    drift      Design drift to measured response (USA: ASCE 7-22 16.1.2). On India fork: found:false
+               unless nl_plan.drift_relief_analogue is retrieved — never fabricate ASCE→IS maps.
     resize     Resize by system role -- the DDM / NLRHA / pushover strain picture joined to the
                member-based D/C of calc_package.json.
     mechanism  Mechanism shaping through SCWB and panel zones -- pushover component acceptance and the
@@ -182,6 +183,51 @@ def drift_plan(jd, options=None):
     nl = jd.get("nlrha"); st = jd["steltic"]
     plan = dict(kind="drift", title=LOOPS["drift"], eligible=False, reasons=[], numbers={}, sources={})
     rc = risk_category(jd); plan["risk_category"] = rc
+    # --- India fork: ASCE 16.1.2 drift relief is found:false unless nl_plan says otherwise ---
+    try:
+        from nlrha import india_authority as IA
+        analogue = IA.drift_relief_analogue(job_dir=jd.get("job"))
+        plan["india_drift_relief"] = analogue
+        plan["sources"]["india_authority"] = "nlrha/india_authority.py ASCE_GAPS id=asce_16_1_2_drift_relief"
+        if not analogue.get("found"):
+            plan["reasons"].append(
+                "India: ASCE 7-22 §16.1.2 drift relief found:false — no IS 1893 analogue retrieved "
+                "that waives cl.7.11.1.1 (0.004 h). Leave WARN; do not fabricate. "
+                "(Provide nl_plan.drift_relief_analogue with stem/clause/cite if an AHJ-accepted "
+                "clause is found via /workspace/engineering_rag_india.)"
+            )
+            plan["eligible"] = False
+            # Still fill numbers for transparency when NLRHA exists, then return ineligible.
+            if nl:
+                V, L = nl.get("verdict") or {}, nl.get("limits") or {}
+                mean16, lim16 = V.get("mean_drift_max"), L.get("mean_limit")
+                lin = st.get("drift_X") or st.get("drift_Y")
+                lin_max = max(max(st["drift_X"] or [0]), max(st["drift_Y"] or [0])) / 100.0 if lin else None
+                lin_lim = (st.get("drift_limit_pct") or 0) / 100.0 or None
+                plan["numbers"] = dict(
+                    linear_drift=lin_max, linear_limit=lin_lim,
+                    nlrha_mean_drift=mean16, nlrha_limit=lim16,
+                    nlrha_verdict="ACCEPTABLE" if V.get("overall") else "NOT ACCEPTABLE",
+                    table_12_12_1=L.get("table_12_12_1"),
+                    note="numbers are USA-scaffolding artefacts; India drift limit is IS 1893 7.11.1.1",
+                )
+                plan["sources"]["clause"] = (
+                    "found:false for ASCE 16.1.2 on India fork; IS anchor 7.11.1.1 (0.004 h) — "
+                    "see india_authority.IS_ANCHORS"
+                )
+            _nl = chr(10)
+            plan["brief"] = (
+                (BRIEF_HEADER % "drift") + _nl + _nl
+                + "INDIA: ASCE 7-22 §16.1.2 drift relief found:false. "
+                + "Do not apply drift_relief_16_1_2. Use IS 1893 cl.7.11.1.1 (0.004 h) unless "
+                + "nl_plan.drift_relief_analogue is retrieved with stem/clause/cite." + _nl
+                + "Reasons: " + "; ".join(plan["reasons"])
+            )
+            return plan
+    except Exception as e:  # noqa: BLE001 — never block resize/mechanism on import glitch
+        plan["reasons"].append("India drift-relief gate error: %s" % e)
+        plan["brief"] = (BRIEF_HEADER % "drift") + chr(10)*2 + "India drift-relief gate error: %s" % e
+        return plan
     if not nl:
         plan["reasons"].append("no Chapter 16 result in nlrha/nlrha_package.json -- run the NLRHA first")
         return plan

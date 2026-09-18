@@ -8,28 +8,64 @@ import numpy as np
 import openseespy.opensees as ops
 from pushover import nonlinear_model as NM
 
-G_IN = 386.4
+G_IN = 386.4  # legacy kip-in; prefer g_accel(cfg) for Stage D N-mm (9810 mm/s²)
+
+
+def _g_for_pkg(pkg):
+    """Analysis g (in/s² or mm/s²) from package calc bridge / analysis units."""
+    try:
+        from snl import india_units as U
+        cfg = pkg.calc if isinstance(getattr(pkg, "calc", None), dict) else {}
+        return U.g_accel(cfg)
+    except Exception:
+        return G_IN
 
 
 def ch16_gravity(pkg, ch16, live_psf=None, roof_live_psf=20.0):
     """16.3.2: 1.0 D + 0.5 L, L = 40% of unreduced live (<= 100 psf) / 80% (> 100 psf). D from the recorded seismic
-    mass (D + cladding). Spread equally over each level's column nodes (same idealisation as the pushover tool)."""
+    mass (D + cladding). Spread equally over each level's column nodes (same idealisation as the pushover tool).
+
+    Wave 5 / Stage D: when ANALYSIS_UNITS is N-mm, mass×g uses g=9810 and forces are N.
+    Live idealisation remains ASCE 7 §16.3.2 psf-threshold rooted — IS suite found:false
+    (snl.india_units.ch16_live_si_status). Do not invent IS 1893 Ch.16 live factors.
+    """
     g = ch16["gravity"]
     lv = NM.levels(pkg)
     Lpsf = live_psf if live_psf is not None else (pkg.basis.L_floor_psf or 50.0)
     loads, table, sumD, sumL = {}, [], 0.0, 0.0
+    G = _g_for_pkg(pkg)
     for k, z, master, slaves in lv:
-        WD = pkg.model.masses.get(master, [0] * 6)[0] * G_IN
+        WD = pkg.model.masses.get(master, [0] * 6)[0] * G
         xs = [pkg.model.nodes[n][0] for n in slaves]; ys = [pkg.model.nodes[n][1] for n in slaves]
-        area = (max(xs) - min(xs)) * (max(ys) - min(ys)) / 144.0
-        L0 = roof_live_psf if k == len(lv) else Lpsf
-        f = g["live_factor_gt100psf"] if L0 > 100 else g["live_factor_le100psf"]
-        Lexp = g["combination_factor"] * f * L0 * area / 1000.0            # 0.5 x (0.4 or 0.8) x L0
+        span_x = (max(xs) - min(xs)); span_y = (max(ys) - min(ys))
+        if abs(G - G_IN) < 1.0:  # kip-in
+            area = span_x * span_y / 144.0  # ft²
+            L0 = roof_live_psf if k == len(lv) else Lpsf
+            f = g["live_factor_gt100psf"] if L0 > 100 else g["live_factor_le100psf"]
+            Lexp = g["combination_factor"] * f * L0 * area / 1000.0
+            force_key = "kip"
+        else:
+            # N-mm: area mm² → m²; live as kN/m² if cfg provides L_floor_kNm2 else convert psf
+            area_m2 = span_x * span_y / 1.0e6
+            try:
+                from snl.india_units import PSF_TO_KN_PER_M2, KN_TO_N
+                L0_psf = roof_live_psf if k == len(lv) else Lpsf
+                L0 = L0_psf * PSF_TO_KN_PER_M2  # kN/m²
+            except Exception:
+                L0 = (roof_live_psf if k == len(lv) else Lpsf) * 0.04788
+            f = g["live_factor_gt100psf"] if Lpsf > 100 else g["live_factor_le100psf"]
+            Lexp = g["combination_factor"] * f * L0 * area_m2 * 1000.0  # kN → N
+            force_key = "N"
         QG = WD + Lexp
         sumD += WD; sumL += Lexp
         for n in slaves:
             loads[n] = loads.get(n, 0.0) - QG / len(slaves)
-        table.append(dict(level=k, z_in=z, D_kip=round(WD, 1), Lexp_kip=round(Lexp, 1), QG_kip=round(QG, 1), nodes=len(slaves)))
+        row = dict(level=k, z=z, nodes=len(slaves))
+        if force_key == "kip":
+            row.update(z_in=z, D_kip=round(WD, 1), Lexp_kip=round(Lexp, 1), QG_kip=round(QG, 1))
+        else:
+            row.update(z_mm=z, D_N=round(WD, 1), Lexp_N=round(Lexp, 1), QG_N=round(QG, 1))
+        table.append(row)
     no_live_case_needed = not (sumL <= g["exception_live_over_dead"] * sumD and Lpsf < 100)
     return loads, table, dict(sum_D=sumD, sum_Lexp=sumL, ratio=sumL / sumD, no_live_case_needed=no_live_case_needed)
 

@@ -103,6 +103,17 @@ def phi_s_status_text(runs, as_html=True):
     return t
 
 
+def _unit_banner(cfg):
+    try:
+        from snl.india_units import report_force_length_labels
+        ul = report_force_length_labels(cfg)
+        if ul.get("si"):
+            return "%s · %s · %s" % (ul["force"], ul["length"], ul["stress"])
+        return "kip · in · ksi"
+    except Exception:
+        return "kip · in · ksi"
+
+
 def build(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table, notes):
     """runs: list of dict(combo=..., summary=..., res=..., cls=..., phi=...)."""
     name = nm.name
@@ -117,8 +128,8 @@ def build(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table, note
     parts.append('<title>%s DDM Capacity</title><style>%s</style><div class="wrap">' % (_h(name), CSS))
     parts.append('<div class="eyebrow">Direct Design Method · system capacity report</div>')
     parts.append('<h1>%s — system capacity by advanced analysis</h1>' % _h(name))
-    parts.append('<div class="meta"><span>%s</span><span>steltic_ddm 0.1</span><span>kip · in · ksi</span><span>openseespy GMNIA</span>'
-                 '<span>cfg.py %s · model_opensees.py %s · calc_package.json %s</span></div>' % (now, prov["cfg.py"], prov["model_opensees.py"], prov["design/calc_package.json"]))
+    parts.append('<div class="meta"><span>%s</span><span>steltic_ddm 0.1</span><span>%s</span><span>openseespy GMNIA</span>'
+                 '<span>cfg.py %s · model_opensees.py %s · calc_package.json %s</span></div>' % (now, _unit_banner(cfg), prov["cfg.py"], prov["model_opensees.py"], prov["design/calc_package.json"]))
     statuses = sorted({r["phi"]["status"] for r in runs})
     parts.append('<div class="flag"><b>System resistance factors — status: %s.</b> %s φ<sub>s</sub> is a literature value — it has no '
                  'specification clause.</div>' % (", ".join(statuses), phi_s_status_text(runs)))
