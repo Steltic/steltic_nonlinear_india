@@ -27,13 +27,32 @@ Corpus: **`/workspace/engineering_rag_india`** only. Gates: `nlrha/india_authori
 ## Install
 
 ```bash
-git clone <this repo> Steltic_nonlinear && cd Steltic_nonlinear
+git clone <this repo> steltic_nonlinear_india && cd steltic_nonlinear_india
 python3.12 -m venv .venv && . .venv/bin/activate        # openseespy: Python 3.10–3.12 only
 pip install -e .                                        # openseespy, numpy, scipy, matplotlib; ground motions ship in records/
 export STELTIC_ENGINE_DIR=/path/to/steltic_india/steel_engine  # India: load_plan combos via india_loads
-python -m snl inspect examples/Ex22_SMF                 # read the design basis
+# First India job: start from examples/India_package_stub (interface) or a real steltic_india package zip
+python -m snl inspect examples/Ex22_SMF                 # USA regression fixture only (not India authority)
 python -m snl report  examples/Ex22_SMF                 # rebuild the four-analyses sheet from the shipped outputs (no analysis)
 ```
+
+## Engineering-standards RAG (required for India)
+
+Point every retrieval at **`/workspace/engineering_rag_india`** (never USA `/workspace/engineering_rag`).
+`nl_plan` / acceptance / hazard gates live in `nlrha/india_authority.py` and `contract/INDIA_START.md`.
+DDM combinations come from the HR package `cfg['load_plan']` (IS 875 + IS 1893 LIVE RAG).
+
+Local search / QFM JSON plans:
+
+```bash
+cd /workspace/engineering_rag_india
+export PYTHONPATH=scripts
+.venv/bin/python scripts/search.py exact_section 7.7.4 --doc IS_1893_Part_1_2016 --limit 2
+.venv/bin/python scripts/search.py fts "Seismic Zone Factor" --doc IS_1893_Part_1_2016 --limit 2
+.venv/bin/python scripts/search.py exact_section 5.4 --doc IS_800_2007 --limit 1
+```
+
+Set `RAG_API_URL` / `RAG_API_TOKEN` (and optionally `RAG_ALIASES_FILE=/workspace/engineering_rag_india/indexes/aliases.json`) to the India corpus server.
 
 ## Command line
 
@@ -115,8 +134,8 @@ be shipped alone; `tests/test_snl.py` asserts they match.
 `snl/` orchestrator + comparison · `pushover/`, `nlrha/`, `steltic_ddm/` the three engines (unchanged import names) ·
 `records/` FEMA P-695 far-field set · `skills/` the SNL skill and the three constituent skills · `prompts/` Grok Bot set-up ·
 `contract/DDM_START.md` · `docs/` engine READMEs, scoping documents, φ<sub>s</sub> sources, the two example narratives ·
-`examples/Ex22_SMF` (6-storey RC IV SMF, all outputs, the AISC 342-verified job parameter file) and `examples/Ex18_R3`
-(8-storey R = 3 X-braced, all outputs) · `tests/`.
+`examples/Ex22_SMF` / `examples/Ex18_R3` (USA regression fixtures only) ·
+`examples/India_package_stub/` (steltic_india interface + `nl_plan`) · `tests/`.
 
 ## Tests
 
