@@ -1,39 +1,150 @@
-"""Metric/SI boundary helpers for steltic_nonlinear_india (NL fork).
+"""India SI boundary helpers for steltic_nonlinear_india (NL fork).
 
-Same conversion factors as steltic_india.steel_engine.india_units — keep in sync.
-Full N-mm OpenSees/engine rewrite is deferred; convert metric briefs at the cfg
-boundary before pushover / NLRHA / DDM consume geometry.
+HR/CFS India wave 1 is SI-native N-mm-sec. NL keeps kip-in OpenSees/pushover/NLRHA for
+this wave (multi-day SI rewrite deferred) but shares the same conversion factors and
+apply_si_geometry for package stubs / shared briefs with steltic_india.
+
+Legacy kip+inch converters remain for remaining kip islands (report HTML labels, some
+design_post / AISC twin paths, USA archetypes). Opt in with cfg['units']='kip-in' or
+cfg['force_kip_in']=True.
+
+load_plan RAG provenance strings stay in whatever units the standard cites (usually SI);
+do not rewrite RAG text at the conversion boundary.
 """
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# Active unit system (module default = SI for India repos)
+# ---------------------------------------------------------------------------
+UNIT_SYSTEM = "kip-in"  # NL default; HR/CFS use N-mm
+
 ENGINE_UNITS = {
-    "force": "kip",
-    "length": "in",
-    "moment": "kip-in",  # reports often kip-ft
-    "stress": "ksi",
-    "pressure_area": "psf (legacy gravity path) / ksi (steel)",
+    "force": "N",
+    "length": "mm",
+    "moment": "N-mm",  # reports often show kN·m (= N-mm / 1e6)
+    "stress": "MPa",  # = N/mm²
+    "pressure_area": "kN/m² (gravity / cladding briefs)",
+    "mass": "tonne (= N·s²/mm)",
+    "time": "s",
+    "g_mm_s2": 9810.0,
+    "E_steel_MPa": 200000.0,
+    "G_steel_MPa": 76923.07692307692,  # E/2.6
     "note": (
-        "Full SI (N-mm) engine rewrite is deferred. Convert metric briefs to kip+inch "
-        "before run_pipeline; retain SI in load_plan provenance strings from RAG."
+        "NL wave: boundary helpers only. HR/CFS engines are N-mm-sec; NL OpenSees remains "
+        "kip-in until NL SI rewrite. apply_si_geometry normalizes briefs to mm for stubs; "
+        "call activate_kip_in() before pushover/NLRHA until NL engine flips."
     ),
 }
 
-# Exact
-M_TO_IN = 39.37007874015748
-MM_TO_IN = M_TO_IN / 1000.0
+LEGACY_KIP_IN_UNITS = {
+    "force": "kip",
+    "length": "in",
+    "moment": "kip-in",
+    "stress": "ksi",
+    "pressure_area": "psf",
+    "g_in_s2": 386.4,
+    "E_steel_ksi": 29000.0,
+    "G_steel_ksi": 11200.0,
+}
+
+# Remaining kip islands after wave 1 (honest inventory — not yet SI-native)
+KIP_ISLANDS = [
+    "NL OpenSees / pushover / NLRHA / DDM still kip-in (full SI deferred)",
+    "hinge params / ASCE 41 scaffolding in ksi",
+    "record scaling & hazard USGS path imperial-tolerant",
+]
+
+# Exact conversion factors
+MM_PER_IN = 25.4
+IN_PER_M = 39.37007874015748
+M_TO_IN = IN_PER_M  # legacy alias
+M_TO_MM = 1000.0
+MM_TO_IN = 1.0 / MM_PER_IN
 KN_TO_KIP = 1.0 / 4.4482216152605
+KIP_TO_N = 4448.2216152605
+KN_TO_N = 1000.0
 MPA_TO_KSI = 1.0 / 6.894757293168361
-KNM_TO_KIPIN = KN_TO_KIP * M_TO_IN  # kN·m → kip·in
+KSI_TO_MPA = 6.894757293168361
+KNM_TO_KIPIN = KN_TO_KIP * M_TO_IN
 KNM_TO_KIPFT = KN_TO_KIP * (M_TO_IN / 12.0)
 KN_PER_M2_TO_PSF = (1.0 / 4.4482216152605) / ((39.37007874015748 / 12.0) ** 2) * 1000.0  # ≈20.8854
-# kN/m² → kip/in² first: (kN/m²)*(kip/kN)/(in/m)² = ksi, then *144 = psf
-# Fix: 1 kN/m² = 1000 N / m². 1 ksi = 6.894757 MPa = 6894.757 kN/m².
-# So kN/m² → ksi = 1/6894.757; psf = ksi * 144 * 1000? No: 1 ksi = 144 * 1000 psf? 
-# 1 ksi = 1000 psi = 1000*144 psf = 144000 psf. So kN/m² → psf:
-# 1 kN/m² = 20.885 psf approximately.
+PSF_TO_KN_PER_M2 = 1.0 / KN_PER_M2_TO_PSF
+
+
+def activate_si() -> None:
+    """Mark module SI; NL OpenSees engine not flipped this wave (no engine3d)."""
+    global UNIT_SYSTEM
+    UNIT_SYSTEM = "N-mm"
+
+
+def activate_kip_in() -> None:
+    """NL analysis path remains kip-in until NL SI rewrite."""
+    global UNIT_SYSTEM
+    UNIT_SYSTEM = "kip-in"
+
+
+def active_unit_system() -> str:
+    return UNIT_SYSTEM
+
+
+def is_si(cfg: dict | None = None) -> bool:
+    """True when cfg (or module default) is SI-native N-mm."""
+    if cfg is not None:
+        if cfg.get("force_kip_in"):
+            return False
+        u = str(cfg.get("units") or "").lower().strip()
+        if u in ("kip-in", "kip+inch", "kip_in", "imperial", "usa", "in"):
+            return False
+        if u in ("n-mm", "n-mm-s", "n-mm-sec", "si", "metric", "mm", "m",
+                 "india_metric", "india_si"):
+            return True
+        if cfg.get("metric") or cfg.get("si_native"):
+            return True
+        # Ambiguous / unset units: infer from geometry magnitude
+        probe = cfg.get("heights") or cfg.get("story_heights") or cfg.get("SX")
+        h0 = None
+        if isinstance(probe, (list, tuple)) and probe:
+            h0 = probe[0]
+        elif isinstance(probe, (int, float)):
+            h0 = probe
+        if h0 is not None:
+            # mm storeys are thousands; inch storeys are ~100–200; metre briefs <30
+            if float(h0) >= 500:
+                return True   # already mm
+            if float(h0) < 30:
+                return True   # metres (will be converted)
+            return False      # looks like inches
+        return UNIT_SYSTEM == "N-mm"
+    return UNIT_SYSTEM == "N-mm"
+
+
+def wants_legacy_kip_in(cfg: dict) -> bool:
+    if cfg.get("force_kip_in"):
+        return True
+    u = str(cfg.get("units") or "").lower().strip()
+    return u in ("kip-in", "kip+inch", "kip_in", "imperial", "usa", "in")
+
+
+# ---------------------------------------------------------------------------
+# Scalar converters (both directions)
+# ---------------------------------------------------------------------------
+def length_to_mm(value, unit: str = "m") -> float:
+    u = (unit or "m").lower().strip()
+    if u in ("mm",):
+        return float(value)
+    if u in ("cm",):
+        return float(value) * 10.0
+    if u in ("m", "metre", "meter", "metres", "meters"):
+        return float(value) * M_TO_MM
+    if u in ("in", "inch", "inches"):
+        return float(value) * MM_PER_IN
+    if u in ("ft", "feet"):
+        return float(value) * 12.0 * MM_PER_IN
+    raise ValueError(f"unsupported length unit {unit!r}")
 
 
 def metric_length_to_in(value, unit: str = "m") -> float:
+    """Legacy: metric → inches (kip-in path)."""
     u = (unit or "m").lower().strip()
     if u in ("in", "inch", "inches"):
         return float(value)
@@ -61,6 +172,17 @@ def metric_force_to_kip(value, unit: str = "kN") -> float:
     raise ValueError(f"unsupported force unit {unit!r}")
 
 
+def force_to_N(value, unit: str = "kN") -> float:
+    u = (unit or "kN").lower().strip()
+    if u in ("n", "newton"):
+        return float(value)
+    if u in ("kn", "kilonewton"):
+        return float(value) * KN_TO_N
+    if u == "kip":
+        return float(value) * KIP_TO_N
+    raise ValueError(f"unsupported force unit {unit!r}")
+
+
 def metric_pressure_to_psf(value, unit: str = "kN/m2") -> float:
     u = (unit or "kN/m2").lower().replace("²", "2").replace(" ", "")
     if u in ("psf",):
@@ -85,51 +207,26 @@ def metric_stress_to_ksi(value, unit: str = "MPa") -> float:
     raise ValueError(f"unsupported stress unit {unit!r}")
 
 
-def apply_metric_geometry(cfg: dict) -> dict:
-    """Convert cfg geometry fields declared in metres to inches (in-place + return).
+def kn_per_m_to_plf(value) -> float:
+    """kN/m → kip/ft (legacy)."""
+    return float(value) * KN_TO_KIP / (M_TO_IN / 12.0)
 
-    Recognises:
-      cfg['units'] in {'metric','SI','m','mm'} OR cfg['metric']=True
-      story_heights / bay_x / bay_y / height / width / depth given in m (or mm if units=='mm')
 
-    Sets cfg['_units_converted'] provenance; leaves load_plan RAG strings untouched.
-    """
-    units = str(cfg.get("units") or "").lower()
-    metric = bool(cfg.get("metric")) or units in ("metric", "si", "m", "mm", "india_metric")
-    if not metric:
-        return cfg
-    length_unit = "mm" if units == "mm" else "m"
-    if cfg.get("_units_converted"):
-        return cfg  # idempotent
+def mpa_to_ksi(value) -> float:
+    return metric_stress_to_ksi(value, "MPa")
 
-    def conv_list(key):
-        if key not in cfg or cfg[key] is None:
-            return
-        val = cfg[key]
-        if isinstance(val, (list, tuple)):
-            cfg[key] = [metric_length_to_in(v, length_unit) for v in val]
-        else:
-            cfg[key] = metric_length_to_in(val, length_unit)
 
-    for k in ("story_heights", "storey_heights", "heights", "bay_x", "bay_y",
-              "bay_spacing_x", "bay_spacing_y", "height", "width", "depth",
-              "eave_height", "ridge_height"):
-        conv_list(k)
+# ---------------------------------------------------------------------------
+# Geometry / pressure application
+# ---------------------------------------------------------------------------
+_LENGTH_KEYS = (
+    "story_heights", "storey_heights", "heights", "bay_x", "bay_y",
+    "bay_spacing_x", "bay_spacing_y", "height", "width", "depth",
+    "eave_height", "ridge_height",
+)
 
-    # nested geometry
-    geom = cfg.get("geometry")
-    if isinstance(geom, dict) and not geom.get("_units_converted"):
-        for k in list(geom.keys()):
-            if isinstance(geom[k], (int, float)):
-                try:
-                    geom[k] = metric_length_to_in(geom[k], length_unit)
-                except Exception:
-                    pass
-            elif isinstance(geom[k], (list, tuple)) and geom[k] and isinstance(geom[k][0], (int, float)):
-                geom[k] = [metric_length_to_in(v, length_unit) for v in geom[k]]
-        geom["_units_converted"] = True
 
-    # Brief aliases → engine keys (inches already). Do not overwrite explicit values.
+def _alias_engine_keys(cfg: dict) -> None:
     if not cfg.get("heights"):
         for src in ("story_heights", "storey_heights"):
             if cfg.get(src) is not None:
@@ -147,20 +244,236 @@ def apply_metric_geometry(cfg: dict) -> dict:
                 cfg["SY"] = cfg[src]
                 break
 
+
+def apply_si_geometry(cfg: dict) -> dict:
+    """Normalize metric brief geometry to **mm**; set units='N-mm'; activate SI engine.
+
+    Recognises cfg['units'] in {metric, SI, m, mm, india_metric, india_si, N-mm, …}
+    or cfg['metric']=True / cfg['si_native']=True.
+
+    Leaves load_plan RAG strings untouched. Idempotent via cfg['_units_converted'].
+    """
+    if wants_legacy_kip_in(cfg):
+        return apply_metric_geometry_legacy_kip_in(cfg)
+
+    units = str(cfg.get("units") or "").lower()
+    metric = bool(cfg.get("metric") or cfg.get("si_native")) or units in (
+        "metric", "si", "m", "mm", "india_metric", "india_si", "n-mm", "n-mm-s",
+        "n-mm-sec",
+    )
+    # India jurisdiction with UNSET units: only treat as SI if geometry looks like metres
+    # (storey height < 30). Inch archetypes (heights~156, SX~360) must not be ×1000'd.
+    if not metric and str(cfg.get("jurisdiction") or "").lower() in ("india", "in", "bis"):
+        probe = cfg.get("heights") or cfg.get("story_heights") or cfg.get("storey_heights")
+        h0 = None
+        if isinstance(probe, (list, tuple)) and probe:
+            h0 = probe[0]
+        elif isinstance(probe, (int, float)):
+            h0 = probe
+        if h0 is not None and float(h0) < 30.0:
+            metric = True
+        elif units in ("n-mm", "si", "metric"):
+            metric = True
+    if not metric:
+        return cfg
+    if cfg.get("_units_converted") and str(cfg.get("units")) == "N-mm":
+        activate_si()
+        return cfg
+
+    length_unit = "mm" if units == "mm" else "m"
+    # If already N-mm with heights in mm-ish (>100), skip re-scale
+    if units in ("n-mm", "n-mm-s", "n-mm-sec") and cfg.get("heights"):
+        h0 = cfg["heights"][0] if isinstance(cfg["heights"], (list, tuple)) else cfg["heights"]
+        if isinstance(h0, (int, float)) and h0 > 100:
+            _alias_engine_keys(cfg)
+            cfg["_units_converted"] = {
+                "from": "mm", "to": "mm", "engine": ENGINE_UNITS,
+                "note": "already N-mm",
+            }
+            cfg["units"] = "N-mm"
+            activate_si()
+            return cfg
+
+    def conv_list(key):
+        if key not in cfg or cfg[key] is None:
+            return
+        val = cfg[key]
+        if isinstance(val, (list, tuple)):
+            cfg[key] = [length_to_mm(v, length_unit) for v in val]
+        else:
+            cfg[key] = length_to_mm(val, length_unit)
+
+    for k in _LENGTH_KEYS:
+        conv_list(k)
+
+    geom = cfg.get("geometry")
+    if isinstance(geom, dict) and not geom.get("_units_converted"):
+        for k in list(geom.keys()):
+            if isinstance(geom[k], (int, float)):
+                try:
+                    geom[k] = length_to_mm(geom[k], length_unit)
+                except Exception:
+                    pass
+            elif isinstance(geom[k], (list, tuple)) and geom[k] and isinstance(geom[k][0], (int, float)):
+                geom[k] = [length_to_mm(v, length_unit) for v in geom[k]]
+        geom["_units_converted"] = True
+
+    _alias_engine_keys(cfg)
+
+    cfg["_units_converted"] = {
+        "from": length_unit,
+        "to": "mm",
+        "engine": ENGINE_UNITS,
+        "factors": {
+            "m_to_mm": M_TO_MM,
+            "mm_per_in": MM_PER_IN,
+            "kN_to_N": KN_TO_N,
+            "MPa_to_ksi_legacy": MPA_TO_KSI,
+        },
+    }
+    cfg["units"] = "N-mm"
+    cfg["si_native"] = True
+    activate_si()
+    return cfg
+
+
+def apply_metric_geometry_legacy_kip_in(cfg: dict) -> dict:
+    """Legacy metric → inches for explicit kip-in jobs (wave 1 opt-in)."""
+    units = str(cfg.get("units") or "").lower()
+    # If caller set kip-in but geometry still in metres, convert m→in
+    length_unit = "mm" if units == "mm" else "m"
+    # Detect: if heights look like metres (< 30), treat as m
+    if cfg.get("_units_converted") and cfg["_units_converted"].get("to") == "in":
+        activate_kip_in()
+        return cfg
+
+    # For force_kip_in with metric geometry keys still present
+    metric_geom = bool(cfg.get("metric")) or any(
+        k in cfg for k in ("story_heights", "storey_heights", "bay_x", "bay_y")
+    )
+    if not metric_geom and units in ("kip-in", "kip+inch", "imperial"):
+        activate_kip_in()
+        cfg["units"] = "kip-in"
+        return cfg
+
+    if units in ("kip-in", "kip+inch", "imperial", "usa"):
+        # heights may already be inches
+        h = cfg.get("heights") or cfg.get("story_heights")
+        if h is not None:
+            h0 = h[0] if isinstance(h, (list, tuple)) else h
+            if isinstance(h0, (int, float)) and h0 > 50:
+                _alias_engine_keys(cfg)
+                cfg["units"] = "kip-in"
+                activate_kip_in()
+                return cfg
+
+    def conv_list(key):
+        if key not in cfg or cfg[key] is None:
+            return
+        val = cfg[key]
+        if isinstance(val, (list, tuple)):
+            cfg[key] = [metric_length_to_in(v, length_unit) for v in val]
+        else:
+            cfg[key] = metric_length_to_in(val, length_unit)
+
+    for k in _LENGTH_KEYS:
+        conv_list(k)
+
+    geom = cfg.get("geometry")
+    if isinstance(geom, dict) and not geom.get("_units_converted"):
+        for k in list(geom.keys()):
+            if isinstance(geom[k], (int, float)):
+                try:
+                    geom[k] = metric_length_to_in(geom[k], length_unit)
+                except Exception:
+                    pass
+            elif isinstance(geom[k], (list, tuple)) and geom[k] and isinstance(geom[k][0], (int, float)):
+                geom[k] = [metric_length_to_in(v, length_unit) for v in geom[k]]
+        geom["_units_converted"] = True
+
+    _alias_engine_keys(cfg)
     cfg["_units_converted"] = {
         "from": length_unit,
         "to": "in",
-        "engine": ENGINE_UNITS,
+        "engine": LEGACY_KIP_IN_UNITS,
         "factors": {"m_to_in": M_TO_IN, "kN_to_kip": KN_TO_KIP, "MPa_to_ksi": MPA_TO_KSI},
+        "legacy": True,
     }
     cfg["units"] = "kip-in"
+    activate_kip_in()
     return cfg
+
+
+def apply_metric_geometry(cfg: dict) -> dict:
+    """NL boundary: metric briefs → kip-in (NL OpenSees still kip-in this wave).
+
+    For mm package stubs shared with HR/CFS, call apply_si_geometry() or set
+    cfg['si_native']=True / units='N-mm'.
+    """
+    if cfg.get("si_native") or str(cfg.get("units") or "").lower() in (
+        "n-mm", "n-mm-s", "n-mm-sec", "india_si",
+    ):
+        return apply_si_geometry(cfg)
+    return apply_metric_geometry_legacy_kip_in(cfg)
+
+
+def apply_metric_pressures(cfg: dict) -> dict:
+    """Pressures: SI path keeps kN/m²; legacy converts kN/m² → psf."""
+    if wants_legacy_kip_in(cfg) or not is_si(cfg):
+        units = str(cfg.get("units") or "").lower()
+        metric = bool(cfg.get("metric")) or units in ("metric", "si", "m", "mm", "india_metric")
+        if not metric or cfg.get("_pressures_converted"):
+            return cfg
+        for k in ("D_floor", "D_roof", "L_floor", "Lr", "S", "clad", "q_wind", "pz", "pd"):
+            if k in cfg and cfg[k] is not None and isinstance(cfg[k], (int, float)):
+                cfg[k] = metric_pressure_to_psf(cfg[k], "kN/m2")
+        cfg["_pressures_converted"] = {"to": "psf", "legacy": True}
+        return cfg
+
+    # SI: pressures stay kN/m² — just mark provenance
+    if cfg.get("_pressures_converted"):
+        return cfg
+    cfg["_pressures_converted"] = {"to": "kN/m2", "engine": "N-mm"}
+    return cfg
+
+
+def apply_si_pressures(cfg: dict) -> dict:
+    """Alias — SI keeps kN/m²."""
+    return apply_metric_pressures(cfg)
+
+
+def report_unit_labels(cfg: dict | None = None) -> dict:
+    """Labels for reports / smoke banners."""
+    if is_si(cfg):
+        return {
+            "force": "N",
+            "force_display": "kN",
+            "length": "mm",
+            "length_display": "m",
+            "moment": "N-mm",
+            "moment_display": "kN·m",
+            "stress": "MPa",
+            "pressure": "kN/m²",
+            "system": "N-mm-sec",
+        }
+    return {
+        "force": "kip",
+        "force_display": "kip",
+        "length": "in",
+        "length_display": "ft",
+        "moment": "kip-in",
+        "moment_display": "kip-ft",
+        "stress": "ksi",
+        "pressure": "psf",
+        "system": "kip-in",
+    }
 
 
 def conversion_cheatsheet() -> str:
     return (
-        "India metric → engine kip+inch: L_in=L_m×39.3701; F_kip=F_kN/4.44822; "
-        "σ_ksi=σ_MPa/6.89476; p_psf≈p_kN/m²×20.885. "
-        "Call india_units.apply_metric_geometry(cfg) when cfg['units'] is metric/SI. "
-        "Engine internals remain kip+inch (full SI rewrite deferred)."
+        "India SI-native (wave 1): geometry in mm, force N, stress MPa, OpenSees N-mm-sec "
+        "(E=2e5 MPa, g=9810 mm/s², mass in tonne). "
+        "Briefs in m → apply_si_geometry (×1000). Pressures stay kN/m². "
+        "Legacy kip-in: units='kip-in' / force_kip_in=True. "
+        f"KIP_ISLANDS ({len(KIP_ISLANDS)}): " + "; ".join(KIP_ISLANDS[:3]) + "…"
     )
