@@ -510,34 +510,75 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
     return hinges, stats
 
 
-def modal_pattern(pkg, direction, nmodes=6):
-    """First translational mode in `direction` ('X'|'Y') from the current (nonlinear, initial-stiffness) model:
-    returns (T1, {level_k: F_k normalised to sum 1}, {level_k: phi_k}) using the diaphragm masters."""
+def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05):
+    """Translational pushover pattern in `direction` ('X'|'Y') from the current model.
+
+    Selects the eigenmode with the **largest participating mass in the push DOF**,
+    preferring modes that are primarily aligned with that DOF (|L_n| > |L_perp|)
+    and that clear `min_meff_frac` of storey mass. Spurious near-zero-mass soft
+    modes (common after N-mm→kip-in bridging or local releases) are skipped so
+    T1 / NSP targets stay meaningful.
+
+    Root cause of IN_Ex1 X anomaly (T1≈64 s, ≈0% mass): the previous selector
+    seeded `best` with mode 1 unconditionally (`best is None`), then required
+    both higher meff *and* directional purity vs the *previous* candidate. A
+    soft mode-1 with ~0% mass could stick when the true X fundamental sat past
+    the old nmodes=6 window or failed the chained gate. Y happened to hit mode 6
+    with 86% mass inside that window.
+    """
     dof = 1 if direction.upper() == "X" else 2
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
+    nmodes = max(int(nmodes), 6)
     w2 = ops.eigen("-genBandArpack", nmodes)
     lv = levels(pkg)
-    best = None
+    # Use translational mass on the push DOF (mx for X, my for Y).
+    m_idx = dof - 1
+    Mtot = sum(pkg.model.masses[master][m_idx] for k, z, master, s in lv)
+    if Mtot <= 0:
+        Mtot = sum(pkg.model.masses[master][0] for k, z, master, s in lv)
+    cands = []
     for i, w in enumerate(w2):
         T = 2 * math.pi / math.sqrt(max(w, 1e-12))
         phi = {k: ops.nodeEigenvector(master, i + 1, dof) for k, z, master, s in lv}
         perp = {k: ops.nodeEigenvector(master, i + 1, 3 - dof) for k, z, master, s in lv}
         rot = {k: ops.nodeEigenvector(master, i + 1, 6) for k, z, master, s in lv}
-        mk = {k: pkg.model.masses[master][0] for k, z, master, s in lv}; Jk = {k: pkg.model.masses[master][5] for k, z, master, s in lv}
+        mk = {k: pkg.model.masses[master][m_idx] for k, z, master, s in lv}
+        Jk = {k: pkg.model.masses[master][5] for k, z, master, s in lv}
         Ln = sum(mk[k] * phi[k] for k in phi)
-        Mn = sum(mk[k] * (phi[k] ** 2 + perp[k] ** 2) + Jk[k] * rot[k] ** 2 for k in phi)     # full generalised mass
+        Mn = sum(mk[k] * (phi[k] ** 2 + perp[k] ** 2) + Jk[k] * rot[k] ** 2 for k in phi)
         Lp = sum(mk[k] * perp[k] for k in perp)
-        meff = Ln ** 2 / Mn if Mn > 0 else 0
-        if best is None or (meff > best[0] and abs(Ln) > abs(Lp)):
-            best = (meff, T, phi, i + 1)
-    meff, T, phi, mode = best
+        meff = (Ln ** 2 / Mn) if Mn > 0 else 0.0
+        frac = (meff / Mtot) if Mtot > 0 else 0.0
+        aligned = abs(Ln) > abs(Lp)
+        cands.append(dict(meff=meff, frac=frac, T=T, phi=phi, mode=i + 1,
+                          aligned=aligned, Ln=Ln, Lp=Lp))
+    good = [c for c in cands if c["aligned"] and c["frac"] >= min_meff_frac]
+    pool = good if good else [c for c in cands if c["frac"] >= min_meff_frac]
+    if not pool:
+        pool = cands
+    best = max(pool, key=lambda c: c["meff"])
+    meff, T, phi, mode = best["meff"], best["T"], best["phi"], best["mode"]
+    if best["frac"] < min_meff_frac:
+        print("[modal_pattern %s] WARNING: best mode %d has only %.1f%% mass (T=%.3fs) "
+              "among %d modes — NSP target unreliable; check mass / unit bridge / soft modes"
+              % (direction.upper(), mode, 100.0 * best["frac"], T, nmodes))
+    elif not best["aligned"]:
+        print("[modal_pattern %s] WARNING: mode %d (T=%.3fs, %.0f%% mass) is not "
+              "primarily aligned with push DOF (|Ln|<=|Lp|); using max-meff fallback"
+              % (direction.upper(), mode, T, 100.0 * best["frac"]))
+    else:
+        print("[modal_pattern %s] selected mode %d T=%.3fs (%.0f%% mass, aligned) "
+              "from %d eigenmodes" % (direction.upper(), mode, T, 100.0 * best["frac"], nmodes))
     sgn = 1.0 if phi[max(phi)] >= 0 else -1.0
-    phi = {k: sgn * v / abs(phi[max(phi)]) for k, v in phi.items()}         # roof ordinate = +1
-    F = {k: pkg.model.masses[m][0] * phi[k] for k, z, m, s in lv}
-    s = sum(F.values()); F = {k: v / s for k, v in F.items()}
-    Mtot = sum(pkg.model.masses[m][0] for k, z, m, s in lv)
-    return dict(T1=T, mode=mode, meff_frac=meff / Mtot, phi=phi, F=F,
-                masses={k: pkg.model.masses[m][0] for k, z, m, s in lv})
+    denom = abs(phi[max(phi)]) or 1.0
+    phi = {k: sgn * v / denom for k, v in phi.items()}         # roof ordinate = +1
+    F = {k: pkg.model.masses[m][m_idx] * phi[k] for k, z, m, s in lv}
+    s = sum(F.values()) or 1.0
+    F = {k: v / s for k, v in F.items()}
+    return dict(T1=T, mode=mode, meff_frac=meff / Mtot if Mtot > 0 else 0.0, phi=phi, F=F,
+                masses={k: pkg.model.masses[m][m_idx] for k, z, m, s in lv},
+                nmodes_searched=nmodes, modal_aligned=bool(best["aligned"]),
+                modal_warn=best["frac"] < min_meff_frac)
 
 
 def _try_analyze(dU, ctrl, dof, algos=(("Newton",), ("ModifiedNewton", "-initial"), ("KrylovNewton",), ("NewtonLineSearch",))):

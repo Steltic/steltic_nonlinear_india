@@ -15,3 +15,11 @@
 | India package stub | `examples/India_package_stub/` | Interface docs + `nl_plan` / cfg / hazard shape for steltic_india packages |
 
 Deferred: full Ch.16-suite-numeric replacement (no IS analogue), full SI engine rewrite, live E2E with hosted RAG, push/PR.
+
+
+## DDM λu < 1 on wind/EQ (capacity finding, not a missing feature)
+
+IN_Ex1 SCBF Delhi NL reported governing **λu = 0.651** on `1.2DL+1.2LL+1.2W_X` after India combo
+prune + transfer-gate EQ_X/Y + CHS brace fibre patches. Treat as a **capacity finding** when the
+engine/transfer gate is correct — do **not** invent λu≥1 or silently drop the governing combo.
+Disclose φs·λu < 1.0 and hand back to HR for resize if the brief requires pass.

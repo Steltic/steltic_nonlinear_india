@@ -111,8 +111,19 @@ def run(args):
     if portal:
         gate = PA.transfer_gate_portal(nm, cfg, tol=args.gate_tol, nsub=tuple(args.nsub))
     else:
-        latx = [c for c in cases if "EX+t+" in c[0] and c[1] > 1.0][0][4]
-        laty = [c for c in cases if "EY+t+" in c[0] and c[1] > 1.0][0][4]
+        def _pick_lat(cases, *needles):
+            # Prefer strength cases (fD>1) whose label contains a needle (USA EX+t+ / India EQ_X …).
+            cands = [c for c in cases if c[1] > 1.0 and any(n in c[0] for n in needles)]
+            if not cands:
+                cands = [c for c in cases if any(n in c[0] for n in needles)]
+            if not cands:
+                raise RuntimeError("DDM transfer gate: no lateral case matching %s in %s"
+                                   % (needles, [c[0] for c in cases]))
+            # Prefer LL+EQ / LL+E over DL+EQ alone when both exist
+            cands.sort(key=lambda c: (("LL" not in c[0]), -c[1], c[0]))
+            return cands[0][4]
+        latx = _pick_lat(cases, "EX+t+", "EQ_X", "EQx", "EX+")
+        laty = _pick_lat(cases, "EY+t+", "EQ_Y", "EQy", "EY+")
         gate = transfer_gate.run(nm, cfg, latx, laty, tol=args.gate_tol)
     for r in gate["rows"]:
         print("   gate %-36s steltic %.4f gmnia %.4f ratio %.3f %s" % (r["quantity"], r["steltic"], r["gmnia"], r["ratio"], "ok" if r["ok"] else "FAIL"))

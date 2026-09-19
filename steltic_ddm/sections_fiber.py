@@ -82,21 +82,50 @@ def is808_csv_path():
     return None
 
 
+def _india_csv_paths():
+    """is808_shapes.csv + is1161_tubes.csv (CHS/RHS) under STELTIC_ENGINE_DIR or steltic_ddm/data."""
+    paths = []
+    eng = os.environ.get("STELTIC_ENGINE_DIR")
+    if eng:
+        for name in ("is808_shapes.csv", "is1161_tubes.csv"):
+            pp = os.path.join(eng, name)
+            if os.path.exists(pp):
+                paths.append(pp)
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("is808_shapes.csv", "is1161_tubes.csv"):
+        pp = os.path.join(here, "data", name)
+        if os.path.exists(pp):
+            paths.append(pp)
+    env = os.environ.get("IS808_CSV")
+    if env and os.path.exists(env):
+        paths.insert(0, env)
+    # dedupe preserve order
+    seen=set(); out=[]
+    for pp in paths:
+        if pp not in seen:
+            seen.add(pp); out.append(pp)
+    return out
+
+
 def is808_shapes():
     global _IS808_CACHE
     if _IS808_CACHE is None:
         _IS808_CACHE = {}
-        path = is808_csv_path()
-        if not path:
-            return _IS808_CACHE
-        with open(path, newline="") as f:
-            for r in csv.DictReader(f):
-                lab = (r.get("AISC_Manual_Label") or r.get("Label") or "").upper().replace(" ", "")
-                if lab:
-                    _IS808_CACHE[lab] = r
-                des = (r.get("Designation_IS") or "").upper().replace(" ", "")
-                if des:
-                    _IS808_CACHE.setdefault(des, r)
+        paths = _india_csv_paths()
+        if not paths:
+            p0 = is808_csv_path()
+            paths = [p0] if p0 else []
+        for path in paths:
+            if not path or not os.path.exists(path):
+                continue
+            with open(path, newline="") as f:
+                for r in csv.DictReader(f):
+                    lab = (r.get("AISC_Manual_Label") or r.get("Label") or "").upper().replace(" ", "")
+                    if lab:
+                        _IS808_CACHE.setdefault(lab, r)
+                    des = (r.get("Designation_IS") or "").upper().replace(" ", "")
+                    if des:
+                        _IS808_CACHE.setdefault(des, r)
     return _IS808_CACHE
 
 
@@ -385,10 +414,54 @@ class FiberSectionBuilder:
                              A, Ix, Iy, d, bf, t, n_ply, axis, scale)))
         return dict(A=A, H=d, B=bf, t=t, nfib=nfib, Ix=Ix, Iy=Iy, J=J)
 
+
+    def hss_round(self, secTag, label, n_radial=3, n_circ=16, residual=None):
+        """Fibre circular hollow section (AISC HSS round or IS 1161 CHS).
+
+        Uses CSV d (=OD) and tw/tf (=wall). Stage C: inch CSV × length_scale → mm when N-mm.
+        """
+        import math
+        r = shape(label, prefer_is808=True)
+        sc = self.length_scale
+        od = _f(r.get("d") or r.get("OD") or r.get("bf"))
+        t = _f(r.get("tw") or r.get("tf") or r.get("t"))
+        if od is None or t is None or od <= 0 or t <= 0:
+            raise ValueError("%s missing OD/t for round HSS/CHS" % label)
+        od *= sc; t *= sc
+        id_ = max(od - 2 * t, 0.1 * od)
+        J = (_f(r.get("J")) or (math.pi / 32.0) * (od ** 4 - id_ ** 4)) * (1.0 if sc == 1.0 else 1.0)
+        # when CSV J is inch^4 and sc=mm, J already from CSV in inch — scale
+        if sc != 1.0:
+            J = (_f(r.get("J")) or 0.0)
+            if J:
+                J = J * (sc ** 4)
+            else:
+                J = (math.pi / 32.0) * (od ** 4 - id_ ** 4)
+        self.ops.section("Fiber", secTag, "-GJ", max(self.G * J, 1.0))
+        mat = self._mat(0.0)
+        nfib = 0
+        for ir in range(n_radial):
+            ri = id_ / 2 + (ir + 0.5) * t / n_radial
+            dr = t / n_radial
+            for ic in range(n_circ):
+                th = 2 * math.pi * (ic + 0.5) / n_circ
+                yc = ri * math.cos(th)
+                zc = ri * math.sin(th)
+                area = (2 * math.pi * ri / n_circ) * dr
+                self.ops.fiber(yc, zc, area, mat)
+                nfib += 1
+        A = math.pi / 4.0 * (od ** 2 - id_ ** 2)
+        I = math.pi / 64.0 * (od ** 4 - id_ ** 4)
+        self.log.append((secTag, label, "CHS", nfib, "OD=%.3f t=%.3f units=%s" % (od, t, self.units)))
+        return dict(A=A, Ix=I, Iy=I, d=od, bf=od, tf=t, tw=t, nfib=nfib)
+
     def build(self, secTag, label, kind, axis=None):
         lab = str(label).upper().replace(" ", "")
         if lab.startswith("HSS") and hss_dims(lab):
             return self.hss_rect(secTag, lab, residual=("none" if self.residual == "none" else "cf_hss_membrane"))
+        # IS 1161 CHS / round HSS (no XxY rect dims)
+        if lab.startswith("CHS") or (lab.startswith("HSS") and hss_dims(lab) is None):
+            return self.hss_round(secTag, lab, residual="none")
         # AISC W/HP/M/S or IS 808 MB/HB/UB/JB/SC/… I-sections
         _is_i = lab.startswith(("W", "HP", "M", "S", "MB", "HB", "UB", "JB", "SC", "NPB", "WPB", "ISMB", "ISMC"))
         if _is_i and not lab.startswith("MC"):

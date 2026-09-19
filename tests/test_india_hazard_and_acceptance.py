@@ -92,3 +92,17 @@ def test_india_package_stub_nl_plan_validates():
     findings = IA.validate_nl_plan(job_dir=stub)
     assert not any(s == "ERROR" for s, _ in findings)
     assert IA.drift_relief_analogue(job_dir=stub)["found"] is False
+
+
+def test_nsp_acceptance_tables_found_false():
+    st = IA.nsp_acceptance_tables_status()
+    assert st["found"] is False
+    assert st.get("prefer_fibre") is True
+    assert st.get("hinge_params_verified") is False
+
+
+def test_complete_gate_disclosures_include_found_false():
+    rows = IA.complete_gate_disclosures()
+    ids = {r.get("id") for r in rows}
+    assert "india_nsp_acceptance_tables" in ids
+    assert any(r.get("found") is False for r in rows)

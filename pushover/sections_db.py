@@ -1,9 +1,53 @@
-"""sections_db.py -- AISC Shapes Database v16 lookups (aisc_shapes.csv, same file steltic ships)."""
+"""sections_db.py -- AISC + India IS 808 / IS 1161 section lookups.
+
+AISC Shapes Database v16 (aisc_shapes.csv) plus dual-path fallback to
+is808_shapes.csv / is1161_tubes.csv (STELTIC_ENGINE_DIR or steltic_ddm/data)
+so India HR packages (WPB/MB/HB/CHS/…) resolve for NSP/NLRHA hinge + fibre.
+"""
 import csv, os
 from functools import lru_cache
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CSV = os.path.join(_HERE, "aisc_shapes.csv")
+
+
+def _is808_paths():
+    paths = []
+    env = os.environ.get("IS808_CSV")
+    if env:
+        paths.append(env)
+    eng = os.environ.get("STELTIC_ENGINE_DIR")
+    if eng:
+        paths.append(os.path.join(eng, "is808_shapes.csv"))
+        paths.append(os.path.join(eng, "is1161_tubes.csv"))
+    ddm = os.path.join(_HERE, "..", "steltic_ddm", "data")
+    paths.append(os.path.join(ddm, "is808_shapes.csv"))
+    paths.append(os.path.join(ddm, "is1161_tubes.csv"))
+    # also sibling steel_engine style if present next to repo
+    return paths
+
+
+def _load_csv(path, out):
+    if not path or not os.path.exists(path):
+        return
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            lab = (row.get("AISC_Manual_Label") or row.get("Label") or "").strip().upper().replace(" ", "")
+            if not lab:
+                continue
+            rec = {}
+            for k, v in row.items():
+                if k in ("AISC_Manual_Label", "Label", "Designation_IS"):
+                    continue
+                try:
+                    rec[k] = float(v)
+                except (TypeError, ValueError):
+                    rec[k] = v
+            rec["_source_csv"] = os.path.basename(path)
+            out.setdefault(lab, rec)
+            des = (row.get("Designation_IS") or "").strip().upper().replace(" ", "")
+            if des:
+                out.setdefault(des, rec)
 
 
 @lru_cache(maxsize=1)
@@ -21,6 +65,8 @@ def _table():
                 except (TypeError, ValueError):
                     rec[k] = v
             out[lab] = rec
+    for path in _is808_paths():
+        _load_csv(path, out)
     return out
 
 
@@ -59,7 +105,7 @@ def props(section: str) -> dict:
         p["custom_note"] = cust.get("note", "")
         # fall through to compactness ratios below
     elif key not in t:
-        raise KeyError(f"section {section!r} not in aisc_shapes.csv")
+        raise KeyError(f"section {section!r} not in aisc_shapes.csv / is808_shapes.csv / is1161_tubes.csv")
     else:
         p = dict(t[key])
     if all(k in p and isinstance(p[k], float) for k in ("d", "tw", "bf", "tf")):

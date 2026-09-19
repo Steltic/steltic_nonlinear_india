@@ -144,3 +144,11 @@ pushover output · `tests/` smoke test · `docs/` the scoping report.
 
 MIT for the code. `pushover/aisc_shapes.csv` is the AISC Shapes Database v16 as redistributed by the
 steltic repo (see its NOTICE). No copyrighted specification text is included or embedded.
+
+
+## India fibre descending branch
+
+Default `--max-drift` is **0.10** for India fibre runs (else 0.08). IN_Ex1 at 0.02 hit
+`status=max_drift` without a descending branch — raise `--max-drift` (0.12–0.15) before
+consenting to rung-3 `--post-cap-ratio 0.5` (modelling change). Modal pattern now selects the
+first mode with meaningful participating mass in the push direction (skips ~0% soft modes).
