@@ -59,16 +59,23 @@ def _run(args):
     strategies = {"auto": ("fine_step", "arclength"), "fine_step": ("fine_step",), "arclength": ("arclength",), "none": ()}[args.tail]
     if not prm.get("verified"):
         print("!! hinge_params.json is UNVERIFIED -- the report will carry the red banner until the spec lookup is done")
-    try:
-        from nlrha.india_authority import nsp_acceptance_tables_status, drift_relief_analogue
-        nsp_st = nsp_acceptance_tables_status(job_dir=str(getattr(pkg, "root", "") or args.package))
-        dr_st = drift_relief_analogue(job_dir=str(getattr(pkg, "root", "") or args.package))
-        print("[india_authority] india_nsp_acceptance_tables found:%s (prefer fibre; do not invent IO/LS/CP)" % nsp_st.get("found"))
-        print("[india_authority] asce_16_1_2_drift_relief found:%s (feedback drift loop ineligible)" % dr_st.get("found"))
-    except Exception as ex:
-        print("[india_authority] status emit skipped:", ex)
     out = args.out or os.path.join(str(pkg.root), "pushover")
     os.makedirs(out, exist_ok=True)
+    try:
+        from nlrha.india_authority import (
+            nsp_acceptance_tables_status,
+            drift_relief_analogue,
+            write_complete_gate_disclosures,
+        )
+        job = str(getattr(pkg, "root", "") or args.package)
+        nsp_st = nsp_acceptance_tables_status(job_dir=job)
+        dr_st = drift_relief_analogue(job_dir=job)
+        print("[india_authority] india_nsp_acceptance_tables found:%s (prefer fibre; hinge_params UNVERIFIED; do not invent IO/LS/CP)" % nsp_st.get("found"))
+        print("[india_authority] asce_16_1_2_drift_relief found:%s (feedback drift loop ineligible)" % dr_st.get("found"))
+        write_complete_gate_disclosures(out, job_dir=job)
+        print("[india_authority] wrote %s" % os.path.join(out, "complete_gate_disclosures.json"))
+    except Exception as ex:
+        print("[india_authority] status emit skipped:", ex)
     loads, gtable = NM.gravity_loads(pkg, prm)
     PG = NM.column_gravity_axials(pkg, loads)
     runs, results, stats = {}, {}, None

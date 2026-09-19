@@ -525,3 +525,31 @@ def complete_gate_disclosures(cfg_or_job=None, job_dir: str | None = None) -> li
     ]
 
 
+def write_complete_gate_disclosures(
+    out_dir: str,
+    cfg_or_job=None,
+    job_dir: str | None = None,
+    filename: str = "complete_gate_disclosures.json",
+) -> list[dict]:
+    """Persist COMPLETE-gate honesty rows (found:false kept) for Ex1–5 STATUS / review.
+
+    Does not invent NSP acceptance tables or an ASCE §16.1.2 drift-relief analogue.
+    """
+    rows = complete_gate_disclosures(cfg_or_job, job_dir=job_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    path_out = os.path.join(out_dir, filename)
+    payload = {
+        "jurisdiction": JURISDICTION,
+        "wave": "nl-polish-waveE",
+        "note": (
+            "Honesty disclosures for COMPLETE gate. found:false means no India analogue "
+            "was retrieved — do not invent IO/LS/CP or §16.1.2 drift relief."
+        ),
+        "disclosures": rows,
+    }
+    with open(path_out, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, default=str)
+        f.write("\n")
+    return rows
+
+

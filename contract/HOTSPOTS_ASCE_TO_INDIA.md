@@ -23,3 +23,13 @@ IN_Ex1 SCBF Delhi NL reported governing **λu = 0.651** on `1.2DL+1.2LL+1.2W_X` 
 prune + transfer-gate EQ_X/Y + CHS brace fibre patches. Treat as a **capacity finding** when the
 engine/transfer gate is correct — do **not** invent λu≥1 or silently drop the governing combo.
 Disclose φs·λu < 1.0 and hand back to HR for resize if the brief requires pass.
+
+## NL polish Wave E (honesty emitters — confirm)
+
+On tip after Ex1 partial merge (`c689de0`+), COMPLETE gate disclosures are durable:
+
+- `nlrha.india_authority.nsp_acceptance_tables_status()` → **found:false**; prefer fibre; hinge_params UNVERIFIED
+- `nlrha.india_authority.complete_gate_disclosures()` / `write_complete_gate_disclosures(out_dir)` → writes `complete_gate_disclosures.json` (pushover + nlrha out dirs)
+- `asce_16_1_2_drift_relief_analogue` → **found:false**; `feedback_drift_loop: ineligible` (`snl/feedback.py` `drift_plan`)
+- **No invent:** do not fabricate IS NSP IO/LS/CP tables or an IS waiver of 7.11.1.1 after time-history
+

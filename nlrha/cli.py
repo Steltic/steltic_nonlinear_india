@@ -21,6 +21,14 @@ def _load(args):
         ch16.get("india_authoritative"), ch16.get("verified")))
     for sev, msg in IA.validate_nl_plan(job_dir=str(pkg.root)):
         print("[%s] %s" % (sev, msg[:160]))
+    try:
+        out_disc = os.path.join(str(pkg.root), "nlrha")
+        rows = IA.write_complete_gate_disclosures(out_disc, job_dir=str(pkg.root))
+        ids = ", ".join("%s found:%s" % (r.get("id"), r.get("found")) for r in rows)
+        print("[india_authority] complete_gate_disclosures -> %s (%s)" % (
+            os.path.join(out_disc, "complete_gate_disclosures.json"), ids))
+    except Exception as ex:  # noqa: BLE001
+        print("[india_authority] complete_gate_disclosures skipped:", ex)
     b = pkg.basis
     if b.SDS is None or b.SD1 is None:
         # India packages may carry Z/Ah instead of SDS/SD1 — warn, do not hard-exit.
