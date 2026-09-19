@@ -66,6 +66,7 @@ def prune(cases, policy="default", torsion="plus", include_om0=False):
     if policy == "all":
         return list(cases)
     # portal seismic labels are "(1.2+0.2SDS)D+E" — keep them
+    # India IS 800 Table 4: 1.5DL+1.5LL, 1.2DL+1.2LL+1.2EQ_X / W_X, 0.9DL+1.5EQ_X, …
     from . import portal_adapter as PA
     keep = []
     for c in cases:
@@ -78,10 +79,17 @@ def prune(cases, policy="default", torsion="plus", include_om0=False):
         if "W" in lab and ("1.2D" in lab or "0.9D" in lab):
             keep.append(c); continue                          # all 8 wind cases (4 strength + 4 uplift)
         if "rhoE" in lab:
-            t = "t+" if torsion == "plus" else "t-"
-            if torsion == "both" or t in lab:
+            tt = "t+" if torsion == "plus" else "t-"
+            if torsion == "both" or tt in lab:
                 keep.append(c); continue
         if lab.endswith("+E") or "D+E" in lab:
+            keep.append(c); continue
+        # ---- India / IS 800 Table 4 labels (DL/LL/EQ_/W_) ----
+        if "DL" in lab and "LL" in lab and "EQ" not in lab and "W_" not in lab and "W+" not in lab:
+            keep.append(c); continue  # gravity 1.5DL+1.5LL
+        if ("EQ_X" in lab or "EQ_Y" in lab or "EQX" in lab.upper() or "EQY" in lab.upper()):
+            keep.append(c); continue
+        if ("W_X" in lab or "W_Y" in lab) and ("DL" in lab or "0.9" in lab or "1.2" in lab or "1.5" in lab):
             keep.append(c); continue
         if col_only and include_om0:
             keep.append(c)

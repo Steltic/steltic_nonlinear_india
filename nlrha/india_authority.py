@@ -462,3 +462,66 @@ def storey_drift_limit_ratio(cfg_or_job=None, job_dir: str | None = None) -> dic
         "excerpt": IS_ANCHORS["storey_drift_excerpt"]["excerpt"],
         "source": "IS_ANCHORS",
     }
+
+
+def nsp_acceptance_tables_status(cfg_or_job=None, job_dir: str | None = None) -> dict:
+    """India NSP / hinge acceptance tables — found:false (do not invent).
+
+    Explicit COMPLETE-gate object. Fibre path remains the preferred India modelling
+    route; hinge_params stay UNVERIFIED when ASCE 41 scaffolding is used.
+    """
+    h = hinge_analogue_status()
+    plan = find_nl_plan(cfg_or_job, job_dir=job_dir) or {}
+    override = plan.get("nsp_acceptance_tables") or plan.get("hinge_source")
+    if isinstance(override, dict) and override.get("found") is True and override.get("clause"):
+        return {
+            "id": "india_nsp_acceptance_tables",
+            "found": True,
+            "stem": override.get("stem"),
+            "clause": override.get("clause"),
+            "cite": override.get("cite"),
+            "note": override.get("note") or "Retrieved India NSP acceptance — verify before use.",
+            "hinge_params_verified": bool(override.get("hinge_params_verified")),
+            "prefer_fibre": True,
+        }
+    return {
+        "id": "india_nsp_acceptance_tables",
+        "found": False,
+        "usa": h.get("usa"),
+        "note": h.get("note"),
+        "hinge_params_verified": False,
+        "prefer_fibre": True,
+        "action": h.get("action"),
+        "asce_gap_id": "asce_41_nsp",
+    }
+
+
+def complete_gate_disclosures(cfg_or_job=None, job_dir: str | None = None) -> list[dict]:
+    """Status objects the COMPLETE gate must disclose (found:false kept honest)."""
+    nsp = nsp_acceptance_tables_status(cfg_or_job, job_dir=job_dir)
+    drift = drift_relief_analogue(cfg_or_job, job_dir=job_dir)
+    return [
+        nsp,
+        {
+            "id": "asce_16_1_2_drift_relief_analogue",
+            "found": bool(drift.get("found")),
+            "stem": drift.get("stem"),
+            "clause": drift.get("clause"),
+            "note": drift.get("note"),
+            "feedback_drift_loop": "ineligible" if not drift.get("found") else "eligible_if_cited",
+            "usa_gap": drift.get("usa_gap") or drift.get("usa"),
+            "is_anchor_instead": drift.get("is_anchor_instead"),
+        },
+        {
+            "id": "india_nsp_hinge_params",
+            "found": False,
+            "hinge_params_verified": False,
+            "prefer_fibre": True,
+            "note": (
+                "Mark hinge_params UNVERIFIED when ASCE 41 scaffolding is used. "
+                "Keep fibre path. Emit found:false for India NSP acceptance tables — no invent."
+            ),
+        },
+    ]
+
+

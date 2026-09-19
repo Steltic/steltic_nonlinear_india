@@ -16,6 +16,30 @@ def _run(args):
     t0 = time.time()
     pkg = PR.load(args.package)
     print(PR.summary(pkg))
+    # ---- max roof drift: India fibre needs headroom past 2% to see descending branch ----
+    if getattr(args, "max_drift", None) is None:
+        juris = ""
+        try:
+            cfg = getattr(pkg, "cfg", None) or {}
+            if isinstance(cfg, dict):
+                juris = str(cfg.get("jurisdiction") or (cfg.get("load_plan") or {}).get("jurisdiction") or "")
+            if not juris and getattr(pkg, "basis", None) is not None:
+                juris = str(getattr(pkg.basis, "jurisdiction", "") or "")
+            if not juris:
+                # package path / name heuristic for India handoffs
+                root = str(getattr(pkg, "root", "") or args.package).lower()
+                if "india" in root or root.startswith("in_") or "/in_" in root:
+                    juris = "india"
+        except Exception:
+            pass
+        plast = str(getattr(args, "plasticity", None) or "fibre").lower()
+        indiaish = juris.lower() in ("india", "is", "is_bis", "bis", "in")
+        if indiaish and plast in ("fibre", "fiber"):
+            args.max_drift = 0.10
+            print("[pushover] --max-drift defaulted to 0.10 for India fibre (descending-branch headroom; override with --max-drift)")
+        else:
+            args.max_drift = 0.08
+
     if args.system:
         pkg.basis.system = args.system; pkg.basis.sources["system"] = "--system override"
     missing = [k for k in ("SDS", "SD1", "W_kip") if getattr(pkg.basis, k) is None]
@@ -35,6 +59,14 @@ def _run(args):
     strategies = {"auto": ("fine_step", "arclength"), "fine_step": ("fine_step",), "arclength": ("arclength",), "none": ()}[args.tail]
     if not prm.get("verified"):
         print("!! hinge_params.json is UNVERIFIED -- the report will carry the red banner until the spec lookup is done")
+    try:
+        from nlrha.india_authority import nsp_acceptance_tables_status, drift_relief_analogue
+        nsp_st = nsp_acceptance_tables_status(job_dir=str(getattr(pkg, "root", "") or args.package))
+        dr_st = drift_relief_analogue(job_dir=str(getattr(pkg, "root", "") or args.package))
+        print("[india_authority] india_nsp_acceptance_tables found:%s (prefer fibre; do not invent IO/LS/CP)" % nsp_st.get("found"))
+        print("[india_authority] asce_16_1_2_drift_relief found:%s (feedback drift loop ineligible)" % dr_st.get("found"))
+    except Exception as ex:
+        print("[india_authority] status emit skipped:", ex)
     out = args.out or os.path.join(str(pkg.root), "pushover")
     os.makedirs(out, exist_ok=True)
     loads, gtable = NM.gravity_loads(pkg, prm)
@@ -57,8 +89,10 @@ def _run(args):
         print("  [%s TAIL] status=%s tried=%s max(theta_pl/a)=%.2f max(theta_pl/b)=%.2f -- %s" % (d, t["status"], [x["strategy"] for x in t["tried"]],
               run["rec"]["a_ratio"][-1], run["rec"]["b_ratio"][-1], t["message"]))
         if t["status"] in ("lower_bound", "max_drift"):
-            print("  >> ACTION FOR THE BOT: descending branch not captured. Ask the user before rung 3 "
-                  "(--post-cap-ratio 0.5 = modelling change) or a larger --max-drift; see the skill's descending-branch protocol.")
+            print("  >> ACTION FOR THE BOT: descending branch not captured (status=%s, max_drift=%.3f). "
+                  "Ask the user before rung 3 (--post-cap-ratio 0.5 = modelling change) or a larger "
+                  "--max-drift (India fibre default 0.10; try 0.12–0.15); see descending-branch protocol."
+                  % (t["status"], args.max_drift))
     html = RS.write(out, pkg, prm, runs, results, gtable, stats, time.time() - t0)
     try:
         from . import viewer3d as V3
@@ -73,7 +107,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="pushover")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run"); r.add_argument("package"); r.add_argument("--out"); r.add_argument("--dirs", nargs="+", default=["X", "Y"])
-    r.add_argument("--max-drift", type=float, default=0.08); r.add_argument("--site-class", default="D"); r.add_argument("--params")
+    r.add_argument("--max-drift", type=float, default=None,
+                   help="max roof drift ratio H (default: 0.10 India fibre, else 0.08). Raise to capture descending branch.")
+    r.add_argument("--site-class", default="D"); r.add_argument("--params")
     r.add_argument("--system")
     r.add_argument("--tail", default="auto", help="descending-branch escalation: auto (fine_step then arclength) | fine_step | arclength | none")
     r.add_argument("--post-cap-ratio", type=float, help="RUNG 3 (modelling change, user consent): fraction of `a` over which hinges descend to residual (default 0.15; try 0.5)")
