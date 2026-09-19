@@ -103,6 +103,29 @@ def test_nsp_acceptance_tables_found_false():
 
 def test_complete_gate_disclosures_include_found_false():
     rows = IA.complete_gate_disclosures()
-    ids = {r.get("id") for r in rows}
-    assert "india_nsp_acceptance_tables" in ids
-    assert any(r.get("found") is False for r in rows)
+    by_id = {r.get("id"): r for r in rows}
+    assert "india_nsp_acceptance_tables" in by_id
+    assert by_id["india_nsp_acceptance_tables"]["found"] is False
+    assert by_id["india_nsp_acceptance_tables"].get("prefer_fibre") is True
+    assert by_id["india_nsp_acceptance_tables"].get("hinge_params_verified") is False
+    assert "asce_16_1_2_drift_relief_analogue" in by_id
+    drift = by_id["asce_16_1_2_drift_relief_analogue"]
+    assert drift["found"] is False
+    assert drift.get("feedback_drift_loop") == "ineligible"
+    assert "india_nsp_hinge_params" in by_id
+    assert by_id["india_nsp_hinge_params"]["hinge_params_verified"] is False
+    assert all(r.get("found") is False for r in rows)
+
+
+def test_write_complete_gate_disclosures_json(tmp_path=None):
+    with tempfile.TemporaryDirectory() as td:
+        rows = IA.write_complete_gate_disclosures(td)
+        path = os.path.join(td, "complete_gate_disclosures.json")
+        assert os.path.isfile(path)
+        payload = json.load(open(path, encoding="utf-8"))
+        assert payload["jurisdiction"] == "india"
+        assert payload["wave"] == "nl-polish-waveE"
+        ids = {r["id"] for r in payload["disclosures"]}
+        assert "india_nsp_acceptance_tables" in ids
+        assert "asce_16_1_2_drift_relief_analogue" in ids
+        assert rows and all(r.get("found") is False for r in rows)
