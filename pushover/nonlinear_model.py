@@ -510,14 +510,58 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
     return hinges, stats
 
 
-def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05):
+# Numerical floor on building sway period (seconds). Not a code provision —
+# rejects spurious stiff eigenmodes (IN_Ex3 Chennai Y picked mode 10 at
+# T≈0.0007 s with ~100% mass on a single-storey portal). Real industrial /
+# building sway modes sit well above ~0.02 s (f ≈ 50 Hz). Documented as an
+# engineering sanity filter only; do not cite as IS 1893 / ASCE Ta.
+DEFAULT_MIN_T_S = 0.02
+
+
+def select_modal_candidate(cands, min_meff_frac=0.05, min_T=DEFAULT_MIN_T_S):
+    """Pure ranking for translational pushover mode selection (no OpenSees).
+
+    Preference cascade (first non-empty pool wins; within pool: max meff):
+      1. aligned AND frac >= min_meff_frac AND T >= min_T   (building sway)
+      2. frac >= min_meff_frac AND T >= min_T               (mass OK, T OK)
+      3. T >= min_T                                        (physical period only)
+      4. all candidates                                    (last-resort fallback)
+
+    Covers:
+      - IN_Ex1 X: soft T≈64 s / ~0% mass skipped via mass gate
+      - IN_Ex3 Y: stiff T≈0.001 s / ~100% mass skipped via T-floor
+    """
+    if not cands:
+        raise ValueError("select_modal_candidate: empty candidate list")
+    min_T = float(min_T) if min_T is not None else 0.0
+    min_meff_frac = float(min_meff_frac)
+
+    def _ok_T(c):
+        return c["T"] >= min_T
+
+    good = [c for c in cands if c["aligned"] and c["frac"] >= min_meff_frac and _ok_T(c)]
+    if good:
+        return max(good, key=lambda c: c["meff"]), "aligned_mass_T"
+    mass_T = [c for c in cands if c["frac"] >= min_meff_frac and _ok_T(c)]
+    if mass_T:
+        return max(mass_T, key=lambda c: c["meff"]), "mass_T"
+    phys = [c for c in cands if _ok_T(c)]
+    if phys:
+        return max(phys, key=lambda c: c["meff"]), "T_only"
+    return max(cands, key=lambda c: c["meff"]), "fallback"
+
+
+def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05, min_T=DEFAULT_MIN_T_S):
     """Translational pushover pattern in `direction` ('X'|'Y') from the current model.
 
     Selects the eigenmode with the **largest participating mass in the push DOF**,
-    preferring modes that are primarily aligned with that DOF (|L_n| > |L_perp|)
-    and that clear `min_meff_frac` of storey mass. Spurious near-zero-mass soft
-    modes (common after N-mm→kip-in bridging or local releases) are skipped so
-    T1 / NSP targets stay meaningful.
+    preferring modes that are primarily aligned with that DOF (|L_n| > |L_perp|),
+    clear `min_meff_frac` of storey mass, **and** have period T >= `min_T`
+    (default 0.02 s — numerical building-mode floor, not a code Ta).
+
+    Spurious modes skipped:
+      - near-zero-mass soft modes (IN_Ex1 X: T≈64 s / ≈0% mass)
+      - unrealistically short stiff modes (IN_Ex3 Y: T≈0.001 s / ≈100% mass)
 
     Root cause of IN_Ex1 X anomaly (T1≈64 s, ≈0% mass): the previous selector
     seeded `best` with mode 1 unconditionally (`best is None`), then required
@@ -525,6 +569,10 @@ def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05):
     soft mode-1 with ~0% mass could stick when the true X fundamental sat past
     the old nmodes=6 window or failed the chained gate. Y happened to hit mode 6
     with 86% mass inside that window.
+
+    Root cause of IN_Ex3 Y anomaly (T1≈0.001 s, ≈100% mass): mass-only ranking
+    preferred a high-frequency local/stiff eigenmode that projected onto the
+    diaphragm master; a T-floor rejects it in favour of a real building sway mode.
     """
     dof = 1 if direction.upper() == "X" else 2
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
@@ -552,13 +600,16 @@ def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05):
         aligned = abs(Ln) > abs(Lp)
         cands.append(dict(meff=meff, frac=frac, T=T, phi=phi, mode=i + 1,
                           aligned=aligned, Ln=Ln, Lp=Lp))
-    good = [c for c in cands if c["aligned"] and c["frac"] >= min_meff_frac]
-    pool = good if good else [c for c in cands if c["frac"] >= min_meff_frac]
-    if not pool:
-        pool = cands
-    best = max(pool, key=lambda c: c["meff"])
+    best, pool_tag = select_modal_candidate(cands, min_meff_frac=min_meff_frac, min_T=min_T)
     meff, T, phi, mode = best["meff"], best["T"], best["phi"], best["mode"]
-    if best["frac"] < min_meff_frac:
+    t_soft = T < float(min_T) if min_T is not None else False
+    mass_soft = best["frac"] < min_meff_frac
+    if t_soft:
+        print("[modal_pattern %s] WARNING: best mode %d has T=%.4fs below min_T=%.3fs "
+              "(pool=%s, %.1f%% mass) among %d modes — NSP target unreliable; "
+              "no building-period candidate cleared the T-floor"
+              % (direction.upper(), mode, T, min_T, pool_tag, 100.0 * best["frac"], nmodes))
+    elif mass_soft:
         print("[modal_pattern %s] WARNING: best mode %d has only %.1f%% mass (T=%.3fs) "
               "among %d modes — NSP target unreliable; check mass / unit bridge / soft modes"
               % (direction.upper(), mode, 100.0 * best["frac"], T, nmodes))
@@ -567,8 +618,9 @@ def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05):
               "primarily aligned with push DOF (|Ln|<=|Lp|); using max-meff fallback"
               % (direction.upper(), mode, T, 100.0 * best["frac"]))
     else:
-        print("[modal_pattern %s] selected mode %d T=%.3fs (%.0f%% mass, aligned) "
-              "from %d eigenmodes" % (direction.upper(), mode, T, 100.0 * best["frac"], nmodes))
+        print("[modal_pattern %s] selected mode %d T=%.3fs (%.0f%% mass, aligned, pool=%s) "
+              "from %d eigenmodes (min_T=%.3fs)"
+              % (direction.upper(), mode, T, 100.0 * best["frac"], pool_tag, nmodes, min_T))
     sgn = 1.0 if phi[max(phi)] >= 0 else -1.0
     denom = abs(phi[max(phi)]) or 1.0
     phi = {k: sgn * v / denom for k, v in phi.items()}         # roof ordinate = +1
@@ -578,7 +630,8 @@ def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05):
     return dict(T1=T, mode=mode, meff_frac=meff / Mtot if Mtot > 0 else 0.0, phi=phi, F=F,
                 masses={k: pkg.model.masses[m][m_idx] for k, z, m, s in lv},
                 nmodes_searched=nmodes, modal_aligned=bool(best["aligned"]),
-                modal_warn=best["frac"] < min_meff_frac)
+                modal_warn=mass_soft or t_soft, modal_pool=pool_tag,
+                min_T=float(min_T) if min_T is not None else None)
 
 
 def _try_analyze(dU, ctrl, dof, algos=(("Newton",), ("ModifiedNewton", "-initial"), ("KrylovNewton",), ("NewtonLineSearch",))):

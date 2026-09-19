@@ -151,7 +151,11 @@ steltic repo (see its NOTICE). No copyrighted specification text is included or 
 Default `--max-drift` is **0.10** for India fibre runs (else 0.08). IN_Ex1 at 0.02 hit
 `status=max_drift` without a descending branch — raise `--max-drift` (0.12–0.15) before
 consenting to rung-3 `--post-cap-ratio 0.5` (modelling change). Modal pattern now selects the
-first mode with meaningful participating mass in the push direction (skips ~0% soft modes).
+first mode with meaningful participating mass in the push direction (skips ~0% soft modes)
+**and** rejects unrealistically short periods below a numerical T-floor of **0.02 s**
+(engineering sanity filter ≈ 50 Hz — **not** an IS 1893 / ASCE Ta provision). IN_Ex3
+Chennai Y previously stuck on mode 10 at T≈0.001 s / ~100% mass; the T-floor prefers a
+real building sway mode (same spirit as the Ex1 mass pick).
 
 India COMPLETE-gate honesty: pushover run writes `complete_gate_disclosures.json` under `--out`
 (`india_nsp_acceptance_tables` found:false, prefer fibre / hinge_params UNVERIFIED;

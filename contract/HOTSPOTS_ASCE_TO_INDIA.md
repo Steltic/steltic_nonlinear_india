@@ -33,3 +33,11 @@ On tip after Ex1 partial merge (`c689de0`+), COMPLETE gate disclosures are durab
 - `asce_16_1_2_drift_relief_analogue` → **found:false**; `feedback_drift_loop: ineligible` (`snl/feedback.py` `drift_plan`)
 - **No invent:** do not fabricate IS NSP IO/LS/CP tables or an IS waiver of 7.11.1.1 after time-history
 
+## Modal pattern T-floor (IN_Ex3 Y)
+
+`pushover.nonlinear_model.modal_pattern` applies a **numerical** min period
+`DEFAULT_MIN_T_S = 0.02` s (~50 Hz) plus the Ex1 ≥5% mass / alignment pick.
+This is an engineering sanity filter for spurious stiff eigenmodes — **not** an
+IS 1893 / ASCE approximate-period provision. IN_Ex3 Chennai Y previously selected
+mode 10 at T≈0.0007 s with ~100% mass; re-run Y pushover after this tip.
+
