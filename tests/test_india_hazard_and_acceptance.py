@@ -135,6 +135,46 @@ def test_write_complete_gate_disclosures_json(tmp_path=None):
         assert rows and all(r.get("found") is False for r in rows)
 
 
+def test_descending_branch_incomplete_is_optional_and_disclosed():
+    """max_drift/lower_bound disclose honestly but never force COMPLETE -> PARTIAL."""
+    rows = IA.complete_gate_disclosures()
+    for tail_status in ("max_drift", "lower_bound"):
+        evidence = {
+            "plasticity": "fibre",
+            "descending_branch_captured": False,
+            "descending_branch_status": tail_status,
+        }
+        ok, reasons = IA.complete_allowed(evidence=evidence, disclosures=rows)
+        assert ok is True, (tail_status, reasons)
+        st = IA.design_status(evidence=evidence, disclosures=rows)
+        assert st["status"] == "complete"
+        assert st["complete_allowed"] is True
+        assert st["descending_branch_captured"] is False
+        assert st["descending_branch_status"] == tail_status
+        assert st["descending_branch"]["required_for_complete"] is False
+        assert "optional" in st["descending_branch"]["note"]
+
+
+def test_write_gate_discloses_descending_branch_status(tmp_path=None):
+    with tempfile.TemporaryDirectory() as td:
+        IA.write_complete_gate_disclosures(
+            td,
+            evidence={
+                "plasticity": "fibre",
+                "descending_branch_runs": {
+                    "X": {"captured": False, "status": "max_drift"},
+                    "Y": {"captured": False, "status": "lower_bound"},
+                },
+            },
+        )
+        payload = json.load(open(os.path.join(td, "complete_gate_disclosures.json")))
+        assert payload["descending_branch_captured"] is False
+        assert payload["descending_branch_status"] == "max_drift"
+        assert payload["design_status"] == "complete"
+        assert payload["complete_allowed"] is True
+        assert payload["descending_branch"]["required_for_complete"] is False
+
+
 def test_complete_allowed_fibre_with_found_false_disclosures():
     """Michael 2026-09-20: disclosed found:false + fibre → COMPLETE (not PARTIAL)."""
     rows = IA.complete_gate_disclosures()

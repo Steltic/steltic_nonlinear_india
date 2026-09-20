@@ -106,6 +106,23 @@ def _run(args):
                   "--max-drift (India fibre default 0.10; try 0.12–0.15); see descending-branch protocol."
                   % (t["status"], args.max_drift))
     html = RS.write(out, pkg, prm, runs, results, gtable, stats, time.time() - t0)
+    # Rewrite the gate disclosure after the runs so max_drift/lower_bound is
+    # visible in STATUS. Descending-branch incompleteness remains optional and
+    # must not turn an otherwise valid fibre pack into PARTIAL.
+    try:
+        from nlrha.india_authority import write_complete_gate_disclosures
+        write_complete_gate_disclosures(
+            out,
+            job_dir=str(getattr(pkg, "root", "") or args.package),
+            evidence={
+                "plasticity": str(getattr(args, "plasticity", None) or "fibre"),
+                "descending_branch_runs": {
+                    d: run.get("tail", {}) for d, run in runs.items()
+                },
+            },
+        )
+    except Exception as ex:
+        print("[india_authority] descending-branch disclosure rewrite skipped:", ex)
     try:
         from . import viewer3d as V3
         print("viewer", V3.write(out, pkg, prm, runs, results, stats))
