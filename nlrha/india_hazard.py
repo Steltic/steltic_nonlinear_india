@@ -5,8 +5,9 @@ Owner ruling D6: the nonlinear (NSP / NLRHA) target is the IS 1893 *elastic* spe
 Both levels are built and reported. The design coefficient Ah = (Z/2)(Sa/g)/(R/I) is kept only as a
 labelled *reference* curve (it is the linear design-force coefficient, 6.4.2, not an NL demand).
 
-NOTE (integration): `sa_over_g` lives here for now; HR-CORE's shared `india_seismic.sa_over_g`
-will replace it when the shared India modules are vendored (do not fork india_seismic here).
+NOTE (integration, WP1.14): `sa_over_g` delegates to the vendored shared `india_seismic.sa_over_g`
+(snl/vendor_steltic_india, byte-identical to steltic_india; scripts/check_vendored.py guards drift --
+do not fork india_seismic here).
 
 Built only from LIVE RAG / indexed excerpts under engineering_rag_india
 (stem IS_1893_Part_1_2016). Does NOT call USGS. USA site_hazard.build_site_hazard
@@ -160,37 +161,11 @@ def normalize_soil(soil: str | None) -> str:
     raise ValueError("unknown soil type %r — use I|II|III (IS 1893 6.4.2.1)" % soil)
 
 def sa_over_g(T: float, soil: str) -> float:
-    """Design acceleration coefficient Sa/g (5% damping), response-spectrum form of 6.4.2.
-
-    Piecewise expressions transcribed from IS_1893_Part_1_2016.search.md §6.4.2
-    (Fig. 2(b) response-spectrum method). Re-verify LIVE before sealing.
-    """
-    s = normalize_soil(soil)
-    T = max(float(T), 0.0)
-    if s == "I":  # rocky / hard
-        if T < 0.10:
-            return 1.0 + 15.0 * T
-        if T <= 0.40:
-            return 2.5
-        if T <= 4.00:
-            return 1.0 / T
-        return 0.25
-    if s == "II":  # medium / stiff
-        if T < 0.10:
-            return 1.0 + 15.0 * T
-        if T <= 0.55:
-            return 2.5
-        if T <= 4.00:
-            return 1.36 / T
-        return 0.34
-    # III soft
-    if T < 0.10:
-        return 1.0 + 15.0 * T
-    if T <= 0.67:
-        return 2.5
-    if T <= 4.00:
-        return 1.67 / T
-    return 0.42
+    """Design acceleration coefficient Sa/g (5 % damping), response-spectrum branch of IS 1893 6.4.2 --
+    the SHARED steltic_india implementation (snl/vendor_steltic_india/india_seismic.py, WP1.14; RSA branch:
+    1 + 15T below 0.1 s, plateau 2.5 to 0.40/0.55/0.67 s, 1.00/1.36/1.67 / T to 4 s, tails 0.25/0.34/0.42)."""
+    from snl.vendor_steltic_india import shared
+    return float(shared("india_seismic").sa_over_g(max(float(T), 0.0), normalize_soil(soil), "RSA"))
 
 
 
