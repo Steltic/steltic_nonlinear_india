@@ -135,7 +135,17 @@ def _analysis_is_nmm(cfg) -> bool:
         return False
 
 
-def beam_udl(cfg, nm, pres, member, seg_index, nseg, fD, fL, fLr):
+def _india_roof_live(cfg):
+    plan = cfg.get("load_plan") if isinstance(cfg, dict) else None
+    if not plan or str(plan.get("jurisdiction") or "").lower() != "india":
+        return None
+    v = cfg.get("L_roof")
+    if v is None:
+        v = (plan.get("gravity_summary") or {}).get("L_roof_kNm2")
+    return float(v) if v is not None else None
+
+
+def beam_udl(cfg, nm, pres, member, seg_index, nseg, fD, fL, fLr, span=None):
     """Distributed gravity on grid beam sub-elements (OpenSees beamUniform local).
 
     Legacy: kip/in (psf × inch tributary). Stage D / wave 5 N-mm: N/mm (kN/m² × mm).
@@ -158,6 +168,10 @@ def beam_udl(cfg, nm, pres, member, seg_index, nseg, fD, fL, fLr):
     # Default snow: 20 psf (kip path) or 1.0 kN/m² (SI)
     snow_default = 1.0 if nmm else 20.0
     pLr = (cfg.get("snow") if cfg.get("snow") is not None else snow_default) if roof else 0.0
+    if roof and _india_roof_live(cfg) is not None:
+        # India: roof imposed load (IS 875-2) from load_plan.gravity_summary.L_roof_kNm2 is the fLr term (WP4.9 gravity
+        # gate: the Ex1 roof beams were loaded with D only) -- plus snow when the plan has one
+        pLr = _india_roof_live(cfg) + float(cfg.get("snow") or 0.0)
     p = fD * pD + fL * pL + fLr * pLr
     nb = _bays_adjacent(pres.get(k, set()), i, j, member.dirn)
     SX, SY = cfg["SX"], cfg["SY"]
@@ -166,7 +180,10 @@ def beam_udl(cfg, nm, pres, member, seg_index, nseg, fD, fL, fLr):
     clad = cfg.get("clad", 0.0)
     x1, y1, _ = nm.nodes[member.n1]; x2, y2, _ = nm.nodes[member.n2]
     L = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-    s0 = L * seg_index / nseg; s1 = L * (seg_index + 1) / nseg; smid = 0.5 * (s0 + s1)
+    s0 = L * seg_index / nseg; s1 = L * (seg_index + 1) / nseg
+    if span is not None:
+        s0, s1 = float(span[0]), float(span[1])
+    smid = 0.5 * (s0 + s1)
     width = min(smid, L - smid, wcap)
 
     if nmm:

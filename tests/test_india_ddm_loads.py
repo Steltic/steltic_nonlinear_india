@@ -20,6 +20,8 @@ def test_india_without_load_plan_raises():
 
 
 def test_load_plan_via_india_loads():
+    import pytest
+    pytest.importorskip("design_pipeline", reason="needs the HR steel_engine on sys.path (STELTIC_ENGINE_DIR)")
     cfg = {
         "jurisdiction": "india",
         "heights": [120.0],

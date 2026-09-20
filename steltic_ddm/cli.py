@@ -34,14 +34,23 @@ def _worker(args):
             cfg["_portal_roof_psf"] = float(cfg.get("Lr", 20.0))
             cfg["_portal_snow_case"] = None
     pres = loads.present_sets(nm)
+    india = bool(opts.get("india"))
     g = GMNIAModel(nm, cfg, nsub=tuple(opts["nsub"]), residual=opts["residual"], Fy=opts.get("Fy"),
                    hardening=opts["hardening"], fast=opts["fast"], nip=opts["nip"],
                    out_of_plumb=(imp["dir"], imp["psi"]), bow=opts["bow"], bow_sign=imp["bow_sign"], brace_bow=opts["bow"],
-                   rigid_end_offset=opts.get("rigid_end_offset", False))
+                   rigid_end_offset=opts.get("rigid_end_offset", False),
+                   fy_fn=(_india_fy_fn(job) if india else None), bow_hollow=opts.get("bow_hollow"))
     buf = io.StringIO()
     with contextlib.redirect_stderr(buf):
-        res = solver.sweep(g, combo, pres, dlam=opts["dlam"], max_steps=opts["max_steps"], verbose=True, time_limit=opts["time_limit"])
+        res = solver.sweep(g, combo, pres, dlam=opts["dlam"], max_steps=opts["max_steps"], verbose=True, time_limit=opts["time_limit"],
+                           strain_cap=opts.get("strain_cap"), capture_lambda1=india)
     cls = solver.classify(res, g)
+    b12 = None
+    if india:
+        from .india_checks import b12_check
+        b12 = b12_check(res.pop("forces_at_1", None), _india_fy_fn(job), res.get("lambda_end"), combo_label)
+    else:
+        res.pop("forces_at_1", None)
     # per-role/section member state at the peak
     yr = res["snapshot"].get("yield_ratio", {})
     per_member = {}
@@ -69,7 +78,41 @@ def _worker(args):
                                 disp={str(t): [round(v, 4) for v in dd] for t, dd in f["disp"].items()},
                                 mem={str(m): [round(r, 2), round(fr, 2)] for m, (r, fr) in f["mem"].items()},
                                 buckled=[int(t) for t in f["buckled"]]) for f in res.get("frames", [])]
-    return dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log)
+    return dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12)
+
+
+_FY_CACHE = {}
+
+
+def _india_fy_fn(job):
+    """fy (MPa) per section from IS 2062 Table 3 (grade from nl_plan.material, default E250; EOR expected factor,
+    default 1.0) -- the SAME steel as the pushover and the NLRHA (WP4.5)."""
+    if job in _FY_CACHE:
+        return _FY_CACHE[job]
+    from pushover import india_materials as IM
+    plan = {}
+    for c in (os.path.join(job, "nl_plan.json"), os.path.join(os.path.dirname(job), "nl_plan.json")):
+        if os.path.exists(c):
+            try:
+                plan = json.load(open(c)); break
+            except Exception:
+                pass
+    mp = IM.material_plan(plan)
+    cache = {}
+
+    def fy(section, kind=None):
+        k = (str(section).upper(), kind)
+        if k not in cache:
+            cache[k] = IM.fy_for_member(section, kind, mp)["fye_MPa"]
+        return cache[k]
+    fy.plan = mp
+    _FY_CACHE[job] = fy
+    return fy
+
+
+def _is_india_cfg(cfg):
+    plan = cfg.get("load_plan") if isinstance(cfg, dict) else None
+    return str((plan or {}).get("jurisdiction") or cfg.get("jurisdiction") or "").lower() == "india"
 
 
 def run(args):
@@ -105,7 +148,9 @@ def run(args):
     elif getattr(args, "no_rigid_end_offset", False):
         rigid_off = False
     else:
-        rigid_off = (False if portal else 0.05)
+        # India: no rigid end offsets by default -- the HR design model has none, and the gravity transfer gate compares
+        # like with like (WP4.9). USA HR default keeps the Liu continuity stubs.
+        rigid_off = (False if (portal or _is_india_cfg(cfg)) else 0.05)
 
     # transfer gate
     if portal:
@@ -130,13 +175,37 @@ def run(args):
     if not gate["ok"] and not args.force:
         print("!! transfer gate FAILED --", gate["hint"]); sys.exit(2)
 
+    india = _is_india_cfg(cfg)
+    psi = args.psi if args.psi is not None else (1 / 200.0 if india else 1 / 500.0)
+    bow = args.bow if args.bow is not None else 1 / 1000.0
+    if args.time_limit < 2400:
+        print("!! --time-limit %.0f s is below the default 2400 s: runs that stop on the clock are NO_LIMIT_POINT, not capacities" % args.time_limit)
     opts = dict(nsub=list(args.nsub), residual=args.residual, Fy=args.fy, hardening=args.hardening, fast=args.fast, nip=args.nip,
-                bow=args.bow, psi=args.psi, dlam=args.dlam, max_steps=args.max_steps, time_limit=args.time_limit,
-                rigid_end_offset=rigid_off)
+                bow=bow, psi=psi, dlam=args.dlam, max_steps=args.max_steps, time_limit=args.time_limit,
+                rigid_end_offset=rigid_off, india=india, strain_cap=args.strain_cap,
+                bow_hollow=(args.bow_hollow if args.bow_hollow is not None else (1 / 500.0 if india else None)),
+                psi_basis=("IS 800:2007 4.3.6: notional horizontal force 0.5 %% of factored gravity load -> equivalent "
+                           "out-of-plumb psi = 1/200 (equivalence, EOR to confirm)" if india and args.psi is None else
+                           ("EOR input psi = 1/%d" % round(1 / psi))),
+                bow_basis=("IS 800:2007 Table 34 straightness 0.001L (0.002L hollow sections)" if india else "L/1000"))
+    ggate = None
+    if india:
+        from .india_checks import gravity_gate, b11_preconditions
+        print(">> gravity transfer gate (member forces at lambda = 1 vs member_schedule, +/-5 %)", flush=True)
+        ggate = gravity_gate(nm, cfg, kept, tol=args.gate_tol, nsub=tuple(args.nsub), rigid_end_offset=rigid_off)
+        print("   ", ggate["summary"])
+        for gr in sorted(ggate["groups"], key=lambda g: -max(abs(g["ratio_max"] - 1), abs(g["ratio_min"] - 1)))[:8]:
+            print("    %-24s %-12s %-24s %-8s n=%-3d ratio %.3f..%.3f" % (gr["combo"], gr["role"], gr["section"], gr["quantity"], gr["n"], gr["ratio_min"], gr["ratio_max"]))
+        opts["b11"] = b11_preconditions(nm, _india_fy_fn(job))
+        if not ggate["ok"] and not args.force:
+            print("!! gravity transfer gate FAILED -- DDM results withheld (use --force to run anyway; results stay flagged)")
+            json.dump(dict(job=job, gravity_gate=ggate, options={k: v for k, v in opts.items() if k != "b11"}, runs=[],
+                           status="WITHHELD_GRAVITY_GATE"), open(os.path.join(out_dir, "ddm_results.json"), "w"), indent=1, default=str)
+            sys.exit(4)
     # task list: (combo, imperfection case)
     tasks = []
     for c in kept:
-        for imp in imperfections.cases_for(c, gravity_dirs=args.gravity_dirs, psi=args.psi):
+        for imp in imperfections.cases_for(c, gravity_dirs=args.gravity_dirs, psi=psi):
             tasks.append((job, engine_dir, c[0], imp, opts))
     print(">> %d GMNIA sweeps on %d worker(s)" % (len(tasks), args.workers), flush=True)
     results = []
@@ -144,21 +213,25 @@ def run(args):
         with mp.get_context("spawn").Pool(args.workers) as pool:
             for r in pool.imap_unordered(_worker, tasks):
                 results.append(r)
-                print("   done %-40s imp %-3s lambda_u %.3f  (%d steps, %.0f s) %s" % (r["label"][:40], r["imp"], r["res"]["lambda_u"], r["res"]["steps"], r["res"]["seconds"], r["cls"]["mechanism"][:60]), flush=True)
+                _print_done(r)
     else:
         for t in tasks:
             r = _worker(t); results.append(r)
-            print("   done %-40s imp %-3s lambda_u %.3f  (%d steps, %.0f s) %s" % (r["label"][:40], r["imp"], r["res"]["lambda_u"], r["res"]["steps"], r["res"]["seconds"], r["cls"]["mechanism"][:60]), flush=True)
+            _print_done(r)
 
-    # keep the governing imperfection case per combination
+    # keep the governing imperfection case per combination (lowest lambda reached)
     by_label = {}
     for r in results:
-        if r["label"] not in by_label or r["res"]["lambda_u"] < by_label[r["label"]]["res"]["lambda_u"]:
+        if r["label"] not in by_label or r["res"]["lambda_end"] < by_label[r["label"]]["res"]["lambda_end"]:
             by_label[r["label"]] = r
     R = cfg.get("seis", {}).get("R")
-    hss = any(m.section.upper().startswith("HSS") for m in nm.members if m.kind == "brace")
-    rc = _rc(cfg, args.risk_category)
-    print(">> Risk Category %s -> phi_s target-reliability rows (gravity beta_T %.2f, lateral %.2f)" % (rc, phi_s.BETA_TARGET["gravity"][rc], phi_s.BETA_TARGET["lateral"][rc]))
+    from pushover.india_materials import is_tube
+    hss = any(is_tube(m.section) for m in nm.members if m.kind == "brace")
+    rc = None if india else _rc(cfg, args.risk_category)
+    if rc:
+        print(">> Risk Category %s -> phi_s target-reliability rows (gravity beta_T %.2f, lateral %.2f)" % (rc, phi_s.BETA_TARGET["gravity"][rc], phi_s.BETA_TARGET["lateral"][rc]))
+    else:
+        print(">> India: no Risk Category; phi_s shown as literature information only (not calibrated for IS 800 Table 4)")
     runs = []
     for c in kept:
         r = by_label.get(c[0])
@@ -168,8 +241,9 @@ def run(args):
         gov_braces = bool(r["cls"]["buckled_braces"]) or (r["cls"]["mechanism"].startswith("brace"))
         mat = "CFS-P" if portal else "HR"
         ph = phi_s.choose(summ["kind"], R, r["cls"]["cls"], governed_by_braces=gov_braces, hss_braces=hss, material=mat, risk_category=rc)
-        runs.append(dict(combo=c, summary=summ, res=r["res"], cls=r["cls"], phi=ph, check=phi_s.check(ph["phi_s"], r["res"]["lambda_u"]),
-                         imp=r["imp"], state=r["state"]))
+        chk = _check(ph, r["res"], india)
+        runs.append(dict(combo=c, summary=summ, res=r["res"], cls=r["cls"], phi=ph, check=chk,
+                         imp=r["imp"], state=r["state"], b12=r.get("b12")))
     # member table from the governing strength combination per group
     member_table = []
     groups = sorted({(m.role, m.section) for m in nm.members})
@@ -195,9 +269,9 @@ def run(args):
     # sensitivity on the governing strength combination
     sens = []
     if args.sensitivity and runs:
-        strength = [r for r in runs if r["phi"]["phi_s"] is not None]
+        strength = [r for r in runs if r["phi"]["phi_s"] is not None and r["res"].get("lambda_u") is not None]
         gov = min(strength, key=lambda r: r["phi"]["phi_s"] * r["res"]["lambda_u"]) if strength else runs[0]
-        lab, ref = gov["combo"][0], gov["res"]["lambda_u"]
+        lab, ref = gov["combo"][0], gov["res"]["lambda_end"]
         variants = []
         o2 = dict(opts, residual="none"); variants.append(("no residual stress", dict(dir=gov["res"]["lateral"][0] or "X", psi=(gov["res"]["lateral"][1] or 1) * args.psi, bow_sign=gov["res"]["lateral"][1] or 1, tag="nom"), o2))
         o3 = dict(opts, bow=0.0); variants.append(("no member bow (L/1000 -> 0)", dict(dir=gov["res"]["lateral"][0] or "X", psi=(gov["res"]["lateral"][1] or 1) * args.psi, bow_sign=gov["res"]["lateral"][1] or 1, tag="nom"), o3))
@@ -214,26 +288,47 @@ def run(args):
         else:
             sres = [_worker(t) for t in stasks]
         for (case, _, _), r in zip(variants, sres):
-            sens.append(dict(case=case, combo=lab, lambda_u=round(r["res"]["lambda_u"], 3), ref=ref, mechanism=r["cls"]["mechanism"]))
-            print("   sensitivity %-34s lambda_u %.3f (ref %.3f)" % (case, r["res"]["lambda_u"], ref), flush=True)
+            sens.append(dict(case=case, combo=lab, lambda_u=round(r["res"]["lambda_end"], 3), status=r["res"].get("status"), ref=ref, mechanism=r["cls"]["mechanism"]))
+            print("   sensitivity %-34s lambda %.3f %s (ref %.3f)" % (case, r["res"]["lambda_end"], r["res"].get("status"), ref), flush=True)
 
     # exports
     opts_rep = dict(opts, nsub=tuple(opts["nsub"]), section_log=(results[0]["section_log"] if results else []), Fy=(args.fy or cfg.get("Fy", 50.0)),
-                    gravity_dirs={"one": "+X only", "two": "+X and +Y", "all": "±X and ±Y"}[args.gravity_dirs], risk_category=rc, n_cases=len(cases))
+                    gravity_dirs={"one": "+X only", "two": "+X and +Y", "all": "±X and ±Y"}[args.gravity_dirs], risk_category=rc, n_cases=len(cases),
+                    gravity_gate=ggate)
     rep, block = _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0)
     if not args.no_block:
         report_ddm.write_block(job, block)
     # model export (nominal, +X lean)
     try:
-        g = GMNIAModel(nm, cfg, nsub=tuple(args.nsub), residual=args.residual, out_of_plumb=("X", args.psi), bow=args.bow, brace_bow=args.bow, fast=args.fast,
-                       rigid_end_offset=rigid_off)
-        g.export_py(os.path.join(out_dir, "model_gmnia.py"), header="%s (out-of-plumb +X H/%d, L/%d bows, %s residual)" % (nm.name, round(1 / args.psi), round(1 / args.bow), args.residual))
+        g = GMNIAModel(nm, cfg, nsub=tuple(args.nsub), residual=args.residual, out_of_plumb=("X", psi), bow=bow, brace_bow=bow, fast=args.fast,
+                       rigid_end_offset=rigid_off, fy_fn=(_india_fy_fn(job) if india else None), bow_hollow=opts["bow_hollow"])
+        g.export_py(os.path.join(out_dir, "model_gmnia.py"), header="%s (out-of-plumb +X H/%d, L/%d bows, %s residual)" % (nm.name, round(1 / psi), round(1 / bow), args.residual))
     except Exception as ex:
         print("   model export skipped:", ex)
     print(">> report:", rep)
     _viewer(out_dir, nm, gate, runs)
     print(">> elapsed %.0f s" % (time.time() - t0))
     return rep
+
+
+def _print_done(r):
+    res = r["res"]
+    lam = res.get("lambda_u")
+    print("   done %-40s imp %-3s %s  (%d steps, %.0f s) %s" % (
+        r["label"][:40], r["imp"], ("lambda_u %.3f [%s]" % (lam, res.get("status"))) if lam is not None else
+        ("NO_LIMIT_POINT (terminated: %s at lambda %.3f)" % (res.get("termination"), res.get("lambda_end") or 0)),
+        res["steps"], res["seconds"], r["cls"]["mechanism"][:60]), flush=True)
+
+
+def _check(ph, res, india):
+    """phi_s·lambda_u. India: information only (literature phi_s, not calibrated for IS 800 Table 4) -- no PASS/FAIL.
+    Runs without a limit point are excluded (NO_LIMIT_POINT)."""
+    lam = res.get("lambda_u")
+    if lam is None:
+        return (None, "NO_LIMIT_POINT")
+    if india:
+        return ((round(ph["phi_s"] * lam, 3) if ph.get("phi_s") is not None else None), "INFO")
+    return phi_s.check(ph["phi_s"], lam)
 
 
 def _rc(cfg, override=None):
@@ -253,11 +348,28 @@ def _notes(runs, n_cases):
 
 def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0, elapsed=None):
     """ddm_report.html + ddm_analysis block + ddm_results.json from the assembled runs (shared by `run` and `report`)."""
-    rep = report_ddm.build(out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, _notes(runs, opts_rep.get("n_cases", len(runs))))
-    block = report_ddm.ddm_block(nm, gate, runs, sens, opts_rep, member_table)
+    if opts_rep.get("india"):
+        rep = report_ddm.build_india(out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table)
+        block = report_ddm.ddm_block_india(nm, gate, runs, sens, opts_rep, member_table)
+    else:
+        rep = report_ddm.build(out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, _notes(runs, opts_rep.get("n_cases", len(runs))))
+        block = report_ddm.ddm_block(nm, gate, runs, sens, opts_rep, member_table)
     opts_json = {k: v for k, v in opts_rep.items() if k != "section_log"}
     opts_json["section_log"] = [list(x) for x in opts_rep.get("section_log", [])]
-    json.dump(dict(job=job, options=opts_json, gate=gate, runs=[dict(label=r["combo"][0], imp=r["imp"], kind=r["summary"]["kind"], lambda_u=r["res"]["lambda_u"],
+    b12 = None
+    if opts_rep.get("india"):
+        rows12 = [r.get("b12") for r in runs if r.get("b12")]
+        b12 = dict(ok=(all(x["ok"] for x in rows12) if rows12 else False), combos=rows12,
+                   quote=(rows12[0]["quote"] if rows12 else None),
+                   note="IS 800 Annex B-1.2 section-capacity check with GMNIA member forces at lambda = 1 (a code check)")
+    opts_json.pop("gravity_gate", None); opts_json.pop("b11", None)
+    json.dump(dict(job=job, jurisdiction=("india" if opts_rep.get("india") else None), options=opts_json, gate=gate,
+                   gravity_gate=opts_rep.get("gravity_gate"), b11_preconditions=opts_rep.get("b11"), b12_check=b12,
+                   statement=("IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information. "
+                              "IS 800 Annex B-1.2 section capacities are the code check." if opts_rep.get("india") else None),
+                   runs=[dict(label=r["combo"][0], imp=r["imp"], kind=r["summary"]["kind"], lambda_u=r["res"]["lambda_u"],
+                              lambda_end=r["res"].get("lambda_end"), status=r["res"].get("status"), termination=r["res"].get("termination"),
+                              b12=r.get("b12"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
                                                                    steps=r["res"]["steps"], fails=r["res"].get("fails"), lam_at_1p25d=r["res"].get("lam_at_1p25d"),
                                                                    seconds=r["res"]["seconds"], log=r["res"]["log"], state=r["state"],
@@ -271,10 +383,12 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
 def _runs_from_results(d):
     runs = []
     for r in d["runs"]:
-        res = dict(lambda_u=r["lambda_u"], first_yield=r.get("first_yield"), hist=r["hist"], steps=r["steps"], fails=r.get("fails"), lam_at_1p25d=r.get("lam_at_1p25d"),
+        res = dict(lambda_u=r["lambda_u"], lambda_end=r.get("lambda_end", r["lambda_u"]), status=r.get("status"),
+                   termination=r.get("termination"), first_yield=r.get("first_yield"), hist=r["hist"], steps=r["steps"], fails=r.get("fails"), lam_at_1p25d=r.get("lam_at_1p25d"),
                    seconds=r["seconds"], snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
                    log=r.get("log", []), frames=r.get("frames", []))
-        runs.append(dict(combo=(r["label"],), summary=dict(kind=r["kind"]), res=res, cls=r["cls"], phi=r["phi"], check=r["check"], imp=r["imp"], state=r["state"]))
+        runs.append(dict(combo=(r["label"],), summary=dict(kind=r["kind"]), res=res, cls=r["cls"], phi=r["phi"], check=r["check"], imp=r["imp"], state=r["state"],
+                         b12=r.get("b12")))
     return runs
 
 
@@ -290,20 +404,22 @@ def report(args):
     d = json.load(open(os.path.join(out_dir, "ddm_results.json")))
     runs = _runs_from_results(d)
     R = cfg.get("seis", {}).get("R")
-    hss = any(m.section.upper().startswith("HSS") for m in nm.members if m.kind == "brace")
-    rc = _rc(cfg, args.risk_category or d.get("options", {}).get("risk_category"))
-    print(">> Risk Category %s -> phi_s target-reliability rows (gravity beta_T %.2f, lateral %.2f)" % (rc, phi_s.BETA_TARGET["gravity"][rc], phi_s.BETA_TARGET["lateral"][rc]))
+    from pushover.india_materials import is_tube
+    hss = any(is_tube(m.section) for m in nm.members if m.kind == "brace")
+    india = _is_india_cfg(cfg)
+    rc = None if india else _rc(cfg, args.risk_category or d.get("options", {}).get("risk_category"))
     for r in runs:
         gov_braces = bool(r["cls"]["buckled_braces"]) or (r["cls"]["mechanism"].startswith("brace"))
         mat = "CFS-P" if PA.is_portal(cfg) else "HR"
         r["phi"] = phi_s.choose(r["summary"]["kind"], R, r["cls"]["cls"], governed_by_braces=gov_braces, hss_braces=hss, material=mat, risk_category=rc)
-        r["check"] = phi_s.check(r["phi"]["phi_s"], r["res"]["lambda_u"])
-        print("   %-40s lambda_u %.3f  %-7s phi_s %s  -> %s" % (r["combo"][0][:40], r["res"]["lambda_u"], r["phi"]["cls"], r["phi"]["phi_s"], r["check"][1]))
+        r["check"] = _check(r["phi"], r["res"], india)
+        print("   %-40s %s  %-7s phi_s %s  -> %s" % (r["combo"][0][:40], r["res"].get("status"), r["phi"]["cls"], r["phi"]["phi_s"], r["check"][1]))
     opts_rep = dict(d.get("options", {}))
     opts_rep["nsub"] = tuple(opts_rep.get("nsub", (2, 2, 4)))
     opts_rep["section_log"] = [tuple(x) for x in opts_rep.get("section_log", [])]
     if opts_rep.get("Fy") is None: opts_rep["Fy"] = cfg.get("Fy", 50.0)
     opts_rep.setdefault("gravity_dirs", "+X and +Y"); opts_rep["risk_category"] = rc
+    opts_rep["india"] = india; opts_rep["gravity_gate"] = d.get("gravity_gate"); opts_rep["b11"] = d.get("b11_preconditions")
     opts_rep.setdefault("n_cases", len(loads.steltic_combos(cfg)))
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep, d.get("member_table", []), None, elapsed=d.get("elapsed_s"))
     if not args.no_block:
@@ -349,8 +465,10 @@ def main(argv=None):
     r.add_argument("--residual", default="lehigh", choices=["lehigh", "eccs", "none"])
     r.add_argument("--fy", type=float, default=None)
     r.add_argument("--hardening", type=float, default=0.002)
-    r.add_argument("--bow", type=float, default=1 / 1000.0)
-    r.add_argument("--psi", type=float, default=1 / 500.0)
+    r.add_argument("--bow", type=float, default=None, help="member bow / L (default 1/1000; IS 800 Table 34)")
+    r.add_argument("--bow-hollow", type=float, default=None, help="bow / L for hollow sections (India default 1/500 = 0.002, IS 800 Table 34)")
+    r.add_argument("--psi", type=float, default=None, help="out-of-plumb (India default 1/200 = IS 800 4.3.6 0.5 %% notional; USA 1/500)")
+    r.add_argument("--strain-cap", type=float, default=20.0, help="ductility cap: stop at max fibre strain = cap x eps_y (lambda at the cap is reported as DUCTILITY_CAP)")
     r.add_argument("--dlam", type=float, default=0.05)
     r.add_argument("--max-steps", type=int, default=250)
     r.add_argument("--time-limit", type=float, default=2400.0, help="seconds per sweep")
@@ -358,7 +476,7 @@ def main(argv=None):
     r.add_argument("--fast", action="store_true", help="dispBeamColumn instead of forceBeamColumn")
     r.add_argument("--sensitivity", action="store_true")
     r.add_argument("--gate-tol", type=float, default=0.05)
-    r.add_argument("--risk-category", default=None, choices=["I", "II", "III", "IV"], help="ASCE 7 Risk Category (default: from cfg / Ie)")
+    r.add_argument("--risk-category", default=None, choices=["I", "II", "III", "IV"], help="USA scaffolding only (ASCE 7 Risk Category); ignored for India")
     r.add_argument("--force", action="store_true", help="continue even if the transfer / CFS fidelity gate fails")
     r.add_argument("--rigid-end-offset", type=float, default=None, metavar="FRAC",
                    help="HR DDM: rigid beam end offset fraction of L (default 0.05 for HR; off for CFS portal)")

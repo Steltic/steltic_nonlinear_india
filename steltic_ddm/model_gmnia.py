@@ -38,8 +38,12 @@ K_ROT = 1.0e10       # kip-in/rad
 class GMNIAModel:
     def __init__(self, nm, cfg, nsub=(4, 4, 6), residual="lehigh", Fy=None, hardening=0.002,
                  elastic=False, fast=False, out_of_plumb=(None, 0.0), bow=1 / 1000.0, bow_sign=+1,
-                 brace_bow=1 / 1000.0, nip=5, brace_pins=True, rigid_end_offset=False):
+                 brace_bow=1 / 1000.0, nip=5, brace_pins=True, rigid_end_offset=False, fy_fn=None, bow_hollow=None):
         self.nm, self.cfg = nm, cfg
+        # WP4.5 / WP4.9 India: fy per section (IS 2062 Table 3 band, same steel as pushover/NLRHA) and a separate
+        # bow for hollow sections (IS 800 Table 34: 0.002L hollow, 0.001L otherwise)
+        self.fy_fn = fy_fn
+        self.bow_hollow = bow_hollow
         self.nsub_col, self.nsub_beam, self.nsub_brace = nsub
         self.residual = residual
         # Stage C/D: Fy default 250 MPa when analysis N-mm, else 50 ksi
@@ -91,8 +95,22 @@ class GMNIAModel:
         i1, j1, _ = decode_tag(m.n1); i2, j2, _ = decode_tag(m.n2)
         return 4 if j1 == j2 else 5        # X-frame brace -> vecxz (0,1,0) ; Y-frame -> (1,0,0)
 
+    def _is_hollow(self, m):
+        try:
+            from pushover.india_materials import is_tube
+            return is_tube(m.section)
+        except Exception:
+            return str(m.section).upper().startswith(("HSS", "CHS", "RHS", "SHS"))
+
     def _bow_vector(self, m):
-        """Unit vector of the member bow and its magnitude (fraction of L)."""
+        """Unit vector of the member bow and its magnitude (fraction of L). Hollow sections use bow_hollow when set."""
+        if self.bow_hollow is not None and m.kind in ("col", "brace") and self._is_hollow(m):
+            v, mag = self._bow_vector_base(m)
+            sign = 1.0 if mag >= 0 else -1.0
+            return v, sign * self.bow_hollow
+        return self._bow_vector_base(m)
+
+    def _bow_vector_base(self, m):
         if m.kind == "col":
             tr = self._transf_for(m)
             v = (0.0, 1.0, 0.0) if tr == 2 else (1.0, 0.0, 0.0)     # weak-axis direction
@@ -125,6 +143,7 @@ class GMNIAModel:
         self.builder = FiberSectionBuilder(ops, Fy=self.Fy, hardening=self.hardening,
                                            residual=self.residual, elastic=self.elastic, mat_tag0=1000,
                                            units=getattr(self, "_fibre_units", "kip-in"))
+        self._builders = {}
         for m in nm.members:
             self._add_member(m)
         for master, slaves in nm.diaphragms.items():
@@ -154,10 +173,21 @@ class GMNIAModel:
         key = (m.section.upper(), m.kind, axis)
         if key not in self.secs:
             tag = len(self.secs) + 1
-            props = self.builder.build(tag, m.section, m.kind, axis=axis)
+            bld, fy = self.builder, self.Fy
+            if self.fy_fn is not None:
+                fy = float(self.fy_fn(m.section, m.kind))
+                if abs(fy - self.Fy) > 1e-9:
+                    if fy not in self._builders:
+                        self._builders[fy] = FiberSectionBuilder(ops, Fy=fy, hardening=self.hardening, residual=self.residual,
+                                                                 elastic=self.elastic, mat_tag0=100000 + 1000 * len(self._builders),
+                                                                 units=getattr(self, "_fibre_units", "kip-in"))
+                    bld = self._builders[fy]
+            props = bld.build(tag, m.section, m.kind, axis=axis)
+            if bld is not self.builder:
+                self.builder.log.extend(bld.log[-1:])
             ops.beamIntegration("Lobatto", tag, tag, self.nip)
             self.secs[key] = tag
-            self.sec_props[tag] = dict(label=m.section, kind=m.kind, **props)
+            self.sec_props[tag] = dict(label=m.section, kind=m.kind, Fy=fy, **props)
         return self.secs[key]
 
     def _pin(self, grid_node, dup_node, released, axis=None):
@@ -236,8 +266,10 @@ class GMNIAModel:
         # Optional rigid end offsets on primary beams (continuous FR joint continuity).
         off_frac = self._offset_frac() if (m.kind == "beam" and not self._is_secondary(m)) else 0.0
         if off_frac > 0:
-            from .sections_fiber import elastic_props, E_KSI, G_KSI
-            off = max(3.0, min(12.0, off_frac * L))
+            from .sections_fiber import elastic_props, E_KSI, G_KSI, E_MPA, G_MPA, MM_PER_IN
+            nmm = getattr(self, "_fibre_units", "kip-in") == "N-mm"
+            lo_, hi_ = (3.0 * MM_PER_IN, 12.0 * MM_PER_IN) if nmm else (3.0, 12.0)
+            off = max(lo_, min(hi_, off_frac * L))
             if 2 * off >= 0.5 * L:
                 off = 0.1 * L
             ux = (p2[0] - p1[0]) / L
@@ -250,17 +282,21 @@ class GMNIAModel:
             ops.node(n_i, *xi); ops.node(n_j, *xj)
             A, Ix, Iy, J = elastic_props(m.section)
             A = A or 10.0; Ix = Ix or 100.0; Iy = Iy or 10.0; J = J or 1.0
+            E_st, G_st = E_KSI, G_KSI
+            if nmm:   # WP4.7-type unit fix: inch CSV props -> mm, MPa moduli for the N-mm DDM
+                A *= MM_PER_IN ** 2; Ix *= MM_PER_IN ** 4; Iy *= MM_PER_IN ** 4; J *= MM_PER_IN ** 4
+                E_st, G_st = E_MPA, G_MPA
             scale = 1000.0
             # Steltic beam transf 3: strong = local y → Iy_el=Ix, Iz_el=Iy
             Iy_el, Iz_el = Ix * scale, Iy * scale
             et_i = SUB_ELE0 + m.tag * 100 + 80
             et_j = SUB_ELE0 + m.tag * 100 + 81
-            ops.element("elasticBeamColumn", et_i, end1, n_i, A * scale, E_KSI, G_KSI, J * scale, Iy_el, Iz_el, tr)
-            ops.element("elasticBeamColumn", et_j, n_j, end2, A * scale, E_KSI, G_KSI, J * scale, Iy_el, Iz_el, tr)
+            ops.element("elasticBeamColumn", et_i, end1, n_i, A * scale, E_st, G_st, J * scale, Iy_el, Iz_el, tr)
+            ops.element("elasticBeamColumn", et_j, n_j, end2, A * scale, E_st, G_st, J * scale, Iy_el, Iz_el, tr)
             self.elems.append(dict(tag=et_i, mtag=m.tag, kind=m.kind, role=m.role, section=m.section,
-                                   secTag=0, s=-1, n1=end1, n2=n_i, L=off, dirn=m.dirn, rigid_stub=True))
+                                   secTag=0, s=-1, n1=end1, n2=n_i, L=off, dirn=m.dirn, rigid_stub=True, span=(0.0, off), Lm=L))
             self.elems.append(dict(tag=et_j, mtag=m.tag, kind=m.kind, role=m.role, section=m.section,
-                                   secTag=0, s=nsub, n1=n_j, n2=end2, L=off, dirn=m.dirn, rigid_stub=True))
+                                   secTag=0, s=nsub, n1=n_j, n2=end2, L=off, dirn=m.dirn, rigid_stub=True, span=(L - off, L), Lm=L))
             secTag = self._section(m)
             L_fib = L - 2 * off
             chain = [n_i]
@@ -282,7 +318,8 @@ class GMNIAModel:
                 ops.element(etype, tag, chain[s], chain[s + 1], tr, secTag, *extra)
                 self.elems.append(dict(tag=tag, mtag=m.tag, kind=m.kind, role=m.role, section=m.section,
                                        secTag=secTag, s=s, n1=chain[s], n2=chain[s + 1],
-                                       L=L_fib / nsub, dirn=m.dirn))
+                                       L=L_fib / nsub, dirn=m.dirn,
+                                       span=(off + s * L_fib / nsub, off + (s + 1) * L_fib / nsub), Lm=L))
             return
 
         secTag = self._section(m)
@@ -304,22 +341,41 @@ class GMNIAModel:
             extra = () if self.fast else ("-iter", 20, 1e-8)
             ops.element(etype, tag, chain[s], chain[s + 1], tr, secTag, *extra)
             self.elems.append(dict(tag=tag, mtag=m.tag, kind=m.kind, role=m.role, section=m.section,
-                                   secTag=secTag, s=s, n1=chain[s], n2=chain[s + 1], L=L / nsub, dirn=m.dirn))
+                                   secTag=secTag, s=s, n1=chain[s], n2=chain[s + 1], L=L / nsub, dirn=m.dirn,
+                                   span=(L * s / nsub, L * (s + 1) / nsub), Lm=L))
 
     # ------------------------------------------------------------------ loads
     def apply_gravity(self, fD, fL, fLr, pres):
         """Two-way tributary UDL on every grid beam sub-element (kip/in, local z down)."""
         from .loads import beam_udl
         total = 0.0
+        india = self._india()
         for e in self.elems:
-            if e["kind"] != "beam" or e.get("rigid_stub"):
+            if e["kind"] != "beam" or (e.get("rigid_stub") and not india):
                 continue
             m = self.nm.by_tag()[e["mtag"]] if not hasattr(self, "_bt") else self._bt[e["mtag"]]
-            w = beam_udl(self.cfg, self.nm, pres, m, e["s"], self.nsub_beam, fD, fL, fLr)
+            # India: exact sub-element span along the member (stubs loaded too: the offset length was unloaded before), and
+            # the two-way triangular tributary integrated with 3-point Gauss point loads (a sub-element UDL at the mid
+            # width under-states the midspan moment by ~6 % at 4 sub-elements -- gravity gate, Ex1 roof beams)
+            if india and e.get("span") and not e.get("rigid_stub"):
+                s0, s1 = e["span"]; h = 0.5 * (s1 - s0)
+                for xg, wg in ((-0.7745966692414834, 5 / 9), (0.0, 8 / 9), (0.7745966692414834, 5 / 9)):
+                    sp = 0.5 * (s0 + s1) + xg * h
+                    wp = beam_udl(self.cfg, self.nm, pres, m, e["s"], self.nsub_beam, fD, fL, fLr, span=(sp, sp))
+                    P = wp * wg * h
+                    if P:
+                        ops.eleLoad("-ele", e["tag"], "-type", "-beamPoint", 0.0, -P, (sp - s0) / (s1 - s0))
+                        total += P
+                continue
+            w = beam_udl(self.cfg, self.nm, pres, m, e["s"], self.nsub_beam, fD, fL, fLr, span=(e.get("span") if india else None))
             if w:
                 ops.eleLoad("-ele", e["tag"], "-type", "-beamUniform", 0.0, -w, 0.0)
                 total += w * e["L"]
-        return total
+        return total        # no member self-weight: the HR gravity model (static_model.apply_gravity) applies none
+
+    def _india(self):
+        plan = self.cfg.get("load_plan") if isinstance(self.cfg, dict) else None
+        return bool(plan) and str(plan.get("jurisdiction") or "").lower() == "india"
 
     def apply_lateral(self, lat):
         for k, (fx, fy, mz) in lat.items():

@@ -1,7 +1,10 @@
 """
 imperfections.py -- which imperfection cases to run for a combination.
 
-Nominal magnitudes (Rasmussen protocol; AISC 360-22 C2.2a / AS 4100 erection tolerances):
+India (WP4.9, set in steltic_ddm.cli): out-of-plumb psi = 1/200 -- equivalent to the IS 800:2007 4.3.6 notional
+horizontal force of 0.5 % of the factored gravity load (an equivalence, EOR to confirm); member bow 0.001L and
+0.002L for hollow sections (IS 800 Table 34). 1/500 is kept only as a labelled sensitivity value.
+USA scaffolding nominal magnitudes (Rasmussen protocol / literature erection tolerances):
   out-of-plumb  psi = 1/500 (H/500)   whole-building lean, +/-X or +/-Y
   out-of-straightness  L/1000, half-sine, weak axis of columns, out-of-plane for braces
 Direction rule:
@@ -10,7 +13,9 @@ Direction rule:
     (default: +X and +Y -- the building is symmetric enough that -X/-Y repeat them; use "all" for the
     full search on irregular plans).
 """
-PSI_DEFAULT = 1.0 / 500.0
+PSI_DEFAULT = 1.0 / 500.0            # USA scaffolding
+PSI_INDIA = 1.0 / 200.0              # IS 800 4.3.6 equivalence (0.5 %)
+BOW_HOLLOW_INDIA = 1.0 / 500.0       # IS 800 Table 34: 0.002L hollow
 BOW_DEFAULT = 1.0 / 1000.0
 
 

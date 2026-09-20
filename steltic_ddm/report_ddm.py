@@ -315,3 +315,132 @@ def write_block(job_dir, block):
     pkg["ddm_analysis"] = block
     open(p, "w").write(json.dumps(pkg, indent=1))
     return p
+
+
+# =====================================================================================================================
+# India (WP4.9): IS 800 Annex B basis, units kN / mm / MPa, lambda_u only at limit points, B-1.2 section check,
+# gravity transfer gate, no PASS/FAIL on phi_s, no AISC / ASCE / A500 / Risk Category.
+# =====================================================================================================================
+IS_STATEMENT = ("IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information. "
+                "The IS 800:2007 Annex B-1.2 section-capacity check at lambda = 1 is the code check of this report.")
+
+
+def _lam(res):
+    lam = res.get("lambda_u")
+    if lam is None:
+        return "NO_LIMIT_POINT (terminated: %s at λ = %.3f)" % (res.get("termination"), res.get("lambda_end") or 0)
+    return "%.3f [%s]" % (lam, res.get("status"))
+
+
+def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table):
+    name = nm.name
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    o = options
+    gg = o.get("gravity_gate") or {}
+    P = ['<title>%s DDM (IS 800 Annex B)</title><style>%s</style><div class="wrap">' % (_h(name), CSS),
+         '<div class="eyebrow">Advanced analysis · IS 800:2007 Annex B · information + B-1.2 code check</div>',
+         '<h1>%s — advanced (GMNIA) analysis</h1>' % _h(name),
+         '<div class="meta"><span>%s</span><span>kN · mm · MPa (analysis N-mm, E = 200 000 MPa)</span><span>openseespy GMNIA</span></div>' % now,
+         '<div class="flag"><b>%s</b></div>' % _h(IS_STATEMENT)]
+    # 1 gates
+    P.append('<h2>1 · Gates</h2><p>Transfer gate (periods, lateral stiffness): <b>%s</b>. Gravity transfer gate (member forces at λ = 1 vs '
+             'member_schedule, ±%.0f %%): <b>%s</b> — %s.</p>' % ("ok" if gate.get("ok") else "FAIL", 100 * (gg.get("tol") or 0.05),
+                                                                    "ok" if gg.get("ok") else "FAIL", _h(gg.get("summary") or "not run")))
+    if gg.get("groups"):
+        P.append('<div class="tw"><table><tr><th>combination</th><th>role</th><th>section</th><th>quantity</th><th>n</th><th>GMNIA / design</th><th>outside ±5 %</th></tr>')
+        for g in sorted(gg["groups"], key=lambda g: (g["combo"], g["role"])):
+            P.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%.3f – %.3f</td><td>%d</td></tr>' % (
+                _h(g["combo"]), g["role"], g["section"], _h(g["quantity"]), g["n"], g["ratio_min"], g["ratio_max"], g["n_bad"]))
+        P.append('</table></div>')
+    # 2 model
+    P.append('<h2>2 · Model</h2><ul>')
+    P.append('<li>forceBeamColumn, 3-D Corotational, %d Lobatto points; %d / %d / %d sub-elements (column / beam / brace).</li>' % (
+        o.get("nip", 5), *o.get("nsub", (2, 2, 4))))
+    P.append('<li>Steel01, E = 200 000 MPa, hardening b = %.3f; f<sub>y</sub> per section from IS 2062 (Part 1):2025 Table 3 by thickness band '
+             '(expected-strength factor 1.0 unless the EOR sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
+    P.append('<li>Residual stress pattern: %s.</li>' % _h(o.get("residual")))
+    P.append('<li>Out-of-plumb ψ = 1/%d — %s. Member bow %s (hollow sections 1/%d).</li>' % (
+        round(1 / o.get("psi", 1 / 200)), _h(o.get("psi_basis") or ""), _h(o.get("bow_basis") or ""),
+        round(1 / (o.get("bow_hollow") or o.get("bow", 1 / 1000)))))
+    P.append('<li>Combinations: IS 800:2007 Table 4 combinations from load_plan (IS 875 / IS 1893), applied proportionally and scaled by λ.</li>')
+    P.append('<li>λ<sub>u</sub> is reported only at a detected limit point: LIMIT_POINT (λ falls over ≥ 2 converged steps — negative tangent), '
+             'PLASTIC_PLATEAU (tangent < 2 %% of elastic) or DUCTILITY_CAP (max fibre strain = %.0f ε<sub>y</sub>). Runs stopped by the clock, '
+             'step exhaustion or the step budget are NO_LIMIT_POINT and are not capacities. Time limit per sweep %.0f s.</li></ul>' % (
+                 o.get("strain_cap") or 0, o.get("time_limit") or 0))
+    b11 = o.get("b11") or {}
+    if b11:
+        P.append('<p>B-1.1 preconditions: sections %s (IS 800 Table 2); lateral restraint: %s. <i>%s</i></p>' % (
+            "all plastic/compact" if b11.get("ok") else "NOT all plastic/compact: " + ", ".join(
+                "%s %s" % (x["section"], x["cls"]) for x in b11.get("sections", []) if x.get("cls") not in ("plastic", "compact")),
+            _h(b11.get("lateral_restraint")), _h(b11.get("quote"))))
+    # 3 capacity table
+    P.append('<h2>3 · Load factor by combination</h2><div class="tw"><table><tr><th>combination</th><th>kind</th><th>imperf.</th>'
+             '<th>λ first yield</th><th>λ<sub>u</sub> / status</th><th>φ<sub>s</sub>·λ<sub>u</sub> (literature φ<sub>s</sub>, information)</th>'
+             '<th>mechanism</th><th>roof disp at peak (mm)</th><th>steps / s</th></tr>')
+    for r in runs:
+        res = r["res"]; sn = res.get("snapshot") or {}
+        roof = "—"
+        if sn.get("drifts"):
+            disp, dr = sn["drifts"]
+            roof = "%.1f (max storey %.3f %%)" % (disp[-1], 100 * max(abs(x) for x in dr))
+        P.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td><td>%d / %.0f</td></tr>' % (
+            _h(r["combo"][0]), r["summary"]["kind"], r["imp"], ("%.2f" % res["first_yield"]) if res.get("first_yield") else "—",
+            _h(_lam(res)), ("%.3f (φs %.2f)" % (r["check"][0], r["phi"]["phi_s"])) if r["check"][0] is not None else "—",
+            _h(r["cls"]["mechanism"]), roof, res["steps"], res["seconds"]))
+    P.append('</table></div><p class="cap">φ<sub>s</sub> values are US/AU literature calibrations (not calibrated for IS 800 Table 4 load '
+             'factors / IS 875 statistics); shown for information, no pass/fail.</p>')
+    # 4 B-1.2
+    P.append('<h2>4 · IS 800 Annex B-1.2 section-capacity check at λ = 1</h2><p><i>%s</i></p>' % _h(
+        "IS 800:2007 B-1.2: 'For the strength limit state, it shall be sufficient to satisfy the section capacity requirements of "
+        "Section 8 ... Section 7 ... Section 9 ... Section 10.'"))
+    for r in runs:
+        b = r.get("b12")
+        if not b:
+            continue
+        P.append('<h3>%s — %s</h3>' % (_h(r["combo"][0]), "satisfied" if b["ok"] else ("NOT satisfied" if b.get("reached_lambda_1") else _h(b.get("note")))))
+        if b.get("groups"):
+            P.append('<div class="tw"><table><tr><th>role</th><th>section</th><th>n</th><th>N (kN)</th><th>M major (kN·m)</th><th>M minor (kN·m)</th>'
+                     '<th>N<sub>d</sub> (kN)</th><th>M<sub>d</sub> (kN·m)</th><th>f<sub>y</sub> (MPa)</th><th>D/C 9.3.1.1</th><th>V/V<sub>d</sub></th></tr>')
+            for g in b["groups"]:
+                P.append('<tr><td>%s</td><td>%s</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%.3f</b></td><td>%.3f</td></tr>' % (
+                    g["role"], g["section"], g["n"], g.get("N_kN"), g.get("M_major_kNm"), g.get("M_minor_kNm"), g.get("Nd_kN"),
+                    g.get("Md_kNm"), g.get("fy_MPa"), g["dc_max"], g["dc_shear_max"]))
+            P.append('</table></div>')
+    # 5 member table
+    P.append('<h2>5 · Member state at the end of each governing sweep</h2><div class="tw"><table><tr><th>role</th><th>section</th><th>n</th>'
+             '<th>member-based D/C</th><th>combination</th><th>max ε/ε<sub>y</sub></th><th>yielded</th><th>hinges</th><th>buckled</th></tr>')
+    for row in member_table:
+        P.append('<tr><td>%s</td><td>%s</td><td>%d</td><td>%s</td><td>%s</td><td>%.2f</td><td>%d</td><td>%d</td><td>%s</td></tr>' % (
+            row["role"], row["section"], row["n"], ("%.3f" % row["DC"]) if isinstance(row["DC"], (int, float)) else "—", _h(row["combo"]),
+            row["ratio"], row["yielded"], row["hinges"], row.get("buckled", "—")))
+    P.append('</table></div>')
+    P.append('<h2>6 · Solver log</h2><div class="tw"><table><tr><th>combination</th><th>status</th><th>termination</th><th>steps</th><th>failed</th><th>log</th></tr>')
+    for r in runs:
+        res = r["res"]
+        P.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%s</td><td><code>%s</code></td></tr>' % (
+            _h(r["combo"][0]), res.get("status"), res.get("termination"), res["steps"], res.get("fails"), _h("; ".join(res.get("log", [])[-3:]))))
+    P.append('</table></div><p class="cap">Not for construction; to be checked by the engineer of record.</p></div>')
+    path = os.path.join(out_dir, "ddm_report.html")
+    open(path, "w", encoding="utf-8").write("<!doctype html><html><head><meta charset='utf-8'>" + "".join(P) + "</body></html>")
+    return path
+
+
+def ddm_block_india(nm, gate, runs, sensitivity, options, member_table):
+    return {
+        "method": "Advanced analysis (GMNIA) per IS 800:2007 Annex B -- information; B-1.2 section-capacity check at lambda = 1",
+        "statement": IS_STATEMENT,
+        "basis": ["IS 800:2007 4.1.1, 4.3.6, Table 34, Annex B-1.1 / B-1.2", "IS 2062 (Part 1):2025 Table 3",
+                  "phi_s: literature (Zhang, Shayan, Rasmussen & Ellingwood 2016) -- information only, not calibrated for IS 800 Table 4"],
+        "model": {"material": "Steel01 fy per section (IS 2062 Table 3) E=200000 MPa b=%.3f" % options.get("hardening", 0.002),
+                  "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), options.get("psi_basis")),
+                  "out_of_straightness": options.get("bow_basis"), "units": "N, mm, MPa"},
+        "gravity_gate": {k: v for k, v in (options.get("gravity_gate") or {}).items() if k in ("ok", "summary", "tol", "n_compared", "n_bad")},
+        "combinations": [
+            {"label": r["combo"][0], "kind": r["summary"]["kind"], "imperfection": r["imp"],
+             "lambda_u": (round(r["res"]["lambda_u"], 3) if r["res"].get("lambda_u") is not None else None),
+             "status": r["res"].get("status"), "termination": r["res"].get("termination"),
+             "lambda_end": round(r["res"].get("lambda_end") or 0, 3),
+             "phi_s_lambda_u_information": r["check"][0], "b12_ok": (r.get("b12") or {}).get("ok"),
+             "mechanism": r["cls"]["mechanism"]} for r in runs],
+        "member_state": member_table,
+    }

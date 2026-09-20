@@ -40,6 +40,7 @@ def yield_state(model, eps_y):
             continue
         sp = model.sec_props[e["secTag"]]
         ymax, zmax = _extents(sp)
+        ey = (sp["Fy"] / model.builder.E) if sp.get("Fy") else eps_y
         r = 0.0
         for ip in range(1, nip + 1):
             try:
@@ -49,7 +50,7 @@ def yield_state(model, eps_y):
             if len(d) >= 3:
                 eps, kz, ky = d[0], d[1], d[2]
                 em = abs(eps) + abs(kz) * ymax + abs(ky) * zmax
-                r = max(r, em / eps_y)
+                r = max(r, em / ey)
         out[e["tag"]] = r
     return out
 
@@ -126,8 +127,30 @@ def storey_drifts(model, dirn):
     return disp, dr
 
 
+LIMIT_STATUSES = ("LIMIT_POINT", "PLASTIC_PLATEAU", "DUCTILITY_CAP")
+
+
+def limit_status(hist, hi_at_max, lam_max, plateau=False, capped=False):
+    """(status, n_descending): LIMIT_POINT needs >= 2 converged steps after the peak with lambda below it and the last
+    step below it (negative tangent); a sweep still rising when it stopped is NO_LIMIT_POINT (WP4.9 / NLEX-X-06)."""
+    after = [lm for lm, _ in hist[hi_at_max + 1:]] if hi_at_max else []
+    n_desc = sum(1 for lm in after if lm < lam_max * (1 - 1e-4))
+    if plateau:
+        return "PLASTIC_PLATEAU", n_desc
+    if n_desc >= 2 and after and after[-1] < lam_max:
+        return "LIMIT_POINT", n_desc
+    if capped:
+        return "DUCTILITY_CAP", n_desc
+    return "NO_LIMIT_POINT", n_desc
+
+
 def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap_factor=60.0,
-          verbose=True, snapshot_every=3, time_limit=None, post_peak_steps=8, plateau_frac=0.02, frame_every=2):
+          verbose=True, snapshot_every=3, time_limit=None, post_peak_steps=8, plateau_frac=0.02, frame_every=2,
+          strain_cap=None, capture_lambda1=False):
+    """... WP4.9: returns `status` in LIMIT_POINT (lambda fell over >= 2 converged steps after the peak: negative
+    tangent), PLASTIC_PLATEAU (tangent < plateau_frac of elastic at the peak), DUCTILITY_CAP (max fibre strain reached
+    `strain_cap` x eps_y -- lambda at the cap), or NO_LIMIT_POINT (time / step exhaustion / max steps / displacement
+    cap with lambda still rising). lambda_u is None for NO_LIMIT_POINT (lambda_end holds the last peak)."""
     label, fD, fL, fLr, lat, col_only = combo
     t0 = time.time()
     model.build().prepare()
@@ -192,7 +215,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     frames = []                                   # viewer frames every `frame_every` steps (+ the peak)
     disp_hist = {}                                # hist index -> master displacements (cheap; lets the peak frame be exact)
     fails = 0; consecutive_fail = 0
-    log = []; plateau = False
+    log = []; plateau = False; term = "max_steps"; capped = False; forces_at_1 = None
     for step in range(1, max_steps + 1):
         ok = ops.analyze(1)
         if ok != 0:
@@ -204,14 +227,14 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
             if ok != 0:
                 du *= 0.5
                 if abs(du) < abs(du0) / 64:
-                    log.append("step %d: step size exhausted -- stopping" % step); break
+                    log.append("step %d: step size exhausted -- stopping" % step); term = "step_exhausted"; break
                 ops.integrator("DisplacementControl", cnode, cdof, du)
                 log.append("step %d: halved step to %.3g" % (step, du))
                 if consecutive_fail > 12:
-                    log.append("too many failures"); break
+                    log.append("too many failures"); term = "too_many_failures"; break
                 continue
         if step_at_max and step - step_at_max > post_peak_steps:
-            log.append("post-peak budget (%d steps) used at step %d" % (post_peak_steps, step)); break
+            log.append("post-peak budget (%d steps) used at step %d" % (post_peak_steps, step)); term = "post_peak_budget"; break
         consecutive_fail = 0
         if abs(du) < abs(du0):
             du = min(abs(du) * 1.5, abs(du0)) * (1 if du0 > 0 else -1)
@@ -221,10 +244,13 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
         hi = len(hist) - 1                        # index of this converged step in hist (failed steps are not counted)
         disp_hist[hi] = {t: ops.nodeDisp(t) for t in _track_nodes(model)}
         ys = None
-        if (first_yield is None and step % 2 == 0) or hi % frame_every == 0:
+        if (first_yield is None and step % 2 == 0) or hi % frame_every == 0 or (strain_cap and step % 2 == 0):
             ys = yield_state(model, eps_y)
             if first_yield is None and max(ys.values(), default=0.0) >= 1.0:
                 first_yield = lam
+        if capture_lambda1 and forces_at_1 is None and lam >= 1.0:
+            from .india_checks import member_forces
+            forces_at_1 = member_forces(model)
         if hi % frame_every == 0:
             frames.append(_frame(model, eps_y, hi, lam, d, ys=ys))
         if lam > lam_max:
@@ -234,9 +260,16 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
                             drifts=(storey_drifts(model, ldir) if ldir else None), step=step, hist_i=hi,
                             disp={t: ops.nodeDisp(t) for t in _track_nodes(model)})
         elif lam < post_peak * lam_max and step > step_at_max + 3:
-            log.append("post-peak branch reached %.0f%% of lambda_u at step %d" % (100 * post_peak, step)); break
+            log.append("post-peak branch reached %.0f%% of lambda_u at step %d" % (100 * post_peak, step)); term = "post_peak_drop"; break
         if abs(d) > d_cap:
-            log.append("control displacement cap reached at step %d" % step); break
+            log.append("control displacement cap reached at step %d" % step); term = "disp_cap"; break
+        if strain_cap and ys is not None and max(ys.values(), default=0.0) >= strain_cap:
+            capped = True
+            if snap["step"] < step:
+                snap = dict(yield_ratio=ys, braces=brace_state(model), drifts=(storey_drifts(model, ldir) if ldir else None),
+                            step=step, hist_i=hi, disp={t: ops.nodeDisp(t) for t in _track_nodes(model)})
+            log.append("ductility cap: max fibre strain %.1f eps_y >= %.1f at step %d (lambda %.3f)" % (
+                max(ys.values()), strain_cap, step, lam)); term = "ductility_cap"; break
         # plateau rule: tangent stiffness over the last 10 steps below `plateau_frac` of the elastic
         # stiffness -> a plastic plateau (mechanism / squash with hardening); lambda_u is taken here
         if len(hist) > 12 and lam >= lam_max - 1e-9:
@@ -249,9 +282,9 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
                     snap = dict(yield_ratio=yield_state(model, eps_y), braces=brace_state(model),
                                 drifts=(storey_drifts(model, ldir) if ldir else None), step=step, hist_i=len(hist) - 1,
                                 disp={t: ops.nodeDisp(t) for t in _track_nodes(model)})
-                log.append("plateau: tangent stiffness %.1f%% of elastic at step %d -- lambda_u taken at the plateau" % (100 * k_t / k_el, step)); break
+                log.append("plateau: tangent stiffness %.1f%% of elastic at step %d -- lambda_u taken at the plateau" % (100 * k_t / k_el, step)); term = "plateau"; break
         if time_limit and time.time() - t0 > time_limit:
-            log.append("time limit reached at step %d" % step); break
+            log.append("time limit reached at step %d" % step); term = "time_limit"; break
         if verbose and step % 10 == 0:
             print("   %-38s step %4d  lambda %.3f  d %.3f  (%.0f s)" % (label[:38], step, lam, d, time.time() - t0), flush=True)
     # make sure lambda_u itself is a viewer frame: exact masters (recorded every step); member states from the closest
@@ -274,7 +307,16 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     for lam, d in hist:
         if abs(d) >= 1.25 * abs(d_at_max):
             lam_125 = lam; break
-    return dict(label=label, lambda_u=lam_max, step_at_max=step_at_max, d_at_max=d_at_max,
+    # ---- WP4.9 limit-point classification
+    status, n_desc = limit_status(hist, hi_at_max, lam_max, plateau, capped)
+    tangent_at_end = None
+    if len(hist) >= 3:
+        (l1, d1), (l2, d2) = hist[-2], hist[-1]
+        tangent_at_end = (l2 - l1) / (abs(d2 - d1) or 1e-12)
+    lam_reported = lam_max if status in LIMIT_STATUSES else None
+    return dict(label=label, lambda_u=lam_reported, lambda_end=lam_max, status=status, termination=term,
+                n_descending_steps=n_desc, tangent_at_end=tangent_at_end, forces_at_1=forces_at_1,
+                step_at_max=step_at_max, d_at_max=d_at_max,
                 first_yield=first_yield, lam_at_1p25d=lam_125, hist=hist, control=(cnode, cdof),
                 lateral=(ldir, lsgn), gravity_kip=W, steps=len(hist), fails=fails, log=log, plateau=plateau,
                 snapshot=snap, frames=frames, seconds=round(time.time() - t0, 1))
@@ -331,8 +373,10 @@ def classify(res, model):
             mech = "brace yielding at the peak (%d braces), no beam hinge" % yr_roles["brace"]
         elif yielded_members:
             mech = "partial yielding (%s) without a developed hinge at the peak" % ", ".join("%d %s" % (n, k) for k, n in yr_roles.items())
+        elif res.get("status") == "LIMIT_POINT":
+            mech = "limit point while elastic (negative tangent): geometric instability"
         else:
-            mech = "peak reached while elastic (geometric instability)"
+            mech = "no yielding and no limit point (terminated: %s) -- not a capacity" % res.get("termination")
         cls = "instability"
     return dict(mechanism=mech, cls=cls, hinge_members=hinge_members, yielded_members=yielded_members,
                 hinges_by_role=by_kind, buckled_braces=buckled, ductile_post_peak=ductile_post)
