@@ -236,14 +236,24 @@ def _hss_outside_and_tdes(section: str):
     return max(B, H), tdes
 
 
-def brace_spec(section: str, L_in: float, prm: dict) -> BraceSpec:
+def brace_spec(section: str, L_in: float, prm: dict, india: dict | None = None) -> BraceSpec:
+    """Brace backbone. `india` = {"fye_MPa", "hollow_forming"} switches the strengths to IS 2062 fy (x EOR factor,
+    default 1.0) with Pye = A·fye and Pcr = A·chi·fye on the IS 800 7.1.2.1 curve (no AISC E3, no Ry, no 1.14)."""
     p = SDB.props(section); bp = prm["brace_axial"]
-    Fye = bp["Fy_ksi"] * bp["Ry_expected"]
     A, r = p["A"], min(p["rx"], p["ry"])
     KLr = bp["K_effective"] * L_in / r
-    Fe = math.pi ** 2 * E_KSI / KLr ** 2
-    Fcre = (0.658 ** (Fye / Fe)) * Fye if KLr <= 4.71 * math.sqrt(E_KSI / Fye) else 0.877 * Fe     # AISC 360 E3 form with Fye
-    Pye = A * Fye; Pcre = bp["Pcr_expected_factor"] * Fcre * A
+    if india:
+        from . import india_materials as IM
+        from snl.india_units import KIP_TO_N, MPA_TO_KSI
+        bs = IM.brace_strengths(section, L_in * 25.4, float(india["fye_MPa"]), K=bp["K_effective"],
+                                hollow_forming=india.get("hollow_forming", "hot_rolled"))
+        Fye = float(india["fye_MPa"]) * MPA_TO_KSI
+        Pye = bs["Pye_N"] / KIP_TO_N; Pcre = bs["Pcr_N"] / KIP_TO_N
+    else:
+        Fye = bp["Fy_ksi"] * bp["Ry_expected"]
+        Fe = math.pi ** 2 * E_KSI / KLr ** 2
+        Fcre = (0.658 ** (Fye / Fe)) * Fye if KLr <= 4.71 * math.sqrt(E_KSI / Fye) else 0.877 * Fe     # AISC 360 E3 form with Fye
+        Pye = A * Fye; Pcre = bp["Pcr_expected_factor"] * Fcre * A
     k = E_KSI * A / L_in
     dT, dc = Pye / k, Pcre / k
     flags = []
@@ -293,8 +303,9 @@ def brace_spec(section: str, L_in: float, prm: dict) -> BraceSpec:
     else: w, cls = (KLr - st) / (sl - st), "intermediate"
     def mix(key): return cK[key] + w * (cS[key] - cK[key])
     tp = bp["tension"]
-    flags = ["brace backbone is a PLACEHOLDER (ASCE 41-17 Table 9-8 form) -- verify against AISC 342-22",
-             "HSS local slenderness (b/t) not checked: aisc_shapes.csv carries no wall thickness for HSS"]
+    flags = ["brace post-buckling backbone SHAPE is a literature placeholder (deformation multiples); strengths: %s"
+             % ("IS 2062 fy / IS 800 7.1.2.1 curve" if india else "AISC placeholder"),
+             "tube local slenderness (b/t) not checked"]
     return BraceSpec("brace", section, L_in, A, r, KLr, Fye, Pye, Pcre, dT, dc,
                      a_c=mix("a_over_dc") * dc, b_c=mix("b_over_dc") * dc, c_c=mix("c"),
                      a_t=tp["a_over_dT"] * dT, b_t=tp["b_over_dT"] * dT, c_t=tp["c"],

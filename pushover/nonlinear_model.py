@@ -132,6 +132,15 @@ def fr_joint_plan(pkg):
     return plan
 
 
+def brace_india(pkg, sec):
+    """India brace strength inputs (IS 2062 fy x EOR factor) or None for USA scaffolding."""
+    if getattr(pkg.basis, "jurisdiction", None) != "india":
+        return None
+    from . import india_model as IMD
+    f = IMD.fy_section(pkg, sec, "brace")
+    return dict(fye_MPa=f["fye_MPa"], hollow_forming=IMD.material_ctx(pkg)["plan"]["hollow_forming"])
+
+
 def levels(pkg):
     """Diaphragm levels: [(k, z, master, [slave nodes])] sorted by z (k = 1..NF)."""
     out = []
@@ -143,9 +152,13 @@ def levels(pkg):
 
 
 def gravity_loads(pkg, prm, verbose=True):
-    """1.1*(QD + 0.25*QL) per level (ASCE 41 7.2.2 form), QD from the recorded seismic mass (D + cladding),
+    """India: IS seismic weight per level (pushover.india_model, WP4.8). USA scaffolding:
+    1.1*(QD + 0.25*QL) per level (ASCE 41 7.2.2 form), QD from the recorded seismic mass (D + cladding),
     QL from cfg L_floor psf x level footprint area; spread equally over that level's column nodes.
     Returns {node: Pz_kip (negative = down)}, plus a per-level table for the report."""
+    if getattr(pkg.basis, "jurisdiction", None) == "india":
+        from . import india_model as IMD
+        return IMD.is_gravity_loads(pkg)
     lv = levels(pkg)
     Lpsf = pkg.basis.L_floor_psf if pkg.basis.L_floor_psf is not None else 50.0
     Lroof = 20.0
@@ -391,7 +404,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
             if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
-                spec = HM.brace_spec(sec, L, prm)
+                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
                 mat += 1; HM.make_brace_material(mat, spec, prm)
                 ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
                 hinges[e["tag"]] = dict(ele=e["tag"], end=0, kind="brace", section=sec, dof=0, K0=E_KSI_AL(spec), mat=mat,
@@ -405,7 +418,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
         if kind == "brace" and sec:                          # elasticBeamColumn brace (steltic default builder) -> pin-ended nonlinear truss
-            spec = HM.brace_spec(sec, L, prm)
+            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
             mat += 1; HM.make_brace_material(mat, spec, prm)
             ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
             hinges[e["tag"]] = dict(ele=e["tag"], end=0, kind="brace", section=sec, dof=0, K0=E_KSI_AL(spec), mat=mat,
