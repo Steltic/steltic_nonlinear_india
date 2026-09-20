@@ -123,7 +123,13 @@ def select_and_scale(recs, SDS, SD1, TL, T_lower, T_upper, n_select=11, periods=
             from . import site_hazard as SH
             r["consistency_penalty"] = SH.consistency_penalty(r, deagg)
         r["rank_score"] = r["shape_misfit"] + r["consistency_penalty"]
-    pool = [r for r in recs if not sf_bounds or (sf_bounds[0] <= r["sf_shape"] <= sf_bounds[1])] or list(recs)
+    pool = [r for r in recs if not sf_bounds or (sf_bounds[0] <= r["sf_shape"] <= sf_bounds[1])]
+    sf_warnings = []
+    if sf_bounds and len(pool) < n_select:
+        sf_warnings.append("only %d of %d library records have a shape-fit factor within %s -- pool widened to the "
+                           "whole library (EOR to review)" % (len(pool), len(recs), list(sf_bounds)))
+        pool = list(recs)
+    pool = pool or list(recs)
     ranked = sorted(pool, key=lambda r: r["rank_score"])
     n_pulse = int(round(pulse_fraction * n_select)) if pulse_fraction else 0
     pulses = [r for r in ranked if r.get("pulse")][:n_pulse]
@@ -142,6 +148,11 @@ def select_and_scale(recs, SDS, SD1, TL, T_lower, T_upper, n_select=11, periods=
         r["sf"] *= k
     mean = suite_mean()
     ratio = mean[inrange] / tgt[inrange]
+    if sf_bounds:
+        bad = [r for r in chosen if not (sf_bounds[0] <= r["sf"] <= sf_bounds[1])]
+        if bad:
+            sf_warnings.append("%d final scale factor(s) outside the EOR bounds %s: %s" % (
+                len(bad), list(sf_bounds), ", ".join("%.2f" % r["sf"] for r in bad)))
     # 16.2.4 orientation: alternate comp1 -> X / Y so the per-direction mean component spectra stay within +-10% of the overall mean
     for i, r in enumerate(chosen):
         r["x_comp"] = 1 if i % 2 == 0 else 2
@@ -174,11 +185,14 @@ def select_and_scale(recs, SDS, SD1, TL, T_lower, T_upper, n_select=11, periods=
                sets=sets or [dict(set="FEMA P-695 far-field set (22 pairs)", n=len(recs))], n_library=len(recs), n_pool=len(pool),
                deagg=({"M": (deagg.get("mean") or {}).get("M"), "R_km": (deagg.get("mean") or {}).get("R_km"), "eps": (deagg.get("mean") or {}).get("eps")} if deagg else None),
                pulse_fraction=pulse_fraction, n_pulse=len(pulses), pulse_note=pulse_note, sf_bounds=list(sf_bounds) if sf_bounds else None,
+               sf_warnings=sf_warnings,
                selected=[dict(id=r["id"], earthquake=r.get("earthquake"), station=r.get("station"), M=r.get("M"), r_rup_km=r.get("r_rup_km"),
                               site_class=r.get("site_class"), dt=r["dt"], duration_s=r["duration_s"], sf=r["sf"], shape_misfit=r["shape_misfit"],
                               consistency_penalty=r.get("consistency_penalty", 0.0), pulse=bool(r.get("pulse")), year=r.get("year"),
                               x_comp=r["x_comp"], comp1=r["comp1"], comp2=r["comp2"], pga_g=r.get("pga_g"), set_dir=r.get("set_dir"),
                               rotd100_scaled=(r["sf"] * r["rotd100"]).tolist()) for r in chosen])
+    for w in sf_warnings:
+        print("[gm] WARNING:", w)
     if verbose:
         print("[gm] %d pairs selected; period range %.2f-%.2f s; suite mean/target min %.3f mean %.3f (>=0.90: %s); "
               "orientation dev X %.2f Y %.2f (<=0.10: %s); scale factors %.2f-%.2f"

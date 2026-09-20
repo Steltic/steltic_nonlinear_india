@@ -1,4 +1,4 @@
-"""acceptance.py -- ASCE 7-22 Section 16.4 evaluation of a suite of response histories (rules in ch16_params.json)."""
+"""acceptance_asce7_ch16.py -- USA REFERENCE ONLY: ASCE 7-22 Section 16.4 evaluation of a suite (rules in nlrha/ch16_params.json). Never used for India jobs (owner ruling D7)."""
 from __future__ import annotations
 import math, re
 import numpy as np

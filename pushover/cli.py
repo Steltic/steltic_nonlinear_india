@@ -42,6 +42,9 @@ def _run(args):
 
     if args.system:
         pkg.basis.system = args.system; pkg.basis.sources["system"] = "--system override"
+    india = getattr(pkg.basis, "jurisdiction", None) == "india"
+    if india:
+        return _run_india(args, pkg, t0)
     missing = [k for k in ("SDS", "SD1", "W_kip") if getattr(pkg.basis, k) is None]
     if missing:
         sys.exit("design basis incomplete (%s) -- add cfg.py to the package or pass --sds/--sd1" % missing)
@@ -130,6 +133,67 @@ def _run(args):
         print("viewer failed:", ex)
     shutil.copy(args.params or os.path.join(os.path.dirname(__file__), "hinge_params.json"), os.path.join(out, "hinge_params_used.json"))
     print("wrote", html, "(%.0f s)" % (time.time() - t0))
+
+
+def _run_india(args, pkg, t0):
+    """India (D6/D7): NSP at IS-DBE and IS-MCE from the IS 1893 elastic spectrum; informative response at delta_t;
+    fibre plasticity; IS 2062 steel; mass/gravity = IS seismic weight. No IO/LS/CP/BPON verdict."""
+    import math
+    from . import nonlinear_model as NM, hinge_models as HM, postprocess as PP, report_india as RI, member_response as MR
+    from . import india_materials as IM
+    from nlrha import india_hazard as IH
+    prm = HM.load_params(args.params)
+    plast = str(getattr(args, "plasticity", None) or "fibre").lower()
+    if plast not in ("fibre", "fiber"):
+        print("[pushover] India: fibre plasticity is used (member strains/rotations are recorded from fibres); "
+              "--plasticity %s ignored" % plast)
+    os.environ["SNL_PLASTICITY"] = "fibre"; prm.setdefault("numerics", {})["plasticity"] = "fibre"
+    if getattr(args, "member_nseg", None) is not None:
+        os.environ["SNL_MEMBER_NSEG"] = str(args.member_nseg); prm["numerics"]["member_nseg"] = int(args.member_nseg)
+    strategies = {"auto": ("fine_step", "arclength"), "fine_step": ("fine_step",), "arclength": ("arclength",), "none": ()}[args.tail]
+    out = args.out or os.path.join(str(pkg.root), "pushover")
+    os.makedirs(out, exist_ok=True)
+    ind = pkg.basis.india or {}
+    ref = IM.reference_rotation(pkg.basis.system)
+    levels = PP.india_levels(prm)
+    loads, gtable = NM.gravity_loads(pkg, prm)
+    PG = NM.column_gravity_axials(pkg, loads)
+    print("[pushover] India: gravity = IS seismic weight %.1f kN; mass gate %s" % (
+        sum(r["W_kN"] for r in gtable), (pkg.calc or {}).get("_is_mass_gate", {}).get("ok")))
+    runs, results, stats = {}, {}, None
+
+    def estimator(pat):
+        T = pat["T1"]; out_ = []
+        for lv in ("DBE", "MCE"):
+            sa = IH.elastic_sa(T, Z=ind["Z"], I=ind["I"], soil=ind["soil"], level=lv)
+            out_.append(1.0 * sa * T * T / (4 * math.pi ** 2) * 386.09)   # C0·C1·C2 ~ 1 (lower estimate -> finer step)
+        return out_
+
+    for d in args.dirs:
+        hinges, stats = NM.build_nonlinear(pkg, prm, PG)
+        rec = MR.MemberRecorder(pkg, hinges, stats)
+        run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
+                          tail_strategies=strategies, recorder=rec, target_estimator=estimator)
+        nsp = {lvn: PP.nsp_target(run, pkg.basis, prm, lv) for lvn, lv in levels.items()}
+        cap = PP.capacity_summary(run, pkg.basis, nsp["IS-DBE"])
+        resp = {lvn: PP.response_at(run, n["target_disp_in"], lvn, rec.meta(), ref, pkg.basis) for lvn, n in nsp.items()}
+        runs[d] = run; results[d] = dict(nsp=nsp, capacity=cap, resp=resp, ref_rot=ref, meta=rec.meta())
+        for lvn, n in nsp.items():
+            a = resp[lvn]
+            print("  [%s %s] Te=%.3fs Sa=%.3fg C0=%.2f C1=%.2f C2=%.2f -> dt=%.1f mm (%.3f%% H) | V=%.0f kN (V/VB %.2f) "
+                  "max drift %.3f%% | census %s" % (d, lvn, n["Te"], n["Sa"], n["C0"], n["C1"], n["C2"], n["target_disp_in"] * 25.4,
+                                                   100 * n["target_over_H"], a["base_shear_kN"], a["V_over_VB"] or 0,
+                                                   100 * a["max_story_drift"], a.get("census")))
+        print("  [%s capacity] Vmax=%.0f kN Vmax/VB=%.2f stop=%s" % (d, cap["Vmax_kN"], cap["Vmax_over_VB"] or 0, run["stop_reason"]))
+    html_path = RI.write(out, pkg, prm, runs, results, gtable, stats, time.time() - t0)
+    for d, run in runs.items():
+        with open(os.path.join(out, "curve_%s.csv" % d), "w") as f:
+            f.write("roof_disp_mm,base_shear_kN\n")
+            for u, v in zip(run["rec"]["u"], run["rec"]["V"]):
+                f.write("%.3f,%.2f\n" % (u * 25.4, v * 4.4482216152605))
+    shutil.copy(args.params or os.path.join(os.path.dirname(__file__), "hinge_params.json"), os.path.join(out, "hinge_params_used.json"))
+    print("wrote", html_path, "(%.0f s)" % (time.time() - t0))
+    return results
 
 
 def main(argv=None):

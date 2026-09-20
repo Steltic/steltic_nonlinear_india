@@ -35,8 +35,61 @@ def _json(path, default=None):
 
 
 def _rc(pkg, calc, cfg_text, override=None):
+    if getattr(pkg.basis, "jurisdiction", None) == "india":
+        return "n/a (IS 1893 Table 8 importance factor I = %s; no Risk Category)" % (pkg.basis.Ie,)
     from . import acceptance as AC
     return AC.risk_category(pkg, override)
+
+
+INDIA_DOCS = (
+    "IS 1893 (Part 1):2016 + Amendment 1 (2017) + Amendment 2 (2020) -- Criteria for Earthquake Resistant Design of Structures (6.4.2 spectrum, 7.7.4 time history, 7.8.2 accidental eccentricity, 7.3/7.4 seismic weight)",
+    "IS 800:2007 -- General Construction in Steel (4.1.1, 4.3.6, 7.1.2, 8.2.1, 9.3.1, Section 12, Annex B-1)",
+    "IS 18168:2023 -- Earthquake Resistant Design and Detailing of Steel Buildings (reference deformation values where IS 800 is silent)",
+    "IS 875 (Part 1):2026, (Part 2):1987, (Part 3):2015, (Part 5):1987 -- loads and load combinations of the linear package",
+    "IS 2062 (Part 1):2025 -- Hot rolled structural steel (Table 3 yield stress by thickness)",
+    "IS 808:2021 / IS 1161:2014 -- section dimensions",
+)
+
+
+def content_india(g, project=None, engineer=None, reviewer=None):
+    """India design-criteria draft (IS documents only; NL results informative, owner ruling D7)."""
+    pkg, b = g["pkg"], g["pkg"].basis
+    ind = b.india or {}
+    S = []
+    s = Section("1. Purpose and scope"); S.append(s)
+    s.p("Criteria for the nonlinear static (pushover), nonlinear response-history (IS 1893 7.7.4) and advanced (IS 800 Annex B) "
+        "analyses of %s. IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information. "
+        "The linear IS 800 / IS 1893 design package remains the design basis. DRAFT for the engineer of record." % pkg.name)
+    s.t([["Item", "Value", "Source"], ["Project", project or "[project]", "input"],
+         ["System", str(b.system), "calc_package / load_plan"],
+         ["Zone / Z / soil / I", "%s / %s / %s / %s" % (ind.get("zone"), ind.get("Z"), ind.get("soil"), ind.get("I")), "seismic_calc.json, load_plan.json"],
+         ["Seismic weight W / design VB", "%s kN / %s kN" % (ind.get("W_kN"), ind.get("VB_kN")), "seismic_calc.json"],
+         ["Engineer of record", engineer or "[name]", "input"], ["Reviewer", reviewer or "[name]", "input"]])
+    s = Section("2. Governing documents"); S.append(s)
+    for d in INDIA_DOCS:
+        s.b(d)
+    s.p("Foreign documents are not a design basis (owner ruling D3). The ground-motion record library (FEMA P-695 far-field set, PEER NGA) is information only.")
+    s = Section("3. Hazard"); S.append(s)
+    s.p("Target = IS 1893 elastic spectrum (6.4.2 shape, 5 % damping), never divided by R (owner ruling D6): "
+        "DBE = (Z/2)·I·Sa/g and MCE = Z·I·Sa/g. Both levels are analysed and reported.")
+    s = Section("4. Ground motions"); S.append(s)
+    s.p("Record library (information): FEMA P-695 far-field set; selection and scaling rules per EOR; IS 1893 7.7.4 compatibility with "
+        "the design spectrum over the building's period range (suite mean >= 0.9 x target is the adopted convention). Scale-factor bounds: nl_plan.gm_selection.sf_bounds.")
+    s = Section("5. Model"); S.append(s)
+    for it in ("3-D fibre model (forceBeamColumn, Lobatto) rebuilt from the linear model; braces corotational truss with IS 800 7.1.2.1 buckling strength.",
+               "Steel: IS 2062 Table 3 fy by grade and thickness band; expected-strength factor = EOR input (default 1.0).",
+               "Mass and gravity = IS 1893 seismic weight (7.3/7.4; Table 10 imposed share; roof imposed per 7.3.2); gate |sum m g - W| <= 1 %.",
+               "Damping: Rayleigh, ratio as nl_plan parameter (warning above the adopted cap). Accidental eccentricity 0.05 b (IS 1893 7.8.2) on by default.",
+               "Unstiffened rotational DOFs restrained; modes solved to 90 % mass; spurious modes gated."):
+        s.b(it)
+    s = Section("6. Reported quantities (information, no verdict)"); S.append(s)
+    for it in ("Storey drifts (per record, suite mean and max).", "Base shear vs design VB and vs the elastic Sa(T1)·W.",
+               "Displacement ductility demand from the pushover yield displacement.",
+               "Member fibre-strain ratios and chord rotations, shown against IS 800 §12 joint-rotation capacities "
+               "(0.02 rad OMF/OCBF, 0.04 rad SMF/SCBF) as reference values.",
+               "DDM: lambda_u only at detected limit points (else NO_LIMIT_POINT); IS 800 Annex B-1.2 section-capacity check at lambda = 1 (a code check)."):
+        s.b(it)
+    return S
 
 
 def gather(job, params_path=None, risk_category=None):
@@ -265,12 +318,17 @@ def content(g, project=None, engineer=None, reviewer=None):
 # --------------------------------------------------------------------------- outputs
 def write(job, out=None, project=None, engineer=None, reviewer=None, params_path=None, risk_category=None):
     g = gather(job, params_path, risk_category)
-    S = content(g, project, engineer, reviewer)
+    india = getattr(g["pkg"].basis, "jurisdiction", None) == "india"
+    S = content_india(g, project, engineer, reviewer) if india else content(g, project, engineer, reviewer)
     out = out or g["job"]
     os.makedirs(out, exist_ok=True)
-    title = "Design criteria for nonlinear response history analysis (ASCE 7-22 §16.1.4)"
-    sub = "%s · Risk Category %s · DRAFT generated %s by Steltic_nonlinear for the engineer of record and the §16.5 reviewer" % (g["name"], g["rc"].replace("_", "/"), datetime.date.today().isoformat())
-    d = DW.Doc(title=title, subtitle=sub, footer="%s -- design criteria §16.1.4 (draft)" % g["name"])
+    if india:
+        title = "Design criteria for nonlinear analyses -- IS 1893 (Part 1):2016 7.7.4 / IS 800:2007 Annex B (information)"
+        sub = "%s · DRAFT generated %s for the engineer of record" % (g["name"], datetime.date.today().isoformat())
+    else:
+        title = "Design criteria for nonlinear response history analysis (ASCE 7-22 §16.1.4)"
+        sub = "%s · Risk Category %s · DRAFT generated %s by Steltic_nonlinear for the engineer of record and the §16.5 reviewer" % (g["name"], g["rc"].replace("_", "/"), datetime.date.today().isoformat())
+    d = DW.Doc(title=title, subtitle=sub, footer="%s -- design criteria (draft)" % g["name"])
     for s in S:
         d.heading(s.title, s.level)
         for kind, a, b_ in s.items:

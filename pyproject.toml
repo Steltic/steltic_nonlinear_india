@@ -20,7 +20,7 @@ snl = "snl.cli:main"
 mesh-converge = "mesh_convergence.driver:cli_main"
 
 [tool.setuptools]
-packages = ["snl", "pushover", "nlrha", "steltic_ddm", "records", "mesh_convergence"]
+packages = ["snl", "pushover", "nlrha", "steltic_ddm", "records", "mesh_convergence", "usa_reference"]
 
 [tool.setuptools.package-data]
 snl = ["four_analyses.css", "loop_ui/*", "india_collection_stems.json"]
