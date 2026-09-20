@@ -287,7 +287,7 @@ def drift_brief(plan, jd):
              "2. Lighten the lateral frame until the amplified drift C_d delta_e / I_e lands just under %.2f%% of story height in BOTH directions (the reported allowable will read %.2f%% after the rho division, if any): shallower / lighter SMF beams first, then column groups, keeping the section families and level grouping. Every strength check (D/C <= 1.0, target 0.85-0.95), SCWB ratio, panel-zone check and connection must still pass; keep gravity members, loads, seismic parameters and everything else identical."
              % (100 * n["new_cfg_drift_limit"], 100 * n["new_linear_target"]),
              "3. Record the relief in calc_package['capacity_design']['drift_relief_16_1_2'] (the block above plus the new drifts per direction).",
-             "4. Re-run pipeline.design_and_report, re-derive the affected AISC capacities into calc_package.json, run consistency.check, re-render with report.build_report.",
+             "4. Re-run pipeline.design_and_report, re-derive the affected member capacities (IS 800 for India jobs; AISC for USA fixtures) into calc_package.json, run consistency.check, re-render with report.build_report.",
              "5. Finish with a table: SMF beam and column sizes by level group BEFORE -> AFTER, steel weight before/after (this design: %.1f tons total, %.1f tons lateral), governing D/C, drift X/Y vs the new target."
              % (plan["tons"]["total"], plan["tons"]["lateral"]),
              "",
@@ -296,13 +296,36 @@ def drift_brief(plan, jd):
 
 
 # ------------------------------------------------------------------------------------------------ loop 2: resize
+_IS808_SERIES = ("WPB", "NPB", "HB", "MB", "LB", "JB", "WB", "PBP", "MC", "LC", "JC", "SC", "MPC")
+
+
 def _family(section):
-    m = re.match(r"^([A-Z]+\d+(?:\.\d+)?)X([\d.]+)$", str(section).upper().replace(" ", ""))
+    """(family, weight) for AISC (W14X90 -> ('W14', 90)) and IS 808 labels (WPB300X300X100.85 -> ('WPB300X300', 100.85);
+    NPB450X190X67.16 -> ('NPB450X190', 67.16); HB300 / MB300 -> ('HB', kg/m from the IS 808 table), WP4.14)."""
+    lab = str(section).upper().replace(" ", "")
+    m = re.match(r"^(WPB|NPB|PBP|WB)(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)X([\d.]+)$", lab)
+    if m:
+        return (m.group(1) + m.group(2) + "X" + m.group(3), float(m.group(4)))
+    m = re.match(r"^(%s)(\d+(?:\.\d+)?)(?:X([\d.]+))?$" % "|".join(_IS808_SERIES), lab)
+    if m:
+        wt = float(m.group(3)) if m.group(3) else _is808_mass(lab)
+        return (m.group(1), wt) if wt else (None, None)
+    m = re.match(r"^([A-Z]+\d+(?:\.\d+)?)X([\d.]+)$", lab)
     return (m.group(1), float(m.group(2))) if m else (None, None)
 
 
+def _is808_mass(label):
+    try:
+        from pushover import sections_db as SD
+        v = SD._table().get(label, {}).get("Mass_kg_m")
+        return float(v) if isinstance(v, (int, float)) else None
+    except Exception:
+        return None
+
+
 def section_neighbours(section):
-    """(lighter, heavier) AISC shapes of the same nominal depth family, from pushover/aisc_shapes.csv."""
+    """(lighter, heavier) shapes of the same family: AISC nominal-depth family, or the IS 808 series
+    (WPB/NPB h x b by kg/m; HB/MB/... by kg/m across depths) from the bundled IS 808 table."""
     fam, wt = _family(section)
     if fam is None:
         return None, None

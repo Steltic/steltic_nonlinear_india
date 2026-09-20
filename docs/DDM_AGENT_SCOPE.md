@@ -1,5 +1,15 @@
 # Steltic DDM Agent — Scoping Document
 
+> **INDIA FORK — read first (owner rulings D3/D6/D7, 2026-09-20).** For India jobs the governing documents are
+> IS 1893 (Part 1):2016 + Amd 1–2, IS 800:2007, IS 18168:2023, IS 875, IS 2062, IS 808 / IS 1161 (corpus stems
+> `IS_1893_Part_1_2016`, `IS_800_2007`, `IS_18168_2023`, `IS_2062_Part_1_2025`). The NL target is the IS 1893 **elastic**
+> spectrum (DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g, never ÷R); both levels are run. IS 1893 provides no acceptance criteria
+> for nonlinear analysis — results are **informative** (no ACCEPTABLE/NOT ACCEPTABLE, no ASCE 7 Ch.16 / ASCE 41 / BPON,
+> no Risk Category); IS 800 §12 rotations (0.02/0.04 rad) are reference values; the DDM code check is IS 800 Annex B-1.2.
+> ASCE/AISC/FEMA material below applies to the USA regression fixtures only; the FEMA P-695 set is a record library
+> (information). Do not retrieve ASCE7/AISC stems for India jobs — they are not in the India corpus.
+
+
 **Direct Design Method (system-based design by advanced analysis) for Steltic-designed steel buildings, in OpenSees, delivered as a fourth bot in the Steltic Grok Bot harness.**
 
 Prepared 3 September 2026 · Status: scoping draft for review · Author: Claude (for Mike / Steltic)

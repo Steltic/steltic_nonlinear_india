@@ -154,7 +154,7 @@ Query file manager.
 
 ## Fibre mesh-convergence
 
-Fibre is the default plasticity for NSP and NLRHA (`--plasticity fibre --member-nseg 4`).
+Fibre is the plasticity for India NSP and NLRHA (always; member strains and chord rotations are recorded). For the USA regression fixtures the NSP default is fibre and the NLRHA default is ModIMK (`--plasticity imk`).
 DDM remains fibre GMNIA. Run a mesh ladder with a **10%** relative stop band:
 
 ```bash

@@ -1,5 +1,15 @@
 # steltic_nlrha — Non Linear Dynamic Bot (ASCE 7-22 Chapter 16) for the Steltic set
 
+> **INDIA FORK — read first (owner rulings D3/D6/D7, 2026-09-20).** For India jobs the governing documents are
+> IS 1893 (Part 1):2016 + Amd 1–2, IS 800:2007, IS 18168:2023, IS 875, IS 2062, IS 808 / IS 1161 (corpus stems
+> `IS_1893_Part_1_2016`, `IS_800_2007`, `IS_18168_2023`, `IS_2062_Part_1_2025`). The NL target is the IS 1893 **elastic**
+> spectrum (DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g, never ÷R); both levels are run. IS 1893 provides no acceptance criteria
+> for nonlinear analysis — results are **informative** (no ACCEPTABLE/NOT ACCEPTABLE, no ASCE 7 Ch.16 / ASCE 41 / BPON,
+> no Risk Category); IS 800 §12 rotations (0.02/0.04 rad) are reference values; the DDM code check is IS 800 Annex B-1.2.
+> ASCE/AISC/FEMA material below applies to the USA regression fixtures only; the FEMA P-695 set is a record library
+> (information). Do not retrieve ASCE7/AISC stems for India jobs — they are not in the India corpus.
+
+
 Takes a Steltic HR design package (+ its pushover supplement if present) and runs an **ASCE 7-22 Chapter 16
 nonlinear response history analysis** on the same hinge model the Pushover Analyst builds: MCE_R target spectrum
 (16.2.1.1 → 11.4.6), ≥ 11 pairs from the FEMA P-695 far-field set, period range and RotD100 amplitude scaling
