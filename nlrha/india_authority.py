@@ -59,7 +59,7 @@ IS_ANCHORS = {
         "found": True,
         "stem": PRIMARY_STEM,
         "clause": "7.11.1.2",
-        "note": "Dynamic analysis displacements shall not be scaled as in 7.7.3.",
+        "note": "Amd 2: 'Displacement estimates obtained from dynamic analysis need not be scaled, as stated in 7.7.3.2.'",
     },
     "dynamic_analysis_method": {
         "found": True,
@@ -770,9 +770,12 @@ def resolve_plasticity(cfg_or_job=None, job_dir: str | None = None, evidence=Non
             return
         candidates.append((_norm_plasticity(val), source))
 
-    _add(evidence.get("plasticity"), "evidence.plasticity")
-    if evidence.get("fibre_used") is True:
-        candidates.append(("fibre", "evidence.fibre_used"))
+    if evidence.get("from_artifact"):
+        _add(evidence.get("plasticity"), "artifact:evidence.plasticity")
+        if evidence.get("fibre_used") is True:
+            candidates.append(("fibre", "artifact:evidence.fibre_used"))
+    else:
+        _add(evidence.get("plasticity"), "evidence.plasticity")
     _add(cfg.get("plasticity"), "cfg.plasticity")
     _add(num.get("plasticity"), "cfg.numerics.plasticity")
     _add(os.environ.get("SNL_PLASTICITY"), "env.SNL_PLASTICITY")
@@ -797,11 +800,11 @@ def resolve_plasticity(cfg_or_job=None, job_dir: str | None = None, evidence=Non
             data = _read_json(os.path.join(root, rel))
             if not data:
                 continue
-            _add(data.get("plasticity"), rel)
+            _add(data.get("plasticity"), "artifact:" + rel)
             num2 = data.get("numerics") if isinstance(data.get("numerics"), dict) else {}
-            _add(num2.get("plasticity"), rel + ".numerics")
+            _add(num2.get("plasticity"), "artifact:" + rel + ".numerics")
             if data.get("fibre_eles") or data.get("fibre_secs"):
-                candidates.append(("fibre", rel + ".fibre_*"))
+                candidates.insert(0, ("fibre", "artifact:" + rel + ".fibre_*"))
 
     plasticity = None
     source = None
@@ -816,12 +819,14 @@ def resolve_plasticity(cfg_or_job=None, job_dir: str | None = None, evidence=Non
 
     fibre = plasticity in _FIBRE_ALIASES
     hinge_only = plasticity in _HINGE_ONLY_ALIASES
+    from_artifact = str(source or "").startswith("artifact:")
     return {
         "plasticity": plasticity,
         "source": source,
         "fibre_preferred": True,
-        "fibre_used": bool(fibre and source != "default_prefer_fibre"),
-        "fibre_ok": bool(fibre),
+        "fibre_used": bool(fibre and from_artifact),
+        # WP4.10: fibre counts only when an analysis artefact proves it (never a default / env / claim)
+        "fibre_ok": bool(fibre and from_artifact),
         "hinge_only": bool(hinge_only),
         "candidates": [{"plasticity": a, "source": b} for a, b in candidates[:12]],
     }
@@ -904,18 +909,9 @@ def disclosures_satisfy_complete_gate(rows: list[dict] | None) -> dict:
                 )
         details[rid] = info
 
-    drift_limit = storey_drift_limit_ratio()
-    india_drift_ok = (
-        drift_limit.get("found") is True
-        and abs(float(drift_limit.get("value") or 0) - 0.004) < 1e-12
-        and str(drift_limit.get("clause") or "").startswith("7.11.1")
-    )
-    if not india_drift_ok:
-        problems.append(
-            "IS 1893 §7.11.1 drift-limit check must remain the India check "
-            "(got clause=%r value=%r)" % (drift_limit.get("clause"), drift_limit.get("value"))
-        )
-
+    # 7.11.1.1 (0.004 h under VB) is the LINEAR design check of the HR package -- informational here, never an
+    # NL acceptance criterion and never a gate condition (NLREPO-05).
+    drift_limit = dict(storey_drift_limit_ratio(), role="linear design check under VB (HR package); not an NL criterion")
     return {
         "ok": len(problems) == 0 and not missing,
         "missing_ids": missing,
@@ -967,6 +963,9 @@ def complete_allowed(
             "plasticity=%r source=%s" % (plast.get("plasticity"), plast.get("source"))
         )
 
+    art = artefact_gate(job_dir or (cfg_or_job if isinstance(cfg_or_job, str) else None))
+    reasons.extend(art["reasons"])
+
     drift = drift_relief_analogue(cfg_or_job, job_dir=job_dir)
     if drift.get("found") is True and not drift.get("clause"):
         reasons.append(
@@ -1014,7 +1013,10 @@ def design_status(
         "found": False,
         "feedback_drift_loop": "ineligible",
     }
+    art = artefact_gate(job_dir or (cfg_or_job if isinstance(cfg_or_job, str) else None))
     status = "complete" if ok else "partial"
+    if ok and art.get("capacity_shortfall"):
+        status = "complete_with_capacity_shortfall"
     note = (
         "COMPLETE allowed: fibre preferred/used + NSP tables found:false disclosed + "
         "ASCE §16.1.2 drift-relief analogue found:false disclosed (feedback loop "
@@ -1051,6 +1053,7 @@ def design_status(
         "descending_branch_captured": descending["descending_branch_captured"],
         "descending_branch_status": descending["status"],
         "blocks_from_found_false_alone": False,
+        "artefact_gate": art,
         "note": note,
     }
 
@@ -1133,3 +1136,153 @@ def write_complete_gate_disclosures(
     return rows
 
 
+
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# WP4.10 COMPLETE gate on ANALYSIS ARTEFACTS (never a verdict -- owner ruling D7)
+# ---------------------------------------------------------------------------------------------------------------
+def _sha256(path):
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return None
+
+
+def summary_inputs(job_dir: str) -> dict:
+    """sha256 of the analysis packages a summary reads (recorded by every summary; compared by the gate)."""
+    out = {}
+    for rel in ("pushover/pushover_package.json", "nlrha/nlrha_package.json", "nlrha/DBE/nlrha_package.json",
+                "nlrha/MCE/nlrha_package.json", "ddm_results.json"):
+        pth = os.path.join(job_dir, rel)
+        if os.path.exists(pth):
+            out[rel] = _sha256(pth)
+    return out
+
+
+def artefact_gate(job_dir: str | None) -> dict:
+    """Checks (all required for COMPLETE):
+      1 pushover_package.json + nlrha_package.json (both levels) exist and prove fibre plasticity;
+      2 every NLRHA record converged;
+      3 elastic targets (IS 1893 DBE/MCE, no R) in NLRHA and NSP;
+      4 mass = IS seismic weight (|sum m g - W| <= 1 %);
+      5 non-vacuous response summaries (SFRS member rows exist);
+      6 no spurious modes; participation sums <= 1;
+      7 DDM: results exist, gravity transfer gate passed, every reported lambda_u is a detected limit point /
+        plateau / ductility cap (NO_LIMIT_POINT runs are excluded; a gravity or wind NO_LIMIT_POINT below lambda 1
+        blocks); IS 800 B-1.2 section check at lambda = 1 present -- a B-1.2 failure gives
+        complete_with_capacity_shortfall;
+      8 summaries (snl_summary.json) are FRESH: the package hashes they recorded match the files on disk;
+      9 validate_nl_plan has no ERROR."""
+    reasons, checks = [], {}
+    if not job_dir or not os.path.isdir(job_dir):
+        return dict(ok=False, reasons=["no job folder / analysis artefacts -- COMPLETE refused"], checks={}, capacity_shortfall=False)
+    po = _read_json(os.path.join(job_dir, "pushover", "pushover_package.json"))
+    nl = _read_json(os.path.join(job_dir, "nlrha", "nlrha_package.json"))
+    checks["pushover_package"] = bool(po)
+    checks["nlrha_package"] = bool(nl)
+    if not po:
+        reasons.append("pushover/pushover_package.json missing")
+    if not nl:
+        reasons.append("nlrha/nlrha_package.json missing")
+    india = (po or {}).get("jurisdiction") == "india" or (nl or {}).get("jurisdiction") == "india"
+    if po:
+        if po.get("plasticity") != "fibre" or not po.get("fibre_eles"):
+            reasons.append("pushover package does not prove fibre plasticity (plasticity=%r, fibre_eles=%r)" % (po.get("plasticity"), po.get("fibre_eles")))
+        if india and ((po.get("hazard") or {}).get("R_in_target") is not False):
+            reasons.append("pushover NSP target not stamped as the elastic IS spectrum (R_in_target must be False)")
+        if india and not (po.get("mass_gate") or {}).get("ok"):
+            reasons.append("pushover mass gate (sum m g = W within 1 %) not passed")
+        dirs = po.get("directions") or {}
+        if india and set(dirs) != {"X", "Y"}:
+            reasons.append("pushover package must hold both directions X and Y (has %s)" % sorted(dirs))
+        for d, dd in dirs.items():
+            for lv, r in ((dd.get("response") or {}).items() if india else []):
+                if not r.get("non_vacuous"):
+                    reasons.append("pushover %s %s response has no member rows (vacuous)" % (d, lv))
+    if nl and india:
+        lvls = nl.get("levels") or {}
+        if set(lvls) != {"DBE", "MCE"}:
+            reasons.append("NLRHA must report both DBE and MCE (has %s)" % sorted(lvls))
+        for lv, info in lvls.items():
+            pkgp = os.path.join(job_dir, "nlrha", info.get("package") or os.path.join(lv, "nlrha_package.json"))
+            lp = _read_json(pkgp)
+            if not lp:
+                reasons.append("NLRHA %s package missing (%s)" % (lv, pkgp)); continue
+            if lp.get("plasticity") != "fibre" or not lp.get("fibre_eles"):
+                reasons.append("NLRHA %s does not prove fibre plasticity" % lv)
+            if "no R" not in str(lp.get("target_label") or ""):
+                reasons.append("NLRHA %s target is not the IS elastic spectrum (label %r)" % (lv, lp.get("target_label")))
+            rs = lp.get("response_summary") or {}
+            if not rs.get("converged_all"):
+                reasons.append("NLRHA %s: %s of %s records converged" % (lv, rs.get("n_converged"), rs.get("n_records")))
+            if not (rs.get("non_vacuous") or {}).get("ok"):
+                reasons.append("NLRHA %s response summary is vacuous (%s)" % (lv, (rs.get("non_vacuous") or {}).get("missing_kinds")))
+            if not (lp.get("mass_gate") or {}).get("ok"):
+                reasons.append("NLRHA %s mass gate not passed" % lv)
+        mo = nl.get("modal") or {}
+        if mo and not mo.get("spurious_ok", False):
+            reasons.append("spurious modes present: %s" % mo.get("spurious_modes"))
+        if mo and not mo.get("participation_sum_ok", False):
+            reasons.append("modal participation sums exceed 1")
+    # DDM
+    ddm = _read_json(os.path.join(job_dir, "ddm_results.json"))
+    shortfall = False
+    if not ddm:
+        reasons.append("ddm_results.json missing")
+    else:
+        g = (ddm.get("gravity_gate") or {})
+        if not g.get("ok"):
+            reasons.append("DDM gravity transfer gate (member forces at lambda=1 within 5 %% of member_schedule) not passed: %s"
+                           % (g.get("summary") or "absent"))
+        for r in ddm.get("runs") or []:
+            stt = r.get("status")
+            if stt is None:
+                reasons.append("DDM run %s has no limit-point status (pre-WP4.9 results)" % r.get("label")); continue
+            if stt == "NO_LIMIT_POINT" and r.get("kind") in ("gravity", "wind") and (r.get("lambda_end") or 0) < 1.0:
+                reasons.append("DDM %s: NO_LIMIT_POINT and terminated below lambda 1 (%.3f)" % (r.get("label"), r.get("lambda_end") or 0))
+        b12 = ddm.get("b12_check")
+        if not b12:
+            reasons.append("IS 800 B-1.2 section-capacity check at lambda = 1 missing")
+        elif b12.get("ok") is False:
+            shortfall = True
+        if ddm.get("options", {}).get("time_limit") and float(ddm["options"]["time_limit"]) < 2400:
+            reasons.append("DDM time limit %.0f s below the default 2400 s" % float(ddm["options"]["time_limit"]))
+    # freshness
+    summ = _read_json(os.path.join(job_dir, "snl_summary.json"))
+    if not summ:
+        reasons.append("snl_summary.json missing (regenerate summaries after every re-run)")
+    else:
+        rec = summ.get("inputs_sha256") or {}
+        now = summary_inputs(job_dir)
+        stale = [k for k in now if rec.get(k) != now[k]]
+        if not rec:
+            reasons.append("snl_summary.json records no input hashes (stale format)")
+        elif stale:
+            reasons.append("snl_summary.json is STALE for %s -- regenerate (`snl report`)" % ", ".join(stale))
+    # nl_plan
+    try:
+        errs = [m for sev, m in validate_nl_plan(job_dir=job_dir) if sev == "ERROR"]
+    except Exception:
+        errs = []
+    if errs:
+        reasons.append("nl_plan ERROR: %s" % "; ".join(errs)[:200])
+    return dict(ok=not reasons, reasons=reasons, checks=checks, capacity_shortfall=shortfall,
+                inputs_sha256=summary_inputs(job_dir))
+
+
+def write_complete_gate(job_dir: str) -> dict:
+    """Evaluate the artefact gate for a finished job and write <job>/complete_gate.json (+ the disclosure file).
+    Called only at the END of `nlrha run/report`, `pushover run`, `steltic_ddm run` and `snl report`."""
+    st = design_status(job_dir=job_dir, evidence={"from_artifact": True})
+    art = st["artefact_gate"]
+    payload = dict(jurisdiction=JURISDICTION, status=st["status"], reasons=st["reasons"], checks=art.get("checks"),
+                   inputs_sha256=art.get("inputs_sha256"),
+                   statement="Gate on analysis artefacts only; IS 1893 provides no NL acceptance criteria (results informative).",
+                   generated=__import__("time").strftime("%Y-%m-%dT%H:%M:%S"))
+    with open(os.path.join(job_dir, "complete_gate.json"), "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=1, default=str)
+    write_complete_gate_disclosures(job_dir, job_dir=job_dir, evidence={"from_artifact": True})
+    return st

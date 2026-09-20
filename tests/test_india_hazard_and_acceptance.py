@@ -137,62 +137,37 @@ def test_write_complete_gate_disclosures_json(tmp_path=None):
         assert rows and all(r.get("found") is False for r in rows)
 
 
-def test_descending_branch_incomplete_is_optional_and_disclosed():
-    """max_drift/lower_bound disclose honestly but never force COMPLETE -> PARTIAL."""
+def test_descending_branch_disclosed_but_no_artefacts_is_partial():
+    """WP4.10: disclosures alone never make COMPLETE -- analysis artefacts are required."""
     rows = IA.complete_gate_disclosures()
-    for tail_status in ("max_drift", "lower_bound"):
-        evidence = {
-            "plasticity": "fibre",
-            "descending_branch_captured": False,
-            "descending_branch_status": tail_status,
-        }
-        ok, reasons = IA.complete_allowed(evidence=evidence, disclosures=rows)
-        assert ok is True, (tail_status, reasons)
-        st = IA.design_status(evidence=evidence, disclosures=rows)
-        assert st["status"] == "complete"
-        assert st["complete_allowed"] is True
-        assert st["descending_branch_captured"] is False
-        assert st["descending_branch_status"] == tail_status
-        assert st["descending_branch"]["required_for_complete"] is False
-        assert "optional" in st["descending_branch"]["note"]
+    evidence = {"plasticity": "fibre", "descending_branch_captured": False, "descending_branch_status": "max_drift"}
+    ok, reasons = IA.complete_allowed(evidence=evidence, disclosures=rows)
+    assert ok is False and any("artefact" in r or "missing" in r for r in reasons)
+    st = IA.design_status(evidence=evidence, disclosures=rows)
+    assert st["status"] == "partial"
+    assert st["descending_branch"]["required_for_complete"] is False
+
+
+def test_empty_folder_is_partial():
+    with tempfile.TemporaryDirectory() as td:
+        st = IA.design_status(job_dir=td)
+        assert st["status"] == "partial" and st["complete_allowed"] is False
+        assert any("pushover_package.json missing" in r for r in st["reasons"])
+        assert st["fibre"]["fibre_ok"] is False          # no artefact proves fibre
 
 
 def test_write_gate_discloses_descending_branch_status(tmp_path=None):
     with tempfile.TemporaryDirectory() as td:
         IA.write_complete_gate_disclosures(
             td,
-            evidence={
-                "plasticity": "fibre",
-                "descending_branch_runs": {
-                    "X": {"captured": False, "status": "max_drift"},
-                    "Y": {"captured": False, "status": "lower_bound"},
-                },
-            },
+            evidence={"plasticity": "fibre",
+                      "descending_branch_runs": {"X": {"captured": False, "status": "max_drift"},
+                                                 "Y": {"captured": False, "status": "lower_bound"}}},
         )
         payload = json.load(open(os.path.join(td, "complete_gate_disclosures.json")))
         assert payload["descending_branch_captured"] is False
         assert payload["descending_branch_status"] == "max_drift"
-        assert payload["design_status"] == "complete"
-        assert payload["complete_allowed"] is True
-        assert payload["descending_branch"]["required_for_complete"] is False
-
-
-def test_complete_allowed_fibre_with_found_false_disclosures():
-    """Michael 2026-09-20: disclosed found:false + fibre → COMPLETE (not PARTIAL)."""
-    rows = IA.complete_gate_disclosures()
-    ok, reasons = IA.complete_allowed(evidence={"plasticity": "fibre"}, disclosures=rows)
-    assert ok is True, reasons
-    st = IA.design_status(evidence={"plasticity": "fibre"}, disclosures=rows)
-    assert st["status"] == "complete"
-    assert st["complete_allowed"] is True
-    assert st["admin_notify"] is False
-    assert st["blocks_from_found_false_alone"] is False
-    assert st["nsp_acceptance_tables"]["found"] is False
-    assert st["asce_16_1_2_drift_relief_analogue"]["found"] is False
-    assert st["asce_16_1_2_drift_relief_analogue"]["feedback_drift_loop"] == "ineligible"
-    assert st["india_drift_check"]["clause"] == "7.11.1.1"
-    notify = IA.admin_notify(status=st)
-    assert notify["admin_notify"] is False
+        assert payload["design_status"] == "partial"
 
 
 def test_complete_refuses_hinge_only_unverified_without_eor():
@@ -227,24 +202,14 @@ def test_complete_refuses_invented_found_true_nsp_tables():
     assert any("found:false" in r for r in reasons)
 
 
-def test_hinge_eor_allows_complete_without_fibre():
-    cfg = {
-        "nl_plan": {
-            "jurisdiction": "india",
-            "retrieval": [
-                {"stem": "IS_1893_Part_1_2016", "query": "7.7.4", "found": True, "cite": "7.7.4"},
-            ],
-            "hinge_source": {
-                "found": True,
-                "clause": "EOR EXAMPLE",
-                "cite": "EXAMPLE EOR hinge fixture — not-for-construction",
-            },
-        },
-        "numerics": {"plasticity": "imk"},
-    }
+def test_hinge_eor_documented_but_artefacts_still_required():
+    cfg = {"nl_plan": {"jurisdiction": "india",
+                       "retrieval": [{"stem": "IS_1893_Part_1_2016", "query": "7.7.4", "found": True, "cite": "7.7.4"}],
+                       "hinge_source": {"found": True, "clause": "EOR EXAMPLE", "cite": "EXAMPLE EOR hinge fixture"}},
+           "numerics": {"plasticity": "imk"}}
     rows = IA.complete_gate_disclosures(cfg)
     ok, reasons = IA.complete_allowed(cfg, evidence={"plasticity": "imk"}, disclosures=rows)
-    assert ok is True, reasons
+    assert ok is False and not any("fibre not used" in r for r in reasons)
     assert IA.hinge_eor_documented(cfg)["eor_documented"] is True
 
 
@@ -254,8 +219,7 @@ def test_write_complete_gate_includes_design_status_fields(tmp_path=None):
             td, evidence={"plasticity": "fibre"}
         )
         payload = json.load(open(os.path.join(td, "complete_gate_disclosures.json")))
-        assert payload["complete_allowed"] is True
-        assert payload["design_status"] == "complete"
-        assert payload["admin_notify"] is False
+        assert payload["complete_allowed"] is False            # WP4.10: no artefacts -> never complete
+        assert payload["design_status"] == "partial"
         assert payload["gate"]["blocks_from_found_false_alone"] is False
         assert payload["policy"] == IA.COMPLETE_GATE_POLICY
