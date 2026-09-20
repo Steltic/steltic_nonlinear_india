@@ -1,4 +1,12 @@
-"""India site hazard — IS 1893 Part 1:2016 zone / Z / design spectrum (not USGS).
+"""India site hazard — IS 1893 Part 1:2016 zone / Z / ELASTIC spectrum for nonlinear analysis (not USGS).
+
+Owner ruling D6: the nonlinear (NSP / NLRHA) target is the IS 1893 *elastic* spectrum
+  DBE = (Z/2)·I·(Sa/g)      MCE = Z·I·(Sa/g)          (never divided by R)
+Both levels are built and reported. The design coefficient Ah = (Z/2)(Sa/g)/(R/I) is kept only as a
+labelled *reference* curve (it is the linear design-force coefficient, 6.4.2, not an NL demand).
+
+NOTE (integration): `sa_over_g` lives here for now; HR-CORE's shared `india_seismic.sa_over_g`
+will replace it when the shared India modules are vendored (do not fork india_seismic here).
 
 Built only from LIVE RAG / indexed excerpts under engineering_rag_india
 (stem IS_1893_Part_1_2016). Does NOT call USGS. USA site_hazard.build_site_hazard
@@ -31,13 +39,21 @@ ZONE_FACTOR_Z = {
     "V": 0.36,
 }
 
-# 6.4.2.1 / Table 4 soil classification aliases → I | II | III
+
+# 6.4.2.1 / Table 4 soil types. Words are the IS 6.4.2.1 descriptors (rock or hard / medium or stiff / soft).
+# ASCE site-class letters have NO cited IS mapping and are refused (NLREPO-14).
 SOIL_ALIASES = {
-    "i": "I", "1": "I", "rock": "I", "hard": "I", "rocky": "I", "type_i": "I",
-    "ii": "II", "2": "II", "medium": "II", "stiff": "II", "type_ii": "II",
+    "i": "I", "1": "I", "rock": "I", "hard": "I", "rocky": "I", "type_i": "I", "rock_or_hard": "I",
+    "ii": "II", "2": "II", "medium": "II", "stiff": "II", "type_ii": "II", "medium_or_stiff": "II",
     "iii": "III", "3": "III", "soft": "III", "type_iii": "III",
-    # ASCE site-class letters sometimes appear in briefs — map conservatively, cite gap
-    "a": "I", "b": "I", "c": "II", "d": "II", "e": "III",
+}
+
+# D6: NL target level factors on Z·I·Sa/g (never R)
+LEVEL_FACTOR = {"DBE": 0.5, "MCE": 1.0}
+NL_LEVELS = ("DBE", "MCE")
+LEVEL_LABEL = {
+    "DBE": "IS 1893 elastic DBE (Z/2)·I·Sa/g (no R)",
+    "MCE": "IS 1893 elastic MCE Z·I·Sa/g (no R)",
 }
 
 CITE = {
@@ -77,6 +93,14 @@ CITE = {
             "earthquake structural dynamics."
         ),
     },
+    "elastic_levels": {
+        "stem": IA.PRIMARY_STEM,
+        "clause": "6.4.2 / 3.28",
+        "cite": "IS 1893 (Part 1):2016 6.4.2 Sa/g with Z (3.28 PGA 'considered by this standard'); "
+                "DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g — owner ruling D6 (Z/2 = DBE convention of "
+                "IS 1893:2002; IS 800:2007 4.1.1 'maximum credible earthquake'); R never applied",
+        "found": True,
+    },
     "site_specific": {
         "stem": IA.PRIMARY_STEM,
         "clause": "6.4.7",
@@ -111,20 +135,31 @@ def zone_factor(zone: str | int | None, Z_override: float | None = None) -> floa
     return ZONE_FACTOR_Z[normalize_zone(zone)]
 
 
+
 def normalize_soil(soil: str | None) -> str:
-    if soil is None:
-        return "II"
-    key = str(soil).strip().lower().replace(" ", "_").replace("-", "_")
-    if key in ("i", "ii", "iii"):
-        return key.upper()
+    """IS 1893 6.4.2.1 soil type I | II | III. Raises when missing (no silent 'II') or ASCE letters."""
+    if soil is None or str(soil).strip() == "":
+        raise ValueError("IS 1893 soil type (I|II|III, 6.4.2.1) is required for the India hazard — "
+                         "no default is assumed (NLREPO-14)")
+    import re as _re
+    raw = str(soil).strip()
+    mo = _re.search(r"\btype\s*[-_ ]?\s*(III|II|I|3|2|1)\b", raw, _re.I)
+    if mo:
+        return {"1": "I", "2": "II", "3": "III"}.get(mo.group(1), mo.group(1).upper())
+    key = raw.lower().replace(" ", "_").replace("-", "_").replace("/", "_")
     if key.upper() in ("I", "II", "III"):
         return key.upper()
     if key in SOIL_ALIASES:
         return SOIL_ALIASES[key]
+    if key in ("a", "b", "c", "d", "e", "f") or key.startswith("site_class"):
+        raise ValueError("ASCE site class %r has no cited IS 1893 soil-type equivalent — the EOR must state "
+                         "the IS 6.4.2.1 soil type (I/II/III)" % soil)
+    for word, t in (("soft", "III"), ("medium", "II"), ("stiff", "II"), ("rock", "I"), ("hard", "I")):
+        if word in key:
+            return t
     raise ValueError("unknown soil type %r — use I|II|III (IS 1893 6.4.2.1)" % soil)
 
-
-def sa_over_g(T: float, soil: str = "II") -> float:
+def sa_over_g(T: float, soil: str) -> float:
     """Design acceleration coefficient Sa/g (5% damping), response-spectrum form of 6.4.2.
 
     Piecewise expressions transcribed from IS_1893_Part_1_2016.search.md §6.4.2
@@ -158,9 +193,37 @@ def sa_over_g(T: float, soil: str = "II") -> float:
     return 0.42
 
 
+
+def normalize_level(level: str | None) -> str:
+    lv = str(level or "DBE").strip().upper()
+    if lv not in LEVEL_FACTOR:
+        raise ValueError("NL hazard level %r — use DBE or MCE (IS 1893 elastic, D6)" % level)
+    return lv
+
+
+def elastic_sa(T: float, zone=None, I: float | None = None, soil: str | None = None,
+               level: str = "DBE", Z: float | None = None) -> float:
+    """IS 1893 elastic spectral acceleration (g) for NL analysis: f·Z·I·Sa/g, f = 0.5 DBE / 1.0 MCE. No R."""
+    if I is None:
+        raise ValueError("importance factor I (IS 1893 Table 8) is required")
+    return LEVEL_FACTOR[normalize_level(level)] * zone_factor(zone, Z) * float(I) * sa_over_g(T, soil)
+
+
+def elastic_spectrum(periods, zone=None, I: float | None = None, soil: str | None = None,
+                     level: str = "DBE", Z: float | None = None) -> dict:
+    """Elastic NL target over a period grid (5 % damped RSA shape of 6.4.2). spectrum_meta R is None by construction."""
+    lv = normalize_level(level)
+    ps = [float(t) for t in periods]
+    sa = [elastic_sa(t, zone=zone, I=I, soil=soil, level=lv, Z=Z) for t in ps]
+    return dict(periods=ps, sa_g=sa, sa_over_g=[sa_over_g(t, soil) for t in ps], level=lv,
+                factor=LEVEL_FACTOR[lv], Z=zone_factor(zone, Z), I=float(I), soil=normalize_soil(soil),
+                R=None, label=LEVEL_LABEL[lv], clause="IS 1893 6.4.2 (elastic, 5 %% damping) / 7.7.4",
+                cite=CITE["elastic_levels"]["cite"])
+
+
 def design_Ah(T: float, zone="III", I: float = 1.0, R: float = 5.0,
               soil: str = "II", Z: float | None = None) -> float:
-    """Ah(T) = (Z/2)·(Sa/g)/(R/I) per 6.4.2."""
+    """Ah(T) = (Z/2)·(Sa/g)/(R/I) per 6.4.2 — linear DESIGN coefficient (reference only, never an NL target)."""
     Zv = zone_factor(zone, Z)
     sag = sa_over_g(T, soil)
     if R is None or float(R) == 0:
@@ -170,22 +233,12 @@ def design_Ah(T: float, zone="III", I: float = 1.0, R: float = 5.0,
 
 def design_spectrum(periods, zone="III", I: float = 1.0, R: float = 5.0,
                     soil: str = "II", Z: float | None = None) -> dict:
-    """Absolute design spectral acceleration Sa = Ah(T) (in g) over a period grid."""
+    """Ah(T) over a period grid — REFERENCE curve for the linear design (6.4.2); not a scaling target."""
     ps = [float(t) for t in periods]
-    ah = [design_Ah(t, zone=zone, I=I, R=R, soil=soil, Z=Z) for t in ps]
-    sag = [sa_over_g(t, soil) for t in ps]
-    return dict(
-        periods=ps,
-        sa_g=ah,  # Ah in units of g — scaling target for 7.7.4 compatibility
-        sa_over_g=sag,
-        zone=normalize_zone(zone) if Z is None else str(zone),
-        Z=zone_factor(zone, Z),
-        I=float(I),
-        R=float(R),
-        soil=normalize_soil(soil),
-        clause="IS 1893 6.4.2 / 7.7.4",
-        cite=CITE,
-    )
+    return dict(periods=ps, sa_g=[design_Ah(t, zone=zone, I=I, R=R, soil=soil, Z=Z) for t in ps],
+                sa_over_g=[sa_over_g(t, soil) for t in ps], zone=str(zone), Z=zone_factor(zone, Z),
+                I=float(I), R=float(R), soil=normalize_soil(soil), clause="IS 1893 6.4.2 Ah (design coefficient)",
+                role="reference_only", cite=CITE)
 
 
 def default_period_grid(T_lower: float = 0.05, T_upper: float = 4.0, n: int = 80) -> list[float]:
@@ -195,27 +248,87 @@ def default_period_grid(T_lower: float = 0.05, T_upper: float = 4.0, n: int = 80
     return [float(x) for x in np.geomspace(lo, hi, n)]
 
 
+def _first(*vals):
+    for v in vals:
+        if v is not None and v != "":
+            return v
+    return None
+
+
 def inputs_from_cfg(cfg: dict | None) -> dict:
-    """Pull India hazard inputs from cfg / nl_plan / seis block (steltic_india style)."""
+    """Pull India hazard inputs from cfg / nl_plan / seis block. Missing values stay None (no defaults)."""
     cfg = cfg or {}
     plan = cfg.get("nl_plan") if isinstance(cfg.get("nl_plan"), dict) else {}
     seis = cfg.get("seis") if isinstance(cfg.get("seis"), dict) else {}
     hazard = cfg.get("india_hazard") if isinstance(cfg.get("india_hazard"), dict) else {}
     src = {**seis, **hazard, **(plan.get("hazard") or {})}
+    zone = _first(src.get("zone"), src.get("seismic_zone"), cfg.get("seismic_zone"), cfg.get("zone"))
+    Z = _first(src.get("Z"), src.get("zone_factor"), cfg.get("Z"))
+    soil = _first(src.get("soil"), src.get("soil_type"), cfg.get("soil_type"), cfg.get("soil"))
+    I = _first(src.get("I"), src.get("importance"), src.get("importance_factor"), cfg.get("importance_factor"), cfg.get("I"))
+    R = _first(src.get("R"), src.get("response_reduction"), cfg.get("R"))
+    return dict(zone=zone, Z=(float(Z) if Z is not None else None), soil=soil,
+                I=(float(I) if I is not None else None), R=(float(R) if R is not None else None), raw=src)
 
-    zone = src.get("zone") or src.get("seismic_zone") or cfg.get("seismic_zone") or cfg.get("zone")
-    Z = src.get("Z") or src.get("zone_factor")
-    soil = src.get("soil") or src.get("soil_type") or src.get("site_class") or cfg.get("soil_type")
-    I = src.get("I") or src.get("importance") or cfg.get("importance_factor") or 1.0
-    R = src.get("R") or src.get("response_reduction") or cfg.get("R") or 5.0
-    return dict(zone=zone, Z=Z, soil=soil, I=float(I), R=float(R), raw=src)
+
+def inputs_from_package(root) -> dict:
+    """Structured India inputs from the HR package (seismic_calc.json + load_plan.json seismic_summary).
+
+    Returns zone, Z, soil, I, R, Ta_x, Ta_y, W_kN, W_by_floor_kN, VB_kN, h_m (None where absent) and `sources`.
+    """
+    import json as _json
+    import os as _os
+    root = str(root)
+    out = dict(zone=None, Z=None, soil=None, I=None, R=None, Ta_x=None, Ta_y=None, Ta=None, W_kN=None,
+               W_by_floor_kN=None, VB_kN=None, h_m=None, sources={})
+    ss = {}
+    lp = _os.path.join(root, "load_plan.json")
+    if _os.path.exists(lp):
+        try:
+            ss = (_json.load(open(lp, encoding="utf-8")) or {}).get("seismic_summary") or {}
+        except Exception:
+            ss = {}
+    sc = {}
+    scp = _os.path.join(root, "seismic_calc.json")
+    if _os.path.exists(scp):
+        try:
+            sc = _json.load(open(scp, encoding="utf-8")) or {}
+        except Exception:
+            sc = {}
+
+    def put(key, val, src):
+        if val is not None and out.get(key) is None:
+            out[key] = val
+            out["sources"][key] = src
+    put("zone", ss.get("zone"), "load_plan.seismic_summary.zone")
+    put("Z", sc.get("Z"), "seismic_calc.Z"); put("Z", ss.get("Z"), "load_plan.seismic_summary.Z")
+    put("soil", ss.get("soil") or sc.get("soil"), "load_plan.seismic_summary.soil")
+    put("I", sc.get("I"), "seismic_calc.I"); put("I", ss.get("I"), "load_plan.seismic_summary.I")
+    put("R", sc.get("R"), "seismic_calc.R"); put("R", ss.get("R"), "load_plan.seismic_summary.R")
+    put("Ta_x", sc.get("Ta_x_s") or ss.get("Ta_x_s"), "seismic_calc.Ta_x_s")
+    put("Ta_y", sc.get("Ta_y_s") or ss.get("Ta_y_s"), "seismic_calc.Ta_y_s")
+    put("Ta", sc.get("Ta_s") or ss.get("Ta_s"), "seismic_calc.Ta_s")
+    wf = sc.get("W_kN") if isinstance(sc.get("W_kN"), list) else ss.get("W_by_floor_kN")
+    put("W_by_floor_kN", wf, "seismic_calc.W_kN (per floor)")
+    if isinstance(ss.get("W_kN"), (int, float)):
+        put("W_kN", float(ss["W_kN"]), "load_plan.seismic_summary.W_kN")
+    elif wf:
+        put("W_kN", float(sum(wf)), "sum(seismic_calc.W_kN)")
+    put("VB_kN", sc.get("VB_kN") or ss.get("VB_kN"), "seismic_calc.VB_kN")
+    put("h_m", ss.get("hi_m"), "load_plan.seismic_summary.hi_m")
+    if out["zone"] is None and out["Z"] is not None:
+        inv = {v: k for k, v in ZONE_FACTOR_Z.items()}
+        out["zone"] = inv.get(round(float(out["Z"]), 2))
+        if out["zone"]:
+            out["sources"]["zone"] = "Table 3 inverse of Z"
+    return out
 
 
 def build_india_site_hazard(
     zone: str | int | None = None,
-    soil: str = "II",
-    I: float = 1.0,
-    R: float = 5.0,
+    soil: str | None = None,
+    I: float | None = None,
+    R: float | None = None,
     Z: float | None = None,
     T1x: float | None = None,
     T1y: float | None = None,
@@ -224,18 +337,19 @@ def build_india_site_hazard(
     periods: list[float] | None = None,
     cfg: dict | None = None,
     site_specific_spectrum: dict | None = None,
+    levels=NL_LEVELS,
 ) -> dict:
-    """Write-shaped site_hazard.json for India jobs (no USGS).
+    """site_hazard.json for India NL jobs (no USGS).
 
-    Target for record scaling: design Sa = Ah(T) in g (7.7.4 compatibility with 6.4.2).
-    Conditional spectrum / MCE_R / near-fault USGS screens are omitted (found:false as India authority).
+    Targets (D6): `is1893_elastic_DBE` = (Z/2)·I·Sa/g and `is1893_elastic_MCE` = Z·I·Sa/g — R never enters.
+    `is1893_design_Ah_reference` (Ah, R-reduced) is written only as a labelled reference when R is known.
+    Explicit arguments win; cfg fills what is None. Soil, I and T1 are REQUIRED (no silent defaults).
     """
     if cfg:
         pulled = inputs_from_cfg(cfg)
-        zone = zone or pulled["zone"]
-        if Z is None:
-            Z = pulled["Z"]
-        soil = soil or pulled["soil"] or "II"
+        zone = zone if zone is not None else pulled["zone"]
+        Z = Z if Z is not None else pulled["Z"]
+        soil = soil if soil is not None else pulled["soil"]
         I = I if I is not None else pulled["I"]
         R = R if R is not None else pulled["R"]
 
@@ -244,111 +358,127 @@ def build_india_site_hazard(
             "India hazard needs seismic zone (II–V) or Z — set cfg['seismic_zone'] / "
             "cfg['india_hazard'] or pass zone=/Z=. USGS path is USA scaffolding only."
         )
+    if soil is None:
+        raise ValueError("India hazard: IS 1893 soil type missing (6.4.2.1) — read seismic_summary.soil or pass --soil-type")
+    if I is None:
+        raise ValueError("India hazard: importance factor I missing (IS 1893 Table 8) — read seismic_calc.I or pass --importance")
+    if T1x is None and T1y is None:
+        raise ValueError("India hazard: building period missing — pass T1 (Ta from seismic_calc.json or the NL modal); "
+                         "no 1.0 s default is assumed")
 
     zone_label = normalize_zone(zone) if zone is not None else "custom_Z"
     Zv = zone_factor(zone, Z)
     soil_n = normalize_soil(soil)
-
-    if T1x is None and T1y is None:
-        T1x = T1y = 1.0
-    elif T1x is None:
-        T1x = T1y
-    elif T1y is None:
-        T1y = T1x
+    I = float(I)
+    T1x = float(T1x if T1x is not None else T1y)
+    T1y = float(T1y if T1y is not None else T1x)
     Tmax, Tmin = max(T1x, T1y), min(T1x, T1y)
     T_lower = T_lower if T_lower is not None else 0.2 * Tmin
-    T_upper = T_upper if T_upper is not None else max(2.0 * Tmax, 4.0)
+    T_upper = T_upper if T_upper is not None else 2.0 * Tmax
+    ps = list(periods) if periods else default_period_grid(max(0.02, 0.5 * T_lower), max(1.5 * T_upper, 4.0))
 
-    if site_specific_spectrum:
-        # 6.4.7 path — caller supplies periods/sa already floored vs 6.4.2
-        ps = list(site_specific_spectrum["periods"])
-        sa = list(site_specific_spectrum["sa_g"])
-        spec_meta = dict(source="site_specific", clause="6.4.7", note=CITE["site_specific"]["note"])
-    else:
-        ps = list(periods) if periods else default_period_grid(max(0.05, 0.5 * T_lower), max(T_upper, 4.0))
-        spec = design_spectrum(ps, zone=zone or "III", I=I, R=R, soil=soil_n, Z=Zv)
-        sa = spec["sa_g"]
-        spec_meta = dict(source="IS_1893_6.4.2", soil=soil_n, Z=Zv, I=I, R=R)
+    targets = {}
+    floor_notes = []
+    for lv in levels:
+        lv = normalize_level(lv)
+        el = elastic_spectrum(ps, zone=zone, I=I, soil=soil_n, level=lv, Z=Zv)
+        sa = el["sa_g"]
+        meta = dict(source="IS_1893_6.4.2_elastic", level=lv, factor=LEVEL_FACTOR[lv], Z=Zv, I=I, soil=soil_n, R=None)
+        ssp = site_specific_spectrum if (site_specific_spectrum and
+                                        normalize_level(site_specific_spectrum.get("level", "DBE")) == lv) else None
+        if ssp:
+            # 6.4.7: site-specific effects shall not be less than the 6.4.2 spectrum -> floor per period
+            import numpy as _np
+            s_site = _np.interp(ps, ssp["periods"], ssp["sa_g"])
+            ratio = [float(a / b) if b > 0 else float("inf") for a, b in zip(s_site, sa)]
+            sa = [float(max(a, b)) for a, b in zip(s_site, sa)]
+            meta.update(source="site_specific_floored_6.4.7", min_site_to_code_ratio=min(ratio),
+                        floored=bool(min(ratio) < 1.0))
+            floor_notes.append("%s: site-specific spectrum floored to 6.4.2 (min ratio %.3f)" % (lv, min(ratio)))
+        targets["is1893_elastic_%s" % lv] = dict(
+            periods=ps, sa=sa, level=lv, clause=LEVEL_LABEL[lv] + "; 7.7.4 compatibility",
+            cite=CITE["elastic_levels"]["cite"], spectrum_meta=meta, role="nl_target",
+        )
+    if R is not None:
+        ah = design_spectrum(ps, zone=zone if zone is not None else "III", I=I, R=float(R), soil=soil_n, Z=Zv)
+        targets["is1893_design_Ah_reference"] = dict(
+            periods=ps, sa=ah["sa_g"], clause="IS 1893 6.4.2 Ah = (Z/2)(Sa/g)/(R/I) — linear design coefficient",
+            cite=CITE["ah_formula"]["cite"], spectrum_meta=dict(source="IS_1893_6.4.2_Ah", R=float(R), I=I),
+            role="reference_only_not_an_NL_target",
+        )
 
     return dict(
-        schema=1,
+        schema=2,
         jurisdiction="india",
         india_authoritative=True,
         authority="IS_1893_Part_1_2016",
+        edition="IS 1893 (Part 1):2016 + Amd 1 (2017) + Amd 2 (2020)",
         generated=time.strftime("%Y-%m-%dT%H:%M:%S"),
         site=dict(
             seismic_zone=zone_label,
             Z=Zv,
             soil_type=soil_n,
-            importance_I=float(I),
-            response_reduction_R=float(R),
-            note="IS 1893 zone/soil — not ASCE site class / Risk Category",
+            importance_I=I,
+            response_reduction_R=(float(R) if R is not None else None),
+            note="IS 1893 zone/soil. R is used only for the Ah reference curve, never for the NL target.",
         ),
         periods_of_building=dict(T1x=T1x, T1y=T1y, T_lower=T_lower, T_upper=T_upper),
         design=dict(
-            Z=Zv,
-            zone=zone_label,
-            soil=soil_n,
-            I=float(I),
-            R=float(R),
-            spectrum_meta=spec_meta,
-            # placeholders so USA report printers do not crash if pointed here
+            Z=Zv, zone=zone_label, soil=soil_n, I=I, R_reference_only=(float(R) if R is not None else None),
+            levels=[normalize_level(x) for x in levels],
+            level_basis=CITE["elastic_levels"]["cite"],
+            spectrum_meta=dict(source="IS_1893_6.4.2_elastic", R=None),
             sds=None, sd1=None, sms=None, sm1=None, ss=None, s1=None, tl=None, sdc=None,
         ),
         deagg={},
-        targets=dict(
-            is1893_design=dict(
-                periods=ps,
-                sa=sa,
-                clause="IS 1893 6.4.2 Ah(T) [g]; time-history compatibility per 7.7.4",
-                cite=CITE["ah_formula"]["cite"],
-            ),
-            # Keep key name absent for mcer — target_from_hazard india path uses is1893
-        ),
+        targets=targets,
+        site_specific_floor=floor_notes or None,
         envelope=None,
-        near_fault=dict(
-            near_fault=False,
-            sources=[],
-            note="USGS near-fault screen not applicable; India path has no analogue in corpus (found:false).",
-            found=False,
-        ),
+        near_fault=dict(near_fault=False, sources=[], found=False,
+                        note="No near-fault screen in IS 1893 (found:false)."),
         sigma_model=None,
-        sources=[
-            CITE["zone_table"]["cite"],
-            CITE["ah_formula"]["cite"],
-            CITE["spectrum"]["cite"],
-            CITE["time_history_compat"]["cite"],
-        ],
+        sources=[CITE["zone_table"]["cite"], CITE["elastic_levels"]["cite"], CITE["spectrum"]["cite"],
+                 CITE["time_history_compat"]["cite"]],
         asce_usgs_scaffolding=dict(
             found=False,
-            note=next(
-                (g["note"] for g in IA.ASCE_GAPS if g["id"] == "asce_mcer_usgs"),
-                "USGS MCE_R / NSHM is not India authority",
-            ),
+            note=next((g["note"] for g in IA.ASCE_GAPS if g["id"] == "asce_mcer_usgs"),
+                      "USGS MCE_R / NSHM is not India authority"),
         ),
         _INDIA_README=[
-            "This site_hazard.json was built from IS 1893 zone/Z/soil — not USGS.",
-            "Scale records for compatibility with targets.is1893_design (Ah in g) per 7.7.4.",
-            "Do NOT treat ASCE Ch.16 suite acceptance numerics as India law.",
+            "Built from IS 1893 zone/Z/soil/I — not USGS.",
+            "NL targets: targets.is1893_elastic_DBE / is1893_elastic_MCE (elastic, no R, owner ruling D6).",
+            "targets.is1893_design_Ah_reference is the R-reduced design coefficient — reference only.",
         ],
     )
 
 
-def target_from_india_hazard(hz: dict, kind: str = "is1893"):
-    """Return (periods, sa, label) for India design spectrum."""
+def target_from_india_hazard(hz: dict, kind: str = "is1893", level: str = "DBE"):
+    """(periods, sa, label) of the ELASTIC India NL target at `level` (DBE | MCE). Refuses any R-reduced target."""
     import numpy as np
     kind = (kind or "is1893").lower()
-    if kind in ("is1893", "design", "code", "ah"):
-        t = (hz.get("targets") or {}).get("is1893_design") or {}
-        if not t.get("periods"):
-            raise ValueError("india site_hazard missing targets.is1893_design")
-        label = "IS 1893 design Ah(T) [%s]" % (t.get("clause") or "6.4.2 / 7.7.4")
-        return np.array(t["periods"]), np.array(t["sa"]), label
-    raise ValueError("india hazard target kind %r — use is1893|design|code|ah" % kind)
+    if kind not in ("is1893", "elastic", "dbe", "mce"):
+        raise ValueError("india hazard target kind %r — use is1893 (elastic DBE/MCE)" % kind)
+    if kind in ("dbe", "mce"):
+        level = kind
+    lv = normalize_level(level)
+    t = (hz.get("targets") or {}).get("is1893_elastic_%s" % lv) or {}
+    if not t.get("periods"):
+        raise ValueError("india site_hazard missing targets.is1893_elastic_%s — rebuild with `nlrha hazard` "
+                         "(old R-reduced is1893_design targets are refused, D6)" % lv)
+    meta = t.get("spectrum_meta") or {}
+    if meta.get("R") not in (None, 1, 1.0):
+        raise ValueError("NL target carries R=%r — the IS NL target must be elastic (D6)" % meta.get("R"))
+    return np.array(t["periods"]), np.array(t["sa"]), LEVEL_LABEL[lv]
+
+
+def elastic_sa_from_hazard(hz_or_site: dict, T: float, level: str = "DBE") -> float:
+    """Sa(T) (g) at `level` from a site_hazard dict (or its `site` block) — used by the NSP (same function)."""
+    site = hz_or_site.get("site", hz_or_site)
+    return elastic_sa(T, Z=site["Z"], I=site["importance_I"], soil=site["soil_type"], level=level)
 
 
 def resolve_hazard_path(cfg_or_job=None, prefer_india: bool | None = None) -> str:
-    """'india' | 'usgs_scaffolding' — default india on this fork when zone/inputs present or prefer_india."""
+    """'india' | 'usgs_scaffolding' | 'india_if_inputs_else_usgs'."""
     if prefer_india is True:
         return "india"
     if prefer_india is False:
@@ -362,6 +492,4 @@ def resolve_hazard_path(cfg_or_job=None, prefer_india: bool | None = None) -> st
         pass
     if str(cfg.get("jurisdiction", "")).lower() in ("india", "is", "is_bis", "bis"):
         return "india"
-    # Fork default: India authority docs say stop assuming USGS — but keep USGS callable
-    # when lat/lon explicitly supplied without India inputs (regression / dual path).
     return "india_if_inputs_else_usgs"

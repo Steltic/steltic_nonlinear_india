@@ -34,7 +34,9 @@ def test_build_india_site_hazard_no_usgs():
     assert hz["jurisdiction"] == "india"
     assert hz["india_authoritative"] is True
     assert hz["site"]["Z"] == 0.24
-    assert "is1893_design" in hz["targets"]
+    assert "is1893_elastic_DBE" in hz["targets"] and "is1893_elastic_MCE" in hz["targets"]
+    assert "is1893_design" not in hz["targets"]            # R-reduced target removed (D6)
+    assert hz["targets"]["is1893_design_Ah_reference"]["role"].startswith("reference")
     assert "mcer_multi_period" not in hz["targets"]
     assert hz["asce_usgs_scaffolding"]["found"] is False
     p, sa, label = IH.target_from_india_hazard(hz)
