@@ -1,3 +1,10 @@
+> **CORRECTION (WP4.7, 2026-09-20): Stage D is NOT complete.** `brace_spec`, the force-controlled column capacity,
+> the pushover gravity and the NSP delta_t still mixed inch/kip with mm/N (NLREPO-09: at L = 5000 mm a brace came out
+> 4448x weak). Until each routine is ported and tested in N-mm, `pushover.package_reader.apply_nl_unit_bridge`
+> **forces Stage B** (N-mm HR package -> kip-in analysis at ingest) for pushover and NLRHA and logs the refusal.
+> India material (IS 2062 fy per section) and IS 800 capacities are computed in N/mm/MPa (pushover/india_materials.py)
+> and converted once at the kip-in model boundary. The DDM (steltic_ddm) runs natively in N-mm.
+
 # NL → N-mm migration plan (India)
 
 **Date:** 2026-09-18 Asia/Bangkok (UTC+7)  
@@ -21,7 +28,7 @@
 1. **Stage A — dual display** ✅ (wave 3)
 2. **Stage B — package boundary** ✅ (wave 3)
 3. **Stage C — fibre/E/Fy SI twin** ✅ (wave 4)
-4. **Stage D — OpenSees N-mm path** ✅ (wave 5 complete for India stack)
+4. **Stage D — OpenSees N-mm path** — DISABLED for pushover/NLRHA (WP4.7) until ported
    - Grid `beam_udl` N/mm twin
    - Report HTML SI labels via `report_force_length_labels`
    - India jurisdiction + units N-mm → `wants_native_nmm_analysis`
@@ -34,4 +41,4 @@
 
 ## Wave 5 outcome
 
-**SI rewrite COMPLETE for India stack** (hard leftovers listed in `KIP_ISLANDS` / `imk_hinge_si_status` / `ch16_live_si_status`).
+**SI rewrite NOT complete (see correction at the top)** (hard leftovers listed in `KIP_ISLANDS` / `imk_hinge_si_status` / `ch16_live_si_status`).

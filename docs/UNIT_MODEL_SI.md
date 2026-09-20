@@ -1,4 +1,4 @@
-# India NL unit model (SI wave 5 — Stages A–D COMPLETE)
+# India NL unit model (Stages A–C; Stage D disabled for pushover/NLRHA — WP4.7)
 
 **Date:** 2026-09-18 Asia/Bangkok (UTC+7)
 
@@ -10,9 +10,9 @@
 | Stage A display | SI or kip labels | `display_scale(cfg)` |
 | Stage B package ingest | Bridge (default) | N-mm HR → kip-in once unless native |
 | Stage C fibre | Twin | `units='N-mm'` → MPa / mm² / IS 808 |
-| Stage D analysis | Opt-in N-mm | portal + **grid beam_udl** + g=9810 + report SI labels |
+| Stage D analysis | Disabled (pushover/NLRHA) | brace_spec / column capacity / gravity / NSP not yet ported to N-mm |
 | Default OpenSees | **kip-in** | USA archetypes + suite default |
-| India job auto | Native N-mm | `jurisdiction=india` + `units=N-mm` (unless `force_kip_in`) |
+| India job auto | **Stage B forced** | pushover/NLRHA always bridge N-mm -> kip-in at ingest (WP4.7); DDM native N-mm |
 | HR / CFS India engines | **N-mm-sec** | Native since wave 1 |
 
 ## Hard leftovers (found:false — not invented)

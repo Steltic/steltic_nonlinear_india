@@ -156,10 +156,11 @@ def test_native_nmm_skips_kip_bridge():
     U.set_analysis_units("kip-in")
     pkg = PR.load(td)
     br = pkg.calc["_nl_unit_bridge"]
-    assert br["to"] == "N-mm" and br["analysis"] == "N-mm" and br["stage"] == "D"
-    # coords stay mm
-    assert abs(pkg.model.nodes[2][0] - 6000.0) < 1e-9
-    assert abs(pkg.model.elements[0]["E"] - 200000.0) < 1e-6
+    # WP4.7: native N-mm (Stage D) is refused for pushover/NLRHA until every routine is ported -> Stage B forced
+    assert br["to"] == "kip-in" and pkg.calc["_nl_analysis_units"] == "kip-in"
+    assert pkg.basis.sources.get("stage_d_refused")
+    assert abs(pkg.model.nodes[2][0] - 6000.0 / 25.4) < 1e-9
+    assert abs(pkg.model.elements[0]["E"] - 200000.0 / 6.894757293168361) < 1e-3
     U.set_analysis_units("kip-in")
 
 
