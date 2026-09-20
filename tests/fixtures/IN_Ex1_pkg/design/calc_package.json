@@ -1,0 +1,2917 @@
+{
+ "building": "IN_Ex1_SCBF_5levels_Delhi",
+ "code": "IS 800:2007 / IS 1893 / IS 875 / IS 816 / IS 4000",
+ "unit_system": "N-mm",
+ "stress_unit": "MPa",
+ "note": "Capacities from prior IS 800 RAG fill (calc_package.json.filled.bak) reapplied to post-Ta/wind demand envelope. Brace connection capacity-design demand per \u00a712.7.3.1. India SI: forces N, moments N\u00b7mm (display kN\u00b7m), stress MPa.",
+ "members": [
+  {
+   "id": "roof-NPB400X180X57.38",
+   "inputs": {
+    "kind": "beam",
+    "role": "roof",
+    "section": "NPB400X180X57.38",
+    "length_mm": 6000.0,
+    "Lb_mm": 3040.0,
+    "A": 7300.0,
+    "Ix": 202000000.0,
+    "Iy": 11700000.0,
+    "J": 361000.0128114335,
+    "Zx": 1140000.5199943997,
+    "Zy": 202000.1,
+    "Sx": 1019999.7,
+    "Sy": 130000.2,
+    "rx": 165.999,
+    "ry": 40.0,
+    "Aw": 2778.99,
+    "ho": 385.0,
+    "rts": 46.947,
+    "P_comp_N": 0.0,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 99750000.0,
+    "My_Nmm": 0.0,
+    "V_N": 665.62,
+    "P_comp_kip": 0.0,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 99750000.0,
+    "My_kipin": 0.0,
+    "V_kip": 665.62,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "flexure_laterally_supported IS800:2007 \u00a78.2.1 + shear \u00a78.4.1",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Md_Nmm": 259091027.27145448,
+    "Vd_N": 364647.95608761837,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "note": "Laterally supported Md; Pd \u03c7 path incomplete"
+   },
+   "DC": 0.385
+  },
+  {
+   "id": "floor-NPB450X190X67.16",
+   "inputs": {
+    "kind": "beam",
+    "role": "floor",
+    "section": "NPB450X190X67.16",
+    "length_mm": 6000.0,
+    "Lb_mm": 3184.4,
+    "A": 8550.0,
+    "Ix": 297000000.0,
+    "Iy": 15000000.0,
+    "J": 470999.9890432991,
+    "Zx": 1490000.3490256,
+    "Zy": 244999.7,
+    "Sx": 1330000.3,
+    "Sy": 158000.8,
+    "rx": 185.999,
+    "ry": 41.9,
+    "Aw": 3397.17,
+    "ho": 433.9,
+    "rts": 49.431,
+    "P_comp_N": 0.0,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 144375000.0,
+    "My_Nmm": 0.0,
+    "V_N": 1031.25,
+    "P_comp_kip": 0.0,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 144375000.0,
+    "My_kipin": 0.0,
+    "V_kip": 1031.25,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "flexure_laterally_supported IS800:2007 \u00a78.2.1 + shear \u00a78.4.1",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Md_Nmm": 338636442.9603636,
+    "Vd_N": 445762.3848400075,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "note": "Laterally supported Md; Pd \u03c7 path incomplete"
+   },
+   "DC": 0.426
+  },
+  {
+   "id": "brace-CHS168.3X8",
+   "inputs": {
+    "kind": "brace",
+    "role": "brace",
+    "section": "CHS168.3X8",
+    "length_mm": 6997.1,
+    "A": 4029.0,
+    "r": 56.743599999999994,
+    "P_comp_N": 115902.92,
+    "P_tens_N": 57542.93,
+    "Mz_Nmm": 0.0,
+    "My_Nmm": 0.0,
+    "V_N": 0.0,
+    "P_comp_kip": 115902.92,
+    "P_tens_kip": 57542.93,
+    "Mz_kipin": 0.0,
+    "My_kipin": 0.0,
+    "V_kip": 0.0,
+    "governing_combo": "1.2DL+1.2LL+1.2EQ_Y"
+   },
+   "limit_state": "CHS compression buckling IS800:2007 \u00a77.1.2 + tension \u00a76.2",
+   "cited": "IS 800:2007 \u00a77.1.2.1 / Table 7 curve a / \u00a76.2; \u03b3m0=1.10 Table 5",
+   "capacity": {
+    "Pd_N": 497234.6532986807,
+    "Td_N": 915681.8181818181,
+    "lambda": 1.1795741725532602,
+    "chi": 0.5430212148210959,
+    "KL_mm": 5947.535,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "Md_Nmm": 46758997.39090908,
+    "Vd_N": 176669.24892392583,
+    "phi": 1.2985529023954467,
+    "KL_over_r": 104.81419931058305,
+    "buckling_class": "a",
+    "alpha": 0.21,
+    "fcd_MPa": 123.41391245933997,
+    "cite_compression": "IS 800:2007 \u00a77.1.2 / \u00a77.1.2.1; Table 7 \u03b1; Pd=Ae\u00b7fcd; fcd=\u03c7 fy/\u03b3m0",
+    "note": "Laterally supported Md; column/brace Pd with \u03c7 buckling \u00a77.1.2"
+   },
+   "DC": 0.233
+  },
+  {
+   "id": "lateral_col-HB300",
+   "inputs": {
+    "kind": "col",
+    "role": "lateral_col",
+    "section": "HB300",
+    "length_mm": 3600.0,
+    "Lb_mm": 3600.0,
+    "A": 7480.0,
+    "Ix": 125000000.0,
+    "Iy": 21900000.0,
+    "J": 323999.95269557275,
+    "Zx": 921000.5192855999,
+    "Zy": 290999.8,
+    "Sx": 836000.8,
+    "Sy": 175000.7,
+    "rx": 128.999,
+    "ry": 54.099,
+    "Aw": 2279.98,
+    "ho": 289.4,
+    "rts": 65.207,
+    "P_comp_N": 92873.93,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 22715067.6,
+    "My_Nmm": 8056779.5,
+    "V_N": 11728.06,
+    "P_comp_kip": 92873.93,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 22715067.6,
+    "My_kipin": 8056779.5,
+    "V_kip": 11728.06,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "compression+flexure interaction (IS 800 \u00a79 / \u00a78.2.1; Pd with \u03c7 \u00a77.1.2)",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1 / \u00a77.1.2; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Pd_N": 1180199.1441389665,
+    "Md_z_Nmm": 209318299.83763632,
+    "Md_y_Nmm": 66136318.18181817,
+    "lambda": 0.748884262931086,
+    "chi": 0.6942347906699803,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "Md_Nmm": 209318299.83763632,
+    "Vd_N": 299169.21580060275,
+    "phi": 0.914890464051034,
+    "KL_over_r": 66.54410228863652,
+    "buckling_class": "c",
+    "alpha": 0.49,
+    "fcd_MPa": 157.78063424317733,
+    "cite_compression": "IS 800:2007 \u00a77.1.2 / \u00a77.1.2.1; Table 7 \u03b1; Pd=Ae\u00b7fcd; fcd=\u03c7 fy/\u03b3m0",
+    "KL_mm": 3600.0,
+    "note": "Laterally supported Md; column/brace Pd with \u03c7 buckling \u00a77.1.2"
+   },
+   "DC": 0.187
+  },
+  {
+   "id": "gravity_col-MB300",
+   "inputs": {
+    "kind": "col",
+    "role": "gravity_col",
+    "section": "MB300",
+    "length_mm": 3600.0,
+    "Lb_mm": 3600.0,
+    "A": 5860.0,
+    "Ix": 89900000.0,
+    "Iy": 4860000.0,
+    "J": 347000.0688113775,
+    "Zx": 681000.4960607999,
+    "Zy": 117000.4,
+    "Sx": 598999.6,
+    "Sy": 69399.2,
+    "rx": 122.999,
+    "ry": 28.699,
+    "Aw": 2310.0,
+    "ho": 286.9,
+    "rts": 35.928,
+    "P_comp_N": 205200.0,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 525572.8,
+    "My_Nmm": 32807.8,
+    "V_N": 146.05,
+    "P_comp_kip": 205200.0,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 525572.8,
+    "My_kipin": 32807.8,
+    "V_kip": 146.05,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "compression+flexure interaction (IS 800 \u00a79 / \u00a78.2.1; Pd with \u03c7 \u00a77.1.2)",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1 / \u00a77.1.2; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Pd_N": 501838.19324853626,
+    "Md_z_Nmm": 154772840.01381814,
+    "Md_y_Nmm": 26590999.999999996,
+    "lambda": 1.4116723529665638,
+    "chi": 0.37680683452108527,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "Md_Nmm": 154772840.01381814,
+    "Vd_N": 303108.6787538943,
+    "phi": 1.7023937160693934,
+    "KL_over_r": 125.43790022530042,
+    "buckling_class": "b",
+    "alpha": 0.34,
+    "fcd_MPa": 85.63791693661028,
+    "cite_compression": "IS 800:2007 \u00a77.1.2 / \u00a77.1.2.1; Table 7 \u03b1; Pd=Ae\u00b7fcd; fcd=\u03c7 fy/\u03b3m0",
+    "KL_mm": 3600.0,
+    "note": "Laterally supported Md; column/brace Pd with \u03c7 buckling \u00a77.1.2"
+   },
+   "DC": 0.412
+  },
+  {
+   "id": "lateral_col-WPB300X300X100.85",
+   "inputs": {
+    "kind": "col",
+    "role": "lateral_col",
+    "section": "WPB300X300X100.85",
+    "length_mm": 3600.0,
+    "Lb_mm": 3600.0,
+    "A": 12800.0,
+    "Ix": 210000000.0,
+    "Iy": 72100000.0,
+    "J": 1240000.034782067,
+    "Zx": 1579999.7432199998,
+    "Zy": 732999.9,
+    "Sx": 1430000.8,
+    "Sy": 480000.0,
+    "rx": 128.001,
+    "ry": 74.9,
+    "Aw": 2939.99,
+    "ho": 278.0,
+    "rts": 83.67,
+    "P_comp_N": 685619.33,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 24539304.0,
+    "My_Nmm": 16869551.8,
+    "V_N": 13372.71,
+    "P_comp_kip": 685619.33,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 24539304.0,
+    "My_kipin": 16869551.8,
+    "V_kip": 13372.71,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "compression+flexure interaction (IS 800 \u00a79 / \u00a78.2.1; Pd with \u03c7 \u00a77.1.2)",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1 / \u00a77.1.2; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Pd_N": 2384963.2099250383,
+    "Md_z_Nmm": 359090850.73181814,
+    "Md_y_Nmm": 166590886.36363634,
+    "lambda": 0.5409144708413322,
+    "chi": 0.8198311034117319,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "Md_Nmm": 359090850.7318181,
+    "Vd_N": 385774.07607241475,
+    "phi": 0.7298182777389055,
+    "KL_over_r": 48.064393470078315,
+    "buckling_class": "c",
+    "alpha": 0.49,
+    "fcd_MPa": 186.3252507753936,
+    "cite_compression": "IS 800:2007 \u00a77.1.2 / \u00a77.1.2.1; Table 7 \u03b1; Pd=Ae\u00b7fcd; fcd=\u03c7 fy/\u03b3m0",
+    "KL_mm": 3600.0,
+    "note": "Laterally supported Md; column/brace Pd with \u03c7 buckling \u00a77.1.2"
+   },
+   "DC": 0.356
+  },
+  {
+   "id": "gravity_col-WPB300X300X69.8",
+   "inputs": {
+    "kind": "col",
+    "role": "gravity_col",
+    "section": "WPB300X300X69.8",
+    "length_mm": 3600.0,
+    "Lb_mm": 3600.0,
+    "A": 8890.0,
+    "Ix": 138000000.0,
+    "Iy": 47300000.0,
+    "J": 478000.1691590399,
+    "Zx": 1060000.5122527997,
+    "Zy": 481999.3,
+    "Sx": 975000.8,
+    "Sy": 315000.3,
+    "rx": 124.0,
+    "ry": 72.901,
+    "Aw": 2122.53,
+    "ho": 272.5,
+    "rts": 81.275,
+    "P_comp_N": 799200.0,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 525805.0,
+    "My_Nmm": 123103.8,
+    "V_N": 235.22,
+    "P_comp_kip": 799200.0,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 525805.0,
+    "My_kipin": 123103.8,
+    "V_kip": 235.22,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "compression+flexure interaction (IS 800 \u00a79 / \u00a78.2.1; Pd with \u03c7 \u00a77.1.2)",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1 / \u00a77.1.2; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Pd_N": 1639183.0325573543,
+    "Md_z_Nmm": 240909207.33018172,
+    "Md_y_Nmm": 109545295.45454544,
+    "lambda": 0.555746695800467,
+    "chi": 0.8112941893422226,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "Md_Nmm": 240909207.33018175,
+    "Vd_N": 278509.2489299848,
+    "phi": 0.7415851354176828,
+    "KL_over_r": 49.38235025419565,
+    "buckling_class": "c",
+    "alpha": 0.49,
+    "fcd_MPa": 184.38504303232332,
+    "cite_compression": "IS 800:2007 \u00a77.1.2 / \u00a77.1.2.1; Table 7 \u03b1; Pd=Ae\u00b7fcd; fcd=\u03c7 fy/\u03b3m0",
+    "KL_mm": 3600.0,
+    "note": "Laterally supported Md; column/brace Pd with \u03c7 buckling \u00a77.1.2"
+   },
+   "DC": 0.49
+  },
+  {
+   "id": "gravity_col-WPB300X300X88.34",
+   "inputs": {
+    "kind": "col",
+    "role": "gravity_col",
+    "section": "WPB300X300X88.34",
+    "length_mm": 3600.0,
+    "Lb_mm": 3600.0,
+    "A": 11200.0,
+    "Ix": 182000000.0,
+    "Iy": 63000000.0,
+    "J": 877999.8178549166,
+    "Zx": 1380000.5432191999,
+    "Zy": 640999.7,
+    "Sx": 1250000.3,
+    "Sy": 420000.5,
+    "rx": 127.0,
+    "ry": 74.8,
+    "Aw": 2465.03,
+    "ho": 276.0,
+    "rts": 83.228,
+    "P_comp_N": 1393200.0,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 6687517.1,
+    "My_Nmm": 1876952.9,
+    "V_N": 2251.37,
+    "P_comp_kip": 1393200.0,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 6687517.1,
+    "My_kipin": 1876952.9,
+    "V_kip": 2251.37,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "compression+flexure interaction (IS 800 \u00a79 / \u00a78.2.1; Pd with \u03c7 \u00a77.1.2)",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1 / \u00a77.1.2; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Pd_N": 2085797.6977657632,
+    "Md_z_Nmm": 313636487.09527266,
+    "Md_y_Nmm": 145681749.99999997,
+    "lambda": 0.5416308165360182,
+    "chi": 0.8194205241222642,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "Md_Nmm": 313636487.09527266,
+    "Vd_N": 323450.9056028074,
+    "phi": 0.7303815207620614,
+    "KL_over_r": 48.128046271373194,
+    "buckling_class": "c",
+    "alpha": 0.49,
+    "fcd_MPa": 186.23193730051457,
+    "cite_compression": "IS 800:2007 \u00a77.1.2 / \u00a77.1.2.1; Table 7 \u03b1; Pd=Ae\u00b7fcd; fcd=\u03c7 fy/\u03b3m0",
+    "KL_mm": 3600.0,
+    "note": "Laterally supported Md; column/brace Pd with \u03c7 buckling \u00a77.1.2"
+   },
+   "DC": 0.689
+  },
+  {
+   "id": "lateral_col-WPB300X300X88.34",
+   "inputs": {
+    "kind": "col",
+    "role": "lateral_col",
+    "section": "WPB300X300X88.34",
+    "length_mm": 3600.0,
+    "Lb_mm": 3600.0,
+    "A": 11200.0,
+    "Ix": 182000000.0,
+    "Iy": 63000000.0,
+    "J": 877999.8178549166,
+    "Zx": 1380000.5432191999,
+    "Zy": 640999.7,
+    "Sx": 1250000.3,
+    "Sy": 420000.5,
+    "rx": 127.0,
+    "ry": 74.8,
+    "Aw": 2465.03,
+    "ho": 276.0,
+    "rts": 83.228,
+    "P_comp_N": 384489.04,
+    "P_tens_N": 0.0,
+    "Mz_Nmm": 23058821.5,
+    "My_Nmm": 17230856.1,
+    "V_N": 12624.52,
+    "P_comp_kip": 384489.04,
+    "P_tens_kip": 0.0,
+    "Mz_kipin": 23058821.5,
+    "My_kipin": 17230856.1,
+    "V_kip": 12624.52,
+    "governing_combo": "1.5DL+1.5LL"
+   },
+   "limit_state": "compression+flexure interaction (IS 800 \u00a79 / \u00a78.2.1; Pd with \u03c7 \u00a77.1.2)",
+   "cited": "IS 800:2007 \u00a78.2.1 / \u00a78.4.1 / \u00a77.1.2; \u03b3m0=1.10 Table 5; fy=250 MPa IS 2062 E250",
+   "capacity": {
+    "Pd_N": 2085797.6977657632,
+    "Md_z_Nmm": 313636487.09527266,
+    "Md_y_Nmm": 145681749.99999997,
+    "lambda": 0.5416308165360182,
+    "chi": 0.8194205241222642,
+    "fy_MPa": 250.0,
+    "gamma_m0": 1.1,
+    "Md_Nmm": 313636487.09527266,
+    "Vd_N": 323450.9056028074,
+    "phi": 0.7303815207620614,
+    "KL_over_r": 48.128046271373194,
+    "buckling_class": "c",
+    "alpha": 0.49,
+    "fcd_MPa": 186.23193730051457,
+    "cite_compression": "IS 800:2007 \u00a77.1.2 / \u00a77.1.2.1; Table 7 \u03b1; Pd=Ae\u00b7fcd; fcd=\u03c7 fy/\u03b3m0",
+    "KL_mm": 3600.0,
+    "note": "Laterally supported Md; column/brace Pd with \u03c7 buckling \u00a77.1.2"
+   },
+   "DC": 0.258
+  }
+ ],
+ "connections": [
+  {
+   "id": "conn-roof-NPB400X180X57.38",
+   "type": "beam-to-column (shear; + moment if MF)",
+   "section": "NPB400X180X57.38",
+   "demand": {
+    "V_N": 665.6,
+    "M_kNm": 99.75,
+    "P_N": 0.0
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a710; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.002183727034120735,
+   "note": "wave2: beam-to-column bolt/weld D/C from IS 4000 Table 2 + IS 800 \u00a710.5.7.1.1",
+   "limit_state": "beam-to-column shear connection IS 800 \u00a710 \u2014 bolt/weld RAG D/C",
+   "section12_worksheet": {
+    "status": "filled",
+    "slots": [
+     {
+      "component": "bolts",
+      "found": true,
+      "capacity": {
+       "Rn_N": 304799.99999999994
+      },
+      "DC": 0.002183727034120735,
+      "demand_N": 665.6,
+      "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+      "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity"
+     },
+     {
+      "component": "welds",
+      "found": true,
+      "capacity": {
+       "Rn_N": 321373.054253153
+      },
+      "DC": 0.0020711132784508174,
+      "demand_N": 665.6,
+      "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+      "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity"
+     }
+    ],
+    "fill_helper": "india_is800.apply_rag_capacities_to_connection"
+   },
+   "component_checks": {
+    "bolts": {
+     "found": true,
+     "DC": 0.002183727034120735,
+     "demand_N": 665.6,
+     "capacity": {
+      "Rn_N": 304799.99999999994
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity",
+     "required_inputs": null,
+     "missing": null
+    },
+    "welds": {
+     "found": true,
+     "DC": 0.0020711132784508174,
+     "demand_N": 665.6,
+     "capacity": {
+      "Rn_N": 321373.054253153
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity",
+     "required_inputs": null,
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-floor-NPB450X190X67.16",
+   "type": "beam-to-column (shear; + moment if MF)",
+   "section": "NPB450X190X67.16",
+   "demand": {
+    "V_N": 1031.2,
+    "M_kNm": 144.375,
+    "P_N": 0.0
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a710; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.0033832020997375334,
+   "note": "wave2: beam-to-column bolt/weld D/C from IS 4000 Table 2 + IS 800 \u00a710.5.7.1.1",
+   "limit_state": "beam-to-column shear connection IS 800 \u00a710 \u2014 bolt/weld RAG D/C",
+   "section12_worksheet": {
+    "status": "filled",
+    "slots": [
+     {
+      "component": "bolts",
+      "found": true,
+      "capacity": {
+       "Rn_N": 304799.99999999994
+      },
+      "DC": 0.0033832020997375334,
+      "demand_N": 1031.2,
+      "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+      "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity"
+     },
+     {
+      "component": "welds",
+      "found": true,
+      "capacity": {
+       "Rn_N": 321373.054253153
+      },
+      "DC": 0.003208731990292192,
+      "demand_N": 1031.2,
+      "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+      "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity"
+     }
+    ],
+    "fill_helper": "india_is800.apply_rag_capacities_to_connection"
+   },
+   "component_checks": {
+    "bolts": {
+     "found": true,
+     "DC": 0.0033832020997375334,
+     "demand_N": 1031.2,
+     "capacity": {
+      "Rn_N": 304799.99999999994
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity",
+     "required_inputs": null,
+     "missing": null
+    },
+    "welds": {
+     "found": true,
+     "DC": 0.003208731990292192,
+     "demand_N": 1031.2,
+     "capacity": {
+      "Rn_N": 321373.054253153
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity",
+     "required_inputs": null,
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-brace-CHS168.3X8",
+   "type": "brace-to-gusset",
+   "section": "CHS168.3X8",
+   "demand": {
+    "V_N": 0.0,
+    "M_kNm": 0.0,
+    "P_N": 115902.9,
+    "axial_N": 115902.9,
+    "Pu_capacity_design_N": 1208700.0,
+    "basis": "IS 800 \u00a712.7.3.1/\u00a712.8 \u2014 min(1.2 fy Ag, 12.2.3 combo, max transferable); 1.2 fy Ag governs vs analysis force"
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a712.7.3.1 / \u00a712.8 / \u00a76.4.1; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1; IS 2062 Table 3 fu=410; Whitmore 30\u00b0 disclosed",
+   "capacity": {
+    "status": "demand_set",
+    "T_1.2fyAg_N": 1208700.0,
+    "Ag_mm2": 4029.0,
+    "fy_MPa": 250.0,
+    "cite": "IS 800:2007 \u00a712.7.3.1(a) / \u00a712.8 brace connections"
+   },
+   "DC": 0.9698339503591685,
+   "note": "Wave3: CD demand 1.2 fy Ag = 1208.7 kN; bolt/weld D/C IS 4000 T2 + IS 800 \u00a710.5.7.1.1; gusset Whitmore + \u00a76.4.1 block shear from disclosed geometry (LIVE RAG clauses)",
+   "capacity_design": true,
+   "limit_state": "brace connection IS 800 \u00a712.7.3.1 / \u00a712.8 \u2014 bolt/weld/Whitmore/block-shear RAG D/C",
+   "section12_worksheet": {
+    "status": "rag_filled",
+    "cite": "IS 800:2007 \u00a712 (seismic connections) / \u00a710; IS 816 welds; IS 4000 HSFG",
+    "policy": "Fill from LIVE RAG only. Do not invent bolt grade/diameter, weld size, or gusset thickness when retrieval misses \u2014 leave found:false. When fy/Ag (or demand_N) and a RAG capacity_N are both available, use india_is800.fill_connection_component_dc to write D/C \u2014 still no invented capacities.",
+    "fill_helper": "india_is800.fill_connection_component_dc",
+    "slots": [
+     {
+      "component": "gusset",
+      "limit_state": null,
+      "cited": "min(Whitmore, \u00a76.4.1 block shear) \u2014 IS 800 LSD",
+      "capacity": {
+       "Rn_N": 1246295.8216222166
+      },
+      "size": null,
+      "DC": 0.9698339503591685,
+      "found": true,
+      "required_inputs": [
+       "demand_N",
+       "capacity_N (from RAG: Whitmore/block shear/yield)",
+       "cited"
+      ],
+      "note": "Gusset plate: thickness/Fy/Whitmore/block shear \u2014 RAG IS 800; found:false until sized.",
+      "demand_N": 1208700.0
+     },
+     {
+      "component": "bolts",
+      "limit_state": null,
+      "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+      "capacity": {
+       "Rn_N": 1392000.0
+      },
+      "size": null,
+      "DC": 0.8683189655172414,
+      "found": true,
+      "required_inputs": [
+       "demand_N",
+       "capacity_N (from RAG: n\u00d7bolt shear/bearing/slip)",
+       "cited"
+      ],
+      "note": "Bolt group: n, diameter, grade, shear/bearing/slip \u2014 RAG IS 800 \u00a710 / IS 4000; found:false until sized.",
+      "demand_N": 1208700.0
+     },
+     {
+      "component": "welds",
+      "limit_state": null,
+      "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+      "capacity": {
+       "Rn_N": 1392616.5684303297
+      },
+      "size": null,
+      "DC": 0.867934525123718,
+      "found": true,
+      "required_inputs": [
+       "demand_N",
+       "capacity_N (from RAG: throat\u00d7fu\u00d7length)",
+       "cited"
+      ],
+      "note": "Weld(s): size/length/electrode \u2014 RAG IS 816 / IS 800; found:false until sized.",
+      "demand_N": 1208700.0
+     },
+     {
+      "component": "gusset_whitmore",
+      "found": true,
+      "capacity": {
+       "Rn_N": 1246295.8216222166
+      },
+      "DC": 0.9698339503591685,
+      "demand_N": 1208700.0,
+      "cited": "IS 800:2007 Whitmore yield (LSD) + disclosed 30\u00b0 construction; \u03b3_m0 Table 5",
+      "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity"
+     },
+     {
+      "component": "gusset_block_shear",
+      "found": true,
+      "capacity": {
+       "Rn_N": 2205964.3718933207
+      },
+      "DC": 0.5479236271448051,
+      "demand_N": 1208700.0,
+      "cited": "IS 800:2007 \u00a76.4.1 block shear (LIVE RAG clause; disclosed Avg/Atn)",
+      "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity"
+     }
+    ],
+    "cd_demand_N": 1208700.0,
+    "disclosed_geometry": {
+     "bolts": "12\u00d7M30-8.8 thread plane",
+     "welds": "8 mm fillet \u00d7 650 mm \u00d7 2 sides",
+     "gusset": "t=12 mm; Whitmore L_wt=250 / w=168.3; block Avg=14400 Atn=1072",
+     "fu_MPa": 410.0,
+     "fu_cite": "IS 2062:2025 Table 3 E250 Rm min=410 MPa (LIVE RAG)"
+    },
+    "wave3_gusset": {
+     "whitmore": {
+      "found": true,
+      "capacity_N": 1246295.8216222166,
+      "whitmore_width_mm": 456.97513459481286,
+      "t_gusset_mm": 12.0,
+      "cite": "IS 800:2007 Whitmore yield (LSD) + disclosed 30\u00b0 construction; \u03b3_m0 Table 5",
+      "path": "whitmore_yield"
+     },
+     "block_shear": {
+      "found": true,
+      "capacity_N": 2205964.3718933207,
+      "Avg_mm2": 14400.0,
+      "Atn_mm2": 1072.0,
+      "cite": "IS 800:2007 \u00a76.4.1 block shear (LIVE RAG clause; disclosed Avg/Atn)",
+      "path": "section_6_4_1"
+     }
+    }
+   },
+   "component_checks": {
+    "gusset": {
+     "found": true,
+     "DC": 0.9698339503591685,
+     "demand_N": 1208700.0,
+     "capacity": {
+      "Rn_N": 1246295.8216222166
+     },
+     "cited": "min(Whitmore, \u00a76.4.1 block shear) \u2014 IS 800 LSD",
+     "note": "Gusset plate: thickness/Fy/Whitmore/block shear \u2014 RAG IS 800; found:false until sized.",
+     "required_inputs": [
+      "demand_N",
+      "capacity_N (from RAG: Whitmore/block shear/yield)",
+      "cited"
+     ],
+     "missing": null
+    },
+    "bolts": {
+     "found": true,
+     "DC": 0.8683189655172414,
+     "demand_N": 1208700.0,
+     "capacity": {
+      "Rn_N": 1392000.0
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "Bolt group: n, diameter, grade, shear/bearing/slip \u2014 RAG IS 800 \u00a710 / IS 4000; found:false until sized.",
+     "required_inputs": [
+      "demand_N",
+      "capacity_N (from RAG: n\u00d7bolt shear/bearing/slip)",
+      "cited"
+     ],
+     "missing": null
+    },
+    "welds": {
+     "found": true,
+     "DC": 0.867934525123718,
+     "demand_N": 1208700.0,
+     "capacity": {
+      "Rn_N": 1392616.5684303297
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "Weld(s): size/length/electrode \u2014 RAG IS 816 / IS 800; found:false until sized.",
+     "required_inputs": [
+      "demand_N",
+      "capacity_N (from RAG: throat\u00d7fu\u00d7length)",
+      "cited"
+     ],
+     "missing": null
+    },
+    "gusset_whitmore": {
+     "found": true,
+     "DC": 0.9698339503591685,
+     "demand_N": 1208700.0,
+     "capacity": {
+      "Rn_N": 1246295.8216222166
+     },
+     "cited": "IS 800:2007 Whitmore yield (LSD) + disclosed 30\u00b0 construction; \u03b3_m0 Table 5",
+     "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity",
+     "required_inputs": null,
+     "missing": null
+    },
+    "gusset_block_shear": {
+     "found": true,
+     "DC": 0.5479236271448051,
+     "demand_N": 1208700.0,
+     "capacity": {
+      "Rn_N": 2205964.3718933207
+     },
+     "cited": "IS 800:2007 \u00a76.4.1 block shear (LIVE RAG clause; disclosed Avg/Atn)",
+     "note": "D/C from provided demand and RAG capacity \u2014 no invented capacity",
+     "required_inputs": null,
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-lateral_col-HB300",
+   "type": "column splice / base (scoped)",
+   "section": "HB300",
+   "demand": {
+    "V_N": 11728.1,
+    "M_kNm": 22.715,
+    "P_N": 92873.9
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a77.4.3.1 / Ch.11; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1; IS 2062 Table 3 fu=410",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.6925719847172679,
+   "note": "wave3: base-plate bearing/anchor/weld + bending D/C; plate t=14 mm (RAG \u00a77.4.3 ts=7.5 + cantilever t_req=9.7; m=180 mm disclosed)",
+   "limit_state": "column base plate / anchor / bending \u2014 IS 800 \u00a77.4.3 + Ch.11 + IS 4000 (RAG)",
+   "base_plate_worksheet": {
+    "status": "worksheets",
+    "found": true,
+    "cite": "IS 800:2007 Ch.11 / \u00a710; IS 816 welds",
+    "required_inputs": [],
+    "missing_top": [],
+    "geometry": {
+     "plate_B_mm": 650.0,
+     "plate_L_mm": 650.0,
+     "plate_t_mm": 14.0,
+     "fy_col_MPa": 250.0,
+     "fck_MPa": 30.0
+    },
+    "slots": [
+     {
+      "component": "base_plate_bearing",
+      "found": true,
+      "DC": 0.01628295419680035,
+      "capacity": {
+       "Rn_N": 5703750.0
+      },
+      "required_inputs": [
+       "P_N",
+       "plate plan BxL",
+       "fck_MPa",
+       "bearing capacity from RAG"
+      ],
+      "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+      "demand_N": 92873.9,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "base_plate_bending",
+      "found": true,
+      "DC": 0.6925719847172679,
+      "capacity": {
+       "t_required_mm": 9.69600778604175,
+       "t_provided_mm": 14.0,
+       "path": "cantilever_thickness_IS800_LSD",
+       "Rn_N": 134099.99545089074
+      },
+      "required_inputs": [
+       "P_N",
+       "M_Nmm",
+       "plate_t_mm",
+       "fy_plate",
+       "cantilever m from RAG"
+      ],
+      "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+      "demand_N": 92873.9,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+      "t_required_mm": 9.69600778604175,
+      "t_provided_mm": 14.0,
+      "m_mm": 180.0,
+      "w_MPa": 0.21981988165680472
+     },
+     {
+      "component": "anchor_bolts",
+      "found": true,
+      "DC": 0.045795808678500985,
+      "capacity": {
+       "Rn_N": 2028000.0
+      },
+      "required_inputs": [
+       "shear/tension demand",
+       "n, dia, grade from RAG",
+       "embedment"
+      ],
+      "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+      "demand_N": 92873.9,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "column_to_plate_welds",
+      "found": false,
+      "DC": null,
+      "capacity": {
+       "Rn_N": 1499740.9198480472
+      },
+      "required_inputs": [
+       "demand_N_or_Nmm",
+       "throat_mm / size from RAG",
+       "electrode/fu from IS 816 RAG",
+       "length_mm"
+      ],
+      "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+      "demand_N": 92873.9
+     }
+    ],
+    "policy": "Fill component capacities from LIVE RAG only. Demand may be prefilled from analysis; never invent plate t, bearing, anchors, or weld size.",
+    "note": "One or more base-plate components filled from provided RAG capacities.",
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 7.491879539377577,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 0.21981988165680472,
+     "t_provided_mm": 14.0,
+     "cantilever_t_req_mm": 9.69600778604175,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "component_checks": {
+    "base_plate_bearing": {
+     "found": true,
+     "DC": 0.01628295419680035,
+     "demand_N": 92873.9,
+     "capacity": {
+      "Rn_N": 5703750.0
+     },
+     "cited": "IS 800 Ch.11 / IS 456 0.45 fck A (fck=30 M30 disclosed; plate 650\u00d7650)",
+     "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "P_N",
+      "plate plan BxL",
+      "fck_MPa",
+      "bearing capacity from RAG"
+     ],
+     "missing": null
+    },
+    "base_plate_bending": {
+     "found": true,
+     "DC": 0.6925719847172679,
+     "demand_N": 92873.9,
+     "capacity": {
+      "t_required_mm": 9.69600778604175,
+      "t_provided_mm": 14.0,
+      "path": "cantilever_thickness_IS800_LSD",
+      "Rn_N": 134099.99545089074
+     },
+     "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+     "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+     "required_inputs": [
+      "P_N",
+      "M_Nmm",
+      "plate_t_mm",
+      "fy_plate",
+      "cantilever m from RAG"
+     ],
+     "missing": null
+    },
+    "anchor_bolts": {
+     "found": true,
+     "DC": 0.045795808678500985,
+     "demand_N": 92873.9,
+     "capacity": {
+      "Rn_N": 2028000.0
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "shear/tension demand",
+      "n, dia, grade from RAG",
+      "embedment"
+     ],
+     "missing": null
+    },
+    "column_to_plate_welds": {
+     "found": true,
+     "DC": 0.061926629307020524,
+     "demand_N": 92873.9,
+     "capacity": {
+      "Rn_N": 1499740.9198480472
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+     "required_inputs": [
+      "demand_N_or_Nmm",
+      "throat_mm / size from RAG",
+      "electrode/fu from IS 816 RAG",
+      "length_mm"
+     ],
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-gravity_col-MB300",
+   "type": "column splice / base (scoped)",
+   "section": "MB300",
+   "demand": {
+    "V_N": 146.1,
+    "M_kNm": 0.526,
+    "P_N": 205200.0
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a77.4.3.1 / Ch.11; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1; IS 2062 Table 3 fu=410",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.9007718583683676,
+   "note": "wave3: base-plate bearing/anchor/weld + bending D/C; plate t=16 mm (RAG \u00a77.4.3 ts=11.1 + cantilever t_req=14.4; m=180 mm disclosed)",
+   "limit_state": "column base plate / anchor / bending \u2014 IS 800 \u00a77.4.3 + Ch.11 + IS 4000 (RAG)",
+   "base_plate_worksheet": {
+    "status": "worksheets",
+    "found": true,
+    "cite": "IS 800:2007 Ch.11 / \u00a710; IS 816 welds",
+    "required_inputs": [],
+    "missing_top": [],
+    "geometry": {
+     "plate_B_mm": 650.0,
+     "plate_L_mm": 650.0,
+     "plate_t_mm": 16.0,
+     "fy_col_MPa": 250.0,
+     "fck_MPa": 30.0
+    },
+    "slots": [
+     {
+      "component": "base_plate_bearing",
+      "found": true,
+      "DC": 0.035976331360946745,
+      "capacity": {
+       "Rn_N": 5703750.0
+      },
+      "required_inputs": [
+       "P_N",
+       "plate plan BxL",
+       "fck_MPa",
+       "bearing capacity from RAG"
+      ],
+      "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+      "demand_N": 205200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "base_plate_bending",
+      "found": true,
+      "DC": 0.9007718583683676,
+      "capacity": {
+       "t_required_mm": 14.412349733893882,
+       "t_provided_mm": 16.0,
+       "path": "cantilever_thickness_IS800_LSD",
+       "Rn_N": 227804.6300998939
+      },
+      "required_inputs": [
+       "P_N",
+       "M_Nmm",
+       "plate_t_mm",
+       "fy_plate",
+       "cantilever m from RAG"
+      ],
+      "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+      "demand_N": 205200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+      "t_required_mm": 14.412349733893882,
+      "t_provided_mm": 16.0,
+      "m_mm": 180.0,
+      "w_MPa": 0.4856804733727811
+     },
+     {
+      "component": "anchor_bolts",
+      "found": true,
+      "DC": 0.10118343195266272,
+      "capacity": {
+       "Rn_N": 2028000.0
+      },
+      "required_inputs": [
+       "shear/tension demand",
+       "n, dia, grade from RAG",
+       "embedment"
+      ],
+      "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+      "demand_N": 205200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "column_to_plate_welds",
+      "found": false,
+      "DC": null,
+      "capacity": {
+       "Rn_N": 1499740.9198480472
+      },
+      "required_inputs": [
+       "demand_N_or_Nmm",
+       "throat_mm / size from RAG",
+       "electrode/fu from IS 816 RAG",
+       "length_mm"
+      ],
+      "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+      "demand_N": 205200.0
+     }
+    ],
+    "policy": "Fill component capacities from LIVE RAG only. Demand may be prefilled from analysis; never invent plate t, bearing, anchors, or weld size.",
+    "note": "One or more base-plate components filled from provided RAG capacities.",
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 11.136087188497696,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 0.4856804733727811,
+     "t_provided_mm": 16.0,
+     "cantilever_t_req_mm": 14.412349733893882,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "component_checks": {
+    "base_plate_bearing": {
+     "found": true,
+     "DC": 0.035976331360946745,
+     "demand_N": 205200.0,
+     "capacity": {
+      "Rn_N": 5703750.0
+     },
+     "cited": "IS 800 Ch.11 / IS 456 0.45 fck A (fck=30 M30 disclosed; plate 650\u00d7650)",
+     "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "P_N",
+      "plate plan BxL",
+      "fck_MPa",
+      "bearing capacity from RAG"
+     ],
+     "missing": null
+    },
+    "base_plate_bending": {
+     "found": true,
+     "DC": 0.9007718583683676,
+     "demand_N": 205200.0,
+     "capacity": {
+      "t_required_mm": 14.412349733893882,
+      "t_provided_mm": 16.0,
+      "path": "cantilever_thickness_IS800_LSD",
+      "Rn_N": 227804.6300998939
+     },
+     "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+     "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+     "required_inputs": [
+      "P_N",
+      "M_Nmm",
+      "plate_t_mm",
+      "fy_plate",
+      "cantilever m from RAG"
+     ],
+     "missing": null
+    },
+    "anchor_bolts": {
+     "found": true,
+     "DC": 0.10118343195266272,
+     "demand_N": 205200.0,
+     "capacity": {
+      "Rn_N": 2028000.0
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "shear/tension demand",
+      "n, dia, grade from RAG",
+      "embedment"
+     ],
+     "missing": null
+    },
+    "column_to_plate_welds": {
+     "found": true,
+     "DC": 0.13682363219161262,
+     "demand_N": 205200.0,
+     "capacity": {
+      "Rn_N": 1499740.9198480472
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+     "required_inputs": [
+      "demand_N_or_Nmm",
+      "throat_mm / size from RAG",
+      "electrode/fu from IS 816 RAG",
+      "length_mm"
+     ],
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-lateral_col-WPB300X300X100.85",
+   "type": "column splice / base (scoped)",
+   "section": "WPB300X300X100.85",
+   "demand": {
+    "V_N": 13372.7,
+    "M_kNm": 24.539,
+    "P_N": 685619.3
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a77.4.3.1 / Ch.11; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1; IS 2062 Table 3 fu=410",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.9408699540587044,
+   "note": "wave3: base-plate bearing/anchor/weld + bending D/C; plate t=28 mm (RAG \u00a77.4.3 ts=20.4 + cantilever t_req=26.3; m=180 mm disclosed)",
+   "limit_state": "column base plate / anchor / bending \u2014 IS 800 \u00a77.4.3 + Ch.11 + IS 4000 (RAG)",
+   "base_plate_worksheet": {
+    "status": "worksheets",
+    "found": true,
+    "cite": "IS 800:2007 Ch.11 / \u00a710; IS 816 welds",
+    "required_inputs": [],
+    "missing_top": [],
+    "geometry": {
+     "plate_B_mm": 650.0,
+     "plate_L_mm": 650.0,
+     "plate_t_mm": 28.0,
+     "fy_col_MPa": 250.0,
+     "fck_MPa": 30.0
+    },
+    "slots": [
+     {
+      "component": "base_plate_bearing",
+      "found": true,
+      "DC": 0.12020500547885164,
+      "capacity": {
+       "Rn_N": 5703750.0
+      },
+      "required_inputs": [
+       "P_N",
+       "plate plan BxL",
+       "fck_MPa",
+       "bearing capacity from RAG"
+      ],
+      "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+      "demand_N": 685619.3,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "base_plate_bending",
+      "found": true,
+      "DC": 0.9408699540587044,
+      "capacity": {
+       "t_required_mm": 26.344358713643725,
+       "t_provided_mm": 28.0,
+       "path": "cantilever_thickness_IS800_LSD",
+       "Rn_N": 728707.8273064097
+      },
+      "required_inputs": [
+       "P_N",
+       "M_Nmm",
+       "plate_t_mm",
+       "fy_plate",
+       "cantilever m from RAG"
+      ],
+      "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+      "demand_N": 685619.3,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+      "t_required_mm": 26.344358713643725,
+      "t_provided_mm": 28.0,
+      "m_mm": 180.0,
+      "w_MPa": 1.6227675739644971
+     },
+     {
+      "component": "anchor_bolts",
+      "found": true,
+      "DC": 0.33807657790927026,
+      "capacity": {
+       "Rn_N": 2028000.0
+      },
+      "required_inputs": [
+       "shear/tension demand",
+       "n, dia, grade from RAG",
+       "embedment"
+      ],
+      "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+      "demand_N": 685619.3,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "column_to_plate_welds",
+      "found": false,
+      "DC": null,
+      "capacity": {
+       "Rn_N": 1499740.9198480472
+      },
+      "required_inputs": [
+       "demand_N_or_Nmm",
+       "throat_mm / size from RAG",
+       "electrode/fu from IS 816 RAG",
+       "length_mm"
+      ],
+      "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+      "demand_N": 685619.3
+     }
+    ],
+    "policy": "Fill component capacities from LIVE RAG only. Demand may be prefilled from analysis; never invent plate t, bearing, anchors, or weld size.",
+    "note": "One or more base-plate components filled from provided RAG capacities.",
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 20.35567280679172,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 1.6227675739644971,
+     "t_provided_mm": 28.0,
+     "cantilever_t_req_mm": 26.344358713643725,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "component_checks": {
+    "base_plate_bearing": {
+     "found": true,
+     "DC": 0.12020500547885164,
+     "demand_N": 685619.3,
+     "capacity": {
+      "Rn_N": 5703750.0
+     },
+     "cited": "IS 800 Ch.11 / IS 456 0.45 fck A (fck=30 M30 disclosed; plate 650\u00d7650)",
+     "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "P_N",
+      "plate plan BxL",
+      "fck_MPa",
+      "bearing capacity from RAG"
+     ],
+     "missing": null
+    },
+    "base_plate_bending": {
+     "found": true,
+     "DC": 0.9408699540587044,
+     "demand_N": 685619.3,
+     "capacity": {
+      "t_required_mm": 26.344358713643725,
+      "t_provided_mm": 28.0,
+      "path": "cantilever_thickness_IS800_LSD",
+      "Rn_N": 728707.8273064097
+     },
+     "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+     "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+     "required_inputs": [
+      "P_N",
+      "M_Nmm",
+      "plate_t_mm",
+      "fy_plate",
+      "cantilever m from RAG"
+     ],
+     "missing": null
+    },
+    "anchor_bolts": {
+     "found": true,
+     "DC": 0.33807657790927026,
+     "demand_N": 685619.3,
+     "capacity": {
+      "Rn_N": 2028000.0
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "shear/tension demand",
+      "n, dia, grade from RAG",
+      "embedment"
+     ],
+     "missing": null
+    },
+    "column_to_plate_welds": {
+     "found": true,
+     "DC": 0.4571584937946926,
+     "demand_N": 685619.3,
+     "capacity": {
+      "Rn_N": 1499740.9198480472
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+     "required_inputs": [
+      "demand_N_or_Nmm",
+      "throat_mm / size from RAG",
+      "electrode/fu from IS 816 RAG",
+      "length_mm"
+     ],
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-gravity_col-WPB300X300X69.8",
+   "type": "column splice / base (scoped)",
+   "section": "WPB300X300X69.8",
+   "demand": {
+    "V_N": 235.2,
+    "M_kNm": 0.526,
+    "P_N": 799200.0
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a77.4.3.1 / Ch.11; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1; IS 2062 Table 3 fu=410",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.9480966170524354,
+   "note": "wave3: base-plate bearing/anchor/weld + bending D/C; plate t=30 mm (RAG \u00a77.4.3 ts=22.0 + cantilever t_req=28.4; m=180 mm disclosed)",
+   "limit_state": "column base plate / anchor / bending \u2014 IS 800 \u00a77.4.3 + Ch.11 + IS 4000 (RAG)",
+   "base_plate_worksheet": {
+    "status": "worksheets",
+    "found": true,
+    "cite": "IS 800:2007 Ch.11 / \u00a710; IS 816 welds",
+    "required_inputs": [],
+    "missing_top": [],
+    "geometry": {
+     "plate_B_mm": 650.0,
+     "plate_L_mm": 650.0,
+     "plate_t_mm": 30.0,
+     "fy_col_MPa": 250.0,
+     "fck_MPa": 30.0
+    },
+    "slots": [
+     {
+      "component": "base_plate_bearing",
+      "found": true,
+      "DC": 0.14011834319526628,
+      "capacity": {
+       "Rn_N": 5703750.0
+      },
+      "required_inputs": [
+       "P_N",
+       "plate plan BxL",
+       "fck_MPa",
+       "bearing capacity from RAG"
+      ],
+      "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+      "demand_N": 799200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "base_plate_bending",
+      "found": true,
+      "DC": 0.9480966170524354,
+      "capacity": {
+       "t_required_mm": 28.442898511573063,
+       "t_provided_mm": 30.0,
+       "path": "cantilever_thickness_IS800_LSD",
+       "Rn_N": 842952.0637724198
+      },
+      "required_inputs": [
+       "P_N",
+       "M_Nmm",
+       "plate_t_mm",
+       "fy_plate",
+       "cantilever m from RAG"
+      ],
+      "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+      "demand_N": 799200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+      "t_required_mm": 28.442898511573063,
+      "t_provided_mm": 30.0,
+      "m_mm": 180.0,
+      "w_MPa": 1.8915976331360946
+     },
+     {
+      "component": "anchor_bolts",
+      "found": true,
+      "DC": 0.3940828402366864,
+      "capacity": {
+       "Rn_N": 2028000.0
+      },
+      "required_inputs": [
+       "shear/tension demand",
+       "n, dia, grade from RAG",
+       "embedment"
+      ],
+      "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+      "demand_N": 799200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "column_to_plate_welds",
+      "found": false,
+      "DC": null,
+      "capacity": {
+       "Rn_N": 1499740.9198480472
+      },
+      "required_inputs": [
+       "demand_N_or_Nmm",
+       "throat_mm / size from RAG",
+       "electrode/fu from IS 816 RAG",
+       "length_mm"
+      ],
+      "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+      "demand_N": 799200.0
+     }
+    ],
+    "policy": "Fill component capacities from LIVE RAG only. Demand may be prefilled from analysis; never invent plate t, bearing, anchors, or weld size.",
+    "note": "One or more base-plate components filled from provided RAG capacities.",
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 21.97716566463673,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 1.8915976331360946,
+     "t_provided_mm": 30.0,
+     "cantilever_t_req_mm": 28.442898511573063,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "component_checks": {
+    "base_plate_bearing": {
+     "found": true,
+     "DC": 0.14011834319526628,
+     "demand_N": 799200.0,
+     "capacity": {
+      "Rn_N": 5703750.0
+     },
+     "cited": "IS 800 Ch.11 / IS 456 0.45 fck A (fck=30 M30 disclosed; plate 650\u00d7650)",
+     "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "P_N",
+      "plate plan BxL",
+      "fck_MPa",
+      "bearing capacity from RAG"
+     ],
+     "missing": null
+    },
+    "base_plate_bending": {
+     "found": true,
+     "DC": 0.9480966170524354,
+     "demand_N": 799200.0,
+     "capacity": {
+      "t_required_mm": 28.442898511573063,
+      "t_provided_mm": 30.0,
+      "path": "cantilever_thickness_IS800_LSD",
+      "Rn_N": 842952.0637724198
+     },
+     "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+     "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+     "required_inputs": [
+      "P_N",
+      "M_Nmm",
+      "plate_t_mm",
+      "fy_plate",
+      "cantilever m from RAG"
+     ],
+     "missing": null
+    },
+    "anchor_bolts": {
+     "found": true,
+     "DC": 0.3940828402366864,
+     "demand_N": 799200.0,
+     "capacity": {
+      "Rn_N": 2028000.0
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "shear/tension demand",
+      "n, dia, grade from RAG",
+      "embedment"
+     ],
+     "missing": null
+    },
+    "column_to_plate_welds": {
+     "found": true,
+     "DC": 0.5328920411673334,
+     "demand_N": 799200.0,
+     "capacity": {
+      "Rn_N": 1499740.9198480472
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+     "required_inputs": [
+      "demand_N_or_Nmm",
+      "throat_mm / size from RAG",
+      "electrode/fu from IS 816 RAG",
+      "length_mm"
+     ],
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-gravity_col-WPB300X300X88.34",
+   "type": "column splice / base (scoped)",
+   "section": "WPB300X300X88.34",
+   "demand": {
+    "V_N": 2251.4,
+    "M_kNm": 6.688,
+    "P_N": 1393200.0
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a77.4.3.1 / Ch.11; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1; IS 2062 Table 3 fu=410",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.9882555234648269,
+   "note": "wave3: base-plate bearing/anchor/weld + bending D/C; plate t=38 mm (RAG \u00a77.4.3 ts=29.0 + cantilever t_req=37.6; m=180 mm disclosed)",
+   "limit_state": "column base plate / anchor / bending \u2014 IS 800 \u00a77.4.3 + Ch.11 + IS 4000 (RAG)",
+   "base_plate_worksheet": {
+    "status": "worksheets",
+    "found": true,
+    "cite": "IS 800:2007 Ch.11 / \u00a710; IS 816 welds",
+    "required_inputs": [],
+    "missing_top": [],
+    "geometry": {
+     "plate_B_mm": 650.0,
+     "plate_L_mm": 650.0,
+     "plate_t_mm": 38.0,
+     "fy_col_MPa": 250.0,
+     "fck_MPa": 30.0
+    },
+    "slots": [
+     {
+      "component": "base_plate_bearing",
+      "found": true,
+      "DC": 0.2442603550295858,
+      "capacity": {
+       "Rn_N": 5703750.0
+      },
+      "required_inputs": [
+       "P_N",
+       "plate plan BxL",
+       "fck_MPa",
+       "bearing capacity from RAG"
+      ],
+      "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+      "demand_N": 1393200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "base_plate_bending",
+      "found": true,
+      "DC": 0.9882555234648269,
+      "capacity": {
+       "t_required_mm": 37.55370989166342,
+       "t_provided_mm": 38.0,
+       "path": "cantilever_thickness_IS800_LSD",
+       "Rn_N": 1409756.8563193418
+      },
+      "required_inputs": [
+       "P_N",
+       "M_Nmm",
+       "plate_t_mm",
+       "fy_plate",
+       "cantilever m from RAG"
+      ],
+      "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+      "demand_N": 1393200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+      "t_required_mm": 37.55370989166342,
+      "t_provided_mm": 38.0,
+      "m_mm": 180.0,
+      "w_MPa": 3.2975147928994084
+     },
+     {
+      "component": "anchor_bolts",
+      "found": true,
+      "DC": 0.6869822485207101,
+      "capacity": {
+       "Rn_N": 2028000.0
+      },
+      "required_inputs": [
+       "shear/tension demand",
+       "n, dia, grade from RAG",
+       "embedment"
+      ],
+      "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+      "demand_N": 1393200.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "column_to_plate_welds",
+      "found": false,
+      "DC": null,
+      "capacity": {
+       "Rn_N": 1499740.9198480472
+      },
+      "required_inputs": [
+       "demand_N_or_Nmm",
+       "throat_mm / size from RAG",
+       "electrode/fu from IS 816 RAG",
+       "length_mm"
+      ],
+      "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+      "demand_N": 1393200.0
+     }
+    ],
+    "policy": "Fill component capacities from LIVE RAG only. Demand may be prefilled from analysis; never invent plate t, bearing, anchors, or weld size.",
+    "note": "One or more base-plate components filled from provided RAG capacities.",
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 29.016877561721778,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 3.2975147928994084,
+     "t_provided_mm": 38.0,
+     "cantilever_t_req_mm": 37.55370989166342,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "component_checks": {
+    "base_plate_bearing": {
+     "found": true,
+     "DC": 0.2442603550295858,
+     "demand_N": 1393200.0,
+     "capacity": {
+      "Rn_N": 5703750.0
+     },
+     "cited": "IS 800 Ch.11 / IS 456 0.45 fck A (fck=30 M30 disclosed; plate 650\u00d7650)",
+     "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "P_N",
+      "plate plan BxL",
+      "fck_MPa",
+      "bearing capacity from RAG"
+     ],
+     "missing": null
+    },
+    "base_plate_bending": {
+     "found": true,
+     "DC": 0.9882555234648269,
+     "demand_N": 1393200.0,
+     "capacity": {
+      "t_required_mm": 37.55370989166342,
+      "t_provided_mm": 38.0,
+      "path": "cantilever_thickness_IS800_LSD",
+      "Rn_N": 1409756.8563193418
+     },
+     "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+     "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+     "required_inputs": [
+      "P_N",
+      "M_Nmm",
+      "plate_t_mm",
+      "fy_plate",
+      "cantilever m from RAG"
+     ],
+     "missing": null
+    },
+    "anchor_bolts": {
+     "found": true,
+     "DC": 0.6869822485207101,
+     "demand_N": 1393200.0,
+     "capacity": {
+      "Rn_N": 2028000.0
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "shear/tension demand",
+      "n, dia, grade from RAG",
+      "embedment"
+     ],
+     "missing": null
+    },
+    "column_to_plate_welds": {
+     "found": true,
+     "DC": 0.9289604501430542,
+     "demand_N": 1393200.0,
+     "capacity": {
+      "Rn_N": 1499740.9198480472
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+     "required_inputs": [
+      "demand_N_or_Nmm",
+      "throat_mm / size from RAG",
+      "electrode/fu from IS 816 RAG",
+      "length_mm"
+     ],
+     "missing": null
+    }
+   },
+   "found_components": true
+  },
+  {
+   "id": "conn-lateral_col-WPB300X300X88.34",
+   "type": "column splice / base (scoped)",
+   "section": "WPB300X300X88.34",
+   "demand": {
+    "V_N": 12624.5,
+    "M_kNm": 23.059,
+    "P_N": 384489.0
+   },
+   "design_basis": "IS 800:2007 \u00a710 / \u00a712.8; IS 816 welds",
+   "cited": "IS 800:2007 \u00a77.4.3.1 / Ch.11; IS 4000:1992 Table 2; IS 800 \u00a710.5.7.1.1; IS 2062 Table 3 fu=410",
+   "capacity": {
+    "status": "scoped"
+   },
+   "DC": 0.9864113893870174,
+   "note": "wave3: base-plate bearing/anchor/weld + bending D/C; plate t=20 mm (RAG \u00a77.4.3 ts=15.2 + cantilever t_req=19.7; m=180 mm disclosed)",
+   "limit_state": "column base plate / anchor / bending \u2014 IS 800 \u00a77.4.3 + Ch.11 + IS 4000 (RAG)",
+   "base_plate_worksheet": {
+    "status": "worksheets",
+    "found": true,
+    "cite": "IS 800:2007 Ch.11 / \u00a710; IS 816 welds",
+    "required_inputs": [],
+    "missing_top": [],
+    "geometry": {
+     "plate_B_mm": 650.0,
+     "plate_L_mm": 650.0,
+     "plate_t_mm": 20.0,
+     "fy_col_MPa": 250.0,
+     "fck_MPa": 30.0
+    },
+    "slots": [
+     {
+      "component": "base_plate_bearing",
+      "found": true,
+      "DC": 0.06740986193293885,
+      "capacity": {
+       "Rn_N": 5703750.0
+      },
+      "required_inputs": [
+       "P_N",
+       "plate plan BxL",
+       "fck_MPa",
+       "bearing capacity from RAG"
+      ],
+      "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+      "demand_N": 384489.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "base_plate_bending",
+      "found": true,
+      "DC": 0.9864113893870174,
+      "capacity": {
+       "t_required_mm": 19.728227787740348,
+       "t_provided_mm": 20.0,
+       "path": "cantilever_thickness_IS800_LSD",
+       "Rn_N": 389785.64535729034
+      },
+      "required_inputs": [
+       "P_N",
+       "M_Nmm",
+       "plate_t_mm",
+       "fy_plate",
+       "cantilever m from RAG"
+      ],
+      "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+      "demand_N": 384489.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+      "t_required_mm": 19.728227787740348,
+      "t_provided_mm": 20.0,
+      "m_mm": 180.0,
+      "w_MPa": 0.9100331360946745
+     },
+     {
+      "component": "anchor_bolts",
+      "found": true,
+      "DC": 0.18959023668639052,
+      "capacity": {
+       "Rn_N": 2028000.0
+      },
+      "required_inputs": [
+       "shear/tension demand",
+       "n, dia, grade from RAG",
+       "embedment"
+      ],
+      "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+      "demand_N": 384489.0,
+      "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG"
+     },
+     {
+      "component": "column_to_plate_welds",
+      "found": false,
+      "DC": null,
+      "capacity": {
+       "Rn_N": 1499740.9198480472
+      },
+      "required_inputs": [
+       "demand_N_or_Nmm",
+       "throat_mm / size from RAG",
+       "electrode/fu from IS 816 RAG",
+       "length_mm"
+      ],
+      "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+      "demand_N": 384489.0
+     }
+    ],
+    "policy": "Fill component capacities from LIVE RAG only. Demand may be prefilled from analysis; never invent plate t, bearing, anchors, or weld size.",
+    "note": "One or more base-plate components filled from provided RAG capacities.",
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 15.243542432373584,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 0.9100331360946745,
+     "t_provided_mm": 20.0,
+     "cantilever_t_req_mm": 19.728227787740348,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "component_checks": {
+    "base_plate_bearing": {
+     "found": true,
+     "DC": 0.06740986193293885,
+     "demand_N": 384489.0,
+     "capacity": {
+      "Rn_N": 5703750.0
+     },
+     "cited": "IS 800 Ch.11 / IS 456 0.45 fck A (fck=30 M30 disclosed; plate 650\u00d7650)",
+     "note": "Concrete bearing under plate \u2014 RAG IS 800 Ch.11 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "P_N",
+      "plate plan BxL",
+      "fck_MPa",
+      "bearing capacity from RAG"
+     ],
+     "missing": null
+    },
+    "base_plate_bending": {
+     "found": true,
+     "DC": 0.9864113893870174,
+     "demand_N": 384489.0,
+     "capacity": {
+      "t_required_mm": 19.728227787740348,
+      "t_provided_mm": 20.0,
+      "path": "cantilever_thickness_IS800_LSD",
+      "Rn_N": 389785.64535729034
+     },
+     "cited": "IS 800 \u00a77.4.3 / Ch.11 cantilever; IS 456 0.45 fck A; anchors IS 4000 Table 2 RAG",
+     "note": "t_req = m\u221a(3 w \u03b3_m0/fy) from cantilever plate bending (M=w m\u00b2/2). m/fy/t/w from RAG or disclosed geometry \u2014 thickness not invented.",
+     "required_inputs": [
+      "P_N",
+      "M_Nmm",
+      "plate_t_mm",
+      "fy_plate",
+      "cantilever m from RAG"
+     ],
+     "missing": null
+    },
+    "anchor_bolts": {
+     "found": true,
+     "DC": 0.18959023668639052,
+     "demand_N": 384489.0,
+     "capacity": {
+      "Rn_N": 2028000.0
+     },
+     "cited": "IS 4000:1992 Table 2 \u2014 Maximum Permissible Applied Forces for Joints (bearing-type shear Vob); RAG exact_table 2",
+     "note": "Anchor rods \u2014 RAG IS 800 / IS 456; found:false until sized.",
+     "required_inputs": [
+      "shear/tension demand",
+      "n, dia, grade from RAG",
+      "embedment"
+     ],
+     "missing": null
+    },
+    "column_to_plate_welds": {
+     "found": true,
+     "DC": 0.25637028030078435,
+     "demand_N": 384489.0,
+     "capacity": {
+      "Rn_N": 1499740.9198480472
+     },
+     "cited": "IS 800:2007 \u00a710.5.7.1.1 fwd=fu/(\u221a3 \u03b3mw); \u03b3mw Table 5",
+     "note": "Fillet welds column-to-plate \u2014 RAG IS 816; found:false until sized.",
+     "required_inputs": [
+      "demand_N_or_Nmm",
+      "throat_mm / size from RAG",
+      "electrode/fu from IS 816 RAG",
+      "length_mm"
+     ],
+     "missing": null
+    }
+   },
+   "found_components": true
+  }
+ ],
+ "framework_screen": {
+  "note": "FRAMEWORK-COMPUTED irregularity screen -- the agent RESPONDS to these (classify consequences, apply rho/Ax/25% collector increases as required); do not re-derive.",
+  "plan": {
+   "reentrant": false,
+   "setback": false,
+   "nonparallel": false,
+   "nonrect": false,
+   "is1893_plan": true,
+   "is1893_vertical": true
+  },
+  "soft_story": {
+   "K1_over_K2": {
+    "X": 1.1,
+    "Y": 1.13
+   },
+   "K1_over_avg3": {
+    "X": 1.15,
+    "Y": 1.2
+   },
+   "classification": "none",
+   "cite": "IS 1893 Part 1:2016 Table 5/6 + cl.7.1 (see india_seismic.py)"
+  },
+  "torsion": {
+   "ratio_max": 1.0,
+   "classification": "none",
+   "Ax": 1.0,
+   "cite": "IS 1893 torsional provisions (agent/RAG)"
+  },
+  "Fpx_N_by_level": {
+   "1": 106404.0,
+   "2": 106404.0,
+   "3": 106404.0,
+   "4": 106404.0,
+   "5": 88482.0
+  }
+ },
+ "capacity_design": {
+  "system": "SCBF",
+  "R": 4.5,
+  "cite": "IS 1893:2016 Table 9 SBF concentric R=4.5; IS 800:2007 \u00a712.8 SCBF",
+  "status": "partial_progress",
+  "zone_note": "OCBF (\u00a712.7) prohibited in Zone IV (\u00a712.7.1.1) \u2014 SCBF \u00a712.8 required and used",
+  "checks": {
+   "brace_steel_grade": {
+    "clause": "\u00a712.8.2.1",
+    "requirement": "E250B of IS 2062 only",
+    "provided": "E250 (IS 2062:2025 Table 3 Qual. A) \u2014 confirm Qual. B / E250B at procurement",
+    "status": "ASSUMED_E250_confirm_B"
+   },
+   "brace_slenderness": {
+    "clause": "\u00a712.8.2.2",
+    "limit": 160,
+    "note": "non-dimensional \u03bb=1.18; KL=5947.535 mm",
+    "status": "recorded"
+   },
+   "brace_section_class": {
+    "clause": "\u00a712.8.2.5",
+    "requirement": "plastic",
+    "status": "ASSUMED_CHS_plastic_verify"
+   },
+   "brace_tension_gross_yield": {
+    "clause": "\u00a712.8.2.7 / \u00a712.7.2.6",
+    "requirement": "gross yield governs over net rupture",
+    "status": "detailing"
+   },
+   "brace_connection_demand": {
+    "clause": "\u00a712.7.3.1 / \u00a712.8",
+    "Pu_N": 1208700.0,
+    "Pu_kN": 1208.7,
+    "formula": "1.2 fy Ag",
+    "analysis_brace_kN": 115.9,
+    "status": "demand_set"
+   },
+   "columns_plastic": {
+    "clause": "\u00a712.8.4.1",
+    "requirement": "SCBF columns plastic \u00a73.7.2",
+    "status": "ASSUMED_WPB_plastic_verify"
+   },
+   "tension_brace_share": {
+    "clause": "\u00a712.8.2.4",
+    "requirement": "tension braces resist 30\u201370% of storey shear either direction",
+    "status": "geometry_X_bracing_perimeter_verify"
+   },
+   "E250B": {
+    "found": false,
+    "note": "H7: E250B / E250 mill-stock procurement confirm is open process item \u2014 not invented",
+    "cite": "IS 2062; H7 process note"
+   },
+   "wave2_connection_DC": {
+    "conn-roof-NPB400X180X57.38": {
+     "bolts": 0.002,
+     "welds": 0.002
+    },
+    "conn-floor-NPB450X190X67.16": {
+     "bolts": 0.003,
+     "welds": 0.003
+    },
+    "conn-brace-CHS168.3X8": {
+     "gusset": 0.97,
+     "bolts": 0.868,
+     "welds": 0.868,
+     "gusset_whitmore": 0.97,
+     "gusset_block_shear": 0.548
+    },
+    "conn-lateral_col-HB300": {
+     "base_plate_bearing": 0.016,
+     "base_plate_bending": 0.693,
+     "anchor_bolts": 0.046,
+     "column_to_plate_welds": 0.062
+    },
+    "conn-gravity_col-MB300": {
+     "base_plate_bearing": 0.036,
+     "base_plate_bending": 0.901,
+     "anchor_bolts": 0.101,
+     "column_to_plate_welds": 0.137
+    },
+    "conn-lateral_col-WPB300X300X100.85": {
+     "base_plate_bearing": 0.12,
+     "base_plate_bending": 0.941,
+     "anchor_bolts": 0.338,
+     "column_to_plate_welds": 0.457
+    },
+    "conn-gravity_col-WPB300X300X69.8": {
+     "base_plate_bearing": 0.14,
+     "base_plate_bending": 0.948,
+     "anchor_bolts": 0.394,
+     "column_to_plate_welds": 0.533
+    },
+    "conn-gravity_col-WPB300X300X88.34": {
+     "base_plate_bearing": 0.244,
+     "base_plate_bending": 0.988,
+     "anchor_bolts": 0.687,
+     "column_to_plate_welds": 0.929
+    },
+    "conn-lateral_col-WPB300X300X88.34": {
+     "base_plate_bearing": 0.067,
+     "base_plate_bending": 0.986,
+     "anchor_bolts": 0.19,
+     "column_to_plate_welds": 0.256
+    }
+   },
+   "wave3_connection_DC": {
+    "brace": {
+     "conn-brace-CHS168.3X8": {
+      "gusset": 0.97,
+      "bolts": 0.868,
+      "welds": 0.868,
+      "gusset_whitmore": 0.97,
+      "gusset_block_shear": 0.548
+     }
+    },
+    "base_plate_bending": {
+     "conn-lateral_col-HB300": {
+      "DC": 0.693,
+      "t_provided_mm": 14.0,
+      "t_required_mm": 9.69600778604175,
+      "rag_7_4_3": {
+       "found": true,
+       "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+       "ts_required_mm": 7.491879539377577,
+       "a_mm": 180.0,
+       "b_mm": 175.0,
+       "w_MPa": 0.21981988165680472,
+       "t_provided_mm": 14.0,
+       "cantilever_t_req_mm": 9.69600778604175,
+       "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+      }
+     },
+     "conn-gravity_col-MB300": {
+      "DC": 0.901,
+      "t_provided_mm": 16.0,
+      "t_required_mm": 14.412349733893882,
+      "rag_7_4_3": {
+       "found": true,
+       "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+       "ts_required_mm": 11.136087188497696,
+       "a_mm": 180.0,
+       "b_mm": 175.0,
+       "w_MPa": 0.4856804733727811,
+       "t_provided_mm": 16.0,
+       "cantilever_t_req_mm": 14.412349733893882,
+       "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+      }
+     },
+     "conn-lateral_col-WPB300X300X100.85": {
+      "DC": 0.941,
+      "t_provided_mm": 28.0,
+      "t_required_mm": 26.344358713643725,
+      "rag_7_4_3": {
+       "found": true,
+       "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+       "ts_required_mm": 20.35567280679172,
+       "a_mm": 180.0,
+       "b_mm": 175.0,
+       "w_MPa": 1.6227675739644971,
+       "t_provided_mm": 28.0,
+       "cantilever_t_req_mm": 26.344358713643725,
+       "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+      }
+     },
+     "conn-gravity_col-WPB300X300X69.8": {
+      "DC": 0.948,
+      "t_provided_mm": 30.0,
+      "t_required_mm": 28.442898511573063,
+      "rag_7_4_3": {
+       "found": true,
+       "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+       "ts_required_mm": 21.97716566463673,
+       "a_mm": 180.0,
+       "b_mm": 175.0,
+       "w_MPa": 1.8915976331360946,
+       "t_provided_mm": 30.0,
+       "cantilever_t_req_mm": 28.442898511573063,
+       "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+      }
+     },
+     "conn-gravity_col-WPB300X300X88.34": {
+      "DC": 0.988,
+      "t_provided_mm": 38.0,
+      "t_required_mm": 37.55370989166342,
+      "rag_7_4_3": {
+       "found": true,
+       "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+       "ts_required_mm": 29.016877561721778,
+       "a_mm": 180.0,
+       "b_mm": 175.0,
+       "w_MPa": 3.2975147928994084,
+       "t_provided_mm": 38.0,
+       "cantilever_t_req_mm": 37.55370989166342,
+       "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+      }
+     },
+     "conn-lateral_col-WPB300X300X88.34": {
+      "DC": 0.986,
+      "t_provided_mm": 20.0,
+      "t_required_mm": 19.728227787740348,
+      "rag_7_4_3": {
+       "found": true,
+       "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+       "ts_required_mm": 15.243542432373584,
+       "a_mm": 180.0,
+       "b_mm": 175.0,
+       "w_MPa": 0.9100331360946745,
+       "t_provided_mm": 20.0,
+       "cantilever_t_req_mm": 19.728227787740348,
+       "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+      }
+     }
+    }
+   }
+  },
+  "note": "Member strength checks on analysis forces (IS 800 Ch.6\u20139) with \u03c7 Pd \u00a77.1.2. Wave2: brace/beam bolt/weld + base-plate bearing/anchor/weld D/C from IS 4000 Table 2 + IS 800 \u00a710.5.7.1.1 (LIVE RAG; disclosed geometry). Wave3: Whitmore + \u00a76.4.1 block shear; base-plate bending via RAG \u00a77.4.3 + cantilever. H6/H7 kept.",
+  "delegated_design": [
+   {
+    "item": "composite_metal_deck_and_shear_studs",
+    "criteria": "IS 800 Ch.I / IS 11384; bare-steel lower bound this pass",
+    "interface_forces": "beam flange shear flow from factored gravity",
+    "status": "scoped"
+   },
+   {
+    "item": "cladding_attachments",
+    "criteria": "IS 875 Part 3; cladding 0.5 kN/m2 per brief",
+    "interface_forces": "out-of-plane wind not in frame model",
+    "status": "delegated"
+   },
+   {
+    "item": "stairs_nonstructural",
+    "criteria": "seismically detached slip connections",
+    "interface_forces": "none into SFRS",
+    "status": "assumption"
+   },
+   {
+    "item": "gusset_whitmore_block_shear",
+    "status": "filled_wave3",
+    "criteria": "IS 800 Whitmore 30-deg + cl.6.4.1 block shear; brace CHS168.3x8: Whitmore DC=0.970, block-shear DC=0.548 (both <= 1.0)"
+   },
+   {
+    "item": "base_plate_bending_thickness",
+    "status": "filled_wave3",
+    "criteria": "IS 800 cl.7.4.3.1 RAG + cantilever; gravity WPB300x88.34: plate_t=38 mm, t_req=37.55 mm, bending DC=0.988 (<= 1.0)"
+   }
+  ],
+  "thermal_expansion": {
+   "status": "noted",
+   "note": "Plan 30\u00d724 m; no expansion joint; thermal forces not governing vs seismic/wind"
+  }
+ },
+ "composite_design": {
+  "scope": "Composite metal deck \u2014 bare-steel lower bound this pass",
+  "status": "scoped",
+  "cite_attempted": "IS 800 composite provisions \u2014 stud/camber design not closed",
+  "SDL_assembly": "Floor/roof SDL from IS 875 Part 1 RCC+finishes (see load_plan.gravity_summary); composite action NOT credited in beam Md",
+  "gaps": [
+   "shear stud layout",
+   "camber",
+   "effective width",
+   "construction-stage beam check"
+  ]
+ },
+ "governing_DC": 0.689,
+ "governing_member": "gravity_col-WPB300X300X88.34",
+ "units_reconciliation": {
+  "engine": "N-mm SI",
+  "story_height_flag": "FALSE POSITIVE \u2014 3600 = 3.6 m storey in mm, not inches"
+ },
+ "wave1": {
+  "tip_feature": "complete-gap-wave1",
+  "tip_sha": "4216a65f332f",
+  "chi_Pd": true,
+  "section12_fill_helper": "india_is800.fill_connection_component_dc",
+  "base_plate_helper": "india_is800.base_plate_worksheet",
+  "capacities_invented": false,
+  "Ka_RAG": "IS 875 P3 Table 4 found:true \u2192 Ka=0.923 (A=21.6 m\u00b2)",
+  "Ta": "IS 1893 \u00a77.6.2(c) 0.09h/\u221ad"
+ },
+ "wave2": {
+  "tip_feature": "complete-gap-wave2",
+  "tip_sha": "4216a65f332f",
+  "rag_connection_dc": true,
+  "helpers": [
+   "is4000_bolt_shear_capacity_N",
+   "fillet_weld_capacity_is800_N",
+   "apply_rag_capacities_to_connection",
+   "base_plate_worksheet"
+  ],
+  "capacities_invented": false,
+  "rag_corpus": "/workspace/engineering_rag_india/",
+  "excerpts_verified": [
+   "IS_4000_1992 Table 2 Vob (LIVE RAG found:true)",
+   "IS_800_2007 \u00a710.5.7.1.1 fillet fwd (LIVE RAG found:true)",
+   "IS_2062_Part_1_2025 Table 3 E250 fu=410 (LIVE RAG found:true)"
+  ],
+  "gusset_whitmore": "filled wave3 (disclosed 30\u00b0 + RAG clause)",
+  "plate_bending": "filled wave3 (RAG \u00a77.4.3 + cantilever; t disclosed)",
+  "H6_H7": "stubs/process kept"
+ },
+ "wave3": {
+  "tip_feature": "complete-gap-wave3",
+  "tip_sha": "4216a65f332f",
+  "helpers": [
+   "base_plate_bending_check",
+   "base_plate_worksheet",
+   "gusset_whitmore_capacity_N",
+   "gusset_block_shear_capacity_N"
+  ],
+  "capacities_invented": false,
+  "rag_corpus": "/workspace/engineering_rag_india/",
+  "excerpts_verified": [
+   "IS_800_2007 \u00a77.4.3.1 Slab Bases ts (LIVE RAG found:true)",
+   "IS_800_2007 \u00a76.4.1 block shear (LIVE RAG found:true)",
+   "IS_2062_Part_1_2025 Table 3 E250 fy/fu (LIVE RAG)"
+  ],
+  "H6_H7": "stubs/process kept",
+  "brace_wave3": {
+   "whitmore": {
+    "found": true,
+    "capacity_N": 1246295.8216222166,
+    "whitmore_width_mm": 456.97513459481286,
+    "t_gusset_mm": 12.0,
+    "cite": "IS 800:2007 Whitmore yield (LSD) + disclosed 30\u00b0 construction; \u03b3_m0 Table 5",
+    "path": "whitmore_yield"
+   },
+   "block_shear": {
+    "found": true,
+    "capacity_N": 2205964.3718933207,
+    "Avg_mm2": 14400.0,
+    "Atn_mm2": 1072.0,
+    "cite": "IS 800:2007 \u00a76.4.1 block shear (LIVE RAG clause; disclosed Avg/Atn)",
+    "path": "section_6_4_1"
+   }
+  },
+  "brace_connection_DC": {
+   "conn-brace-CHS168.3X8": {
+    "gusset": 0.97,
+    "bolts": 0.868,
+    "welds": 0.868,
+    "gusset_whitmore": 0.97,
+    "gusset_block_shear": 0.548
+   }
+  },
+  "base_plate_bending_DC": {
+   "conn-lateral_col-HB300": {
+    "DC": 0.693,
+    "t_provided_mm": 14.0,
+    "t_required_mm": 9.69600778604175,
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 7.491879539377577,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 0.21981988165680472,
+     "t_provided_mm": 14.0,
+     "cantilever_t_req_mm": 9.69600778604175,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "conn-gravity_col-MB300": {
+    "DC": 0.901,
+    "t_provided_mm": 16.0,
+    "t_required_mm": 14.412349733893882,
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 11.136087188497696,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 0.4856804733727811,
+     "t_provided_mm": 16.0,
+     "cantilever_t_req_mm": 14.412349733893882,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "conn-lateral_col-WPB300X300X100.85": {
+    "DC": 0.941,
+    "t_provided_mm": 28.0,
+    "t_required_mm": 26.344358713643725,
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 20.35567280679172,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 1.6227675739644971,
+     "t_provided_mm": 28.0,
+     "cantilever_t_req_mm": 26.344358713643725,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "conn-gravity_col-WPB300X300X69.8": {
+    "DC": 0.948,
+    "t_provided_mm": 30.0,
+    "t_required_mm": 28.442898511573063,
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 21.97716566463673,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 1.8915976331360946,
+     "t_provided_mm": 30.0,
+     "cantilever_t_req_mm": 28.442898511573063,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "conn-gravity_col-WPB300X300X88.34": {
+    "DC": 0.988,
+    "t_provided_mm": 38.0,
+    "t_required_mm": 37.55370989166342,
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 29.016877561721778,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 3.2975147928994084,
+     "t_provided_mm": 38.0,
+     "cantilever_t_req_mm": 37.55370989166342,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   },
+   "conn-lateral_col-WPB300X300X88.34": {
+    "DC": 0.986,
+    "t_provided_mm": 20.0,
+    "t_required_mm": 19.728227787740348,
+    "rag_7_4_3": {
+     "found": true,
+     "cite": "IS 800:2007 \u00a77.4.3.1 Slab Bases (LIVE RAG exact_section 7.4.3)",
+     "ts_required_mm": 15.243542432373584,
+     "a_mm": 180.0,
+     "b_mm": 175.0,
+     "w_MPa": 0.9100331360946745,
+     "t_provided_mm": 20.0,
+     "cantilever_t_req_mm": 19.728227787740348,
+     "note": "IS 800 cl.7.4.3.1 RAG ts plus cantilever t_req; plate thickness provided at or above both limits (numeric DC recorded on slot)"
+    }
+   }
+  }
+ },
+ "ddm_analysis": {
+  "method": "Direct Design Method (system-based design by advanced analysis) -- steltic_ddm 0.1",
+  "basis": [
+   "Zhang, Shayan, Rasmussen & Ellingwood, JCSR 123 (2016) I & II",
+   "AISC 360-22 Appendix 1 (design by advanced analysis) -- cite via Query file manager",
+   "Arrayago I., Rasmussen K.J.R., Zhang H. -- System-based reliability analysis of stainless steel frames subjected to gravity and wind loads, Structural Safety 97 (2022) 102211 (CC-BY, UPCommons), sec. 5.3, quoting the carbon-steel calibrations for gravity + wind at beta_0 ~ 2.50",
+   "Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+   "Zhang H., Rasmussen K.J.R., Shayan S., Ellingwood B.R. -- System reliability of steel frames designed by inelastic analysis, SSRC Annual Stability Conference 2013 (open PDF, aisc.org). Table 10: phi_s = 0.90/0.85/0.80/0.70 at beta_T = 2.5/2.75/3.0/3.5, 1.2G+1.5Q, nine planar moment frames",
+   "Wan W. -- System reliability of semi-rigid steel frames designed with Direct Design Method, PhD thesis, University of Sydney 2024 (open access, hdl 2123/32474): Tables 6.10-6.14 (rigid rows: mean beta 3.02 at phi_s 0.80, 2.80 at 0.85; five planar hot-rolled frames, 1.2D+0.5L+W), Table 6.15 and Eq. 6.9 beta = -4.41 phi_s + 6.65 (semi-rigid)",
+   "Liu W., Zhang H., Rasmussen K.J.R., Yan S. -- System-based limit state design criterion for 3D steel frames under wind loads, J. Constr. Steel Res. 157 (2019) 440-449"
+  ],
+  "phi_s_provisional": false,
+  "phi_s_status": "Classes used: HR-G = 0.80 at beta_T 3.00 [VERIFIED]; HR-W = 0.85 at beta_T 2.50 [VERIFIED]. Every class used is verified from open documents (SSRC 2013 Table 10; Wan 2024 thesis Tables 6.10-6.14 / Eq. 6.9; Arrayago-Rasmussen-Zhang 2022 for the cited HSS/CFS wind values); see docs/PHI_S_SOURCES.md.",
+  "phi_s_classes": {
+   "HR-G": {
+    "phi_s": 0.8,
+    "beta_T": 3.0,
+    "status": "verified"
+   },
+   "SEIS": {
+    "phi_s": null,
+    "beta_T": null,
+    "status": "n/a"
+   },
+   "HR-W": {
+    "phi_s": 0.85,
+    "beta_T": 2.5,
+    "status": "verified"
+   }
+  },
+  "model": {
+   "elements": "forceBeamColumn / Corotational / 5 IP fibre",
+   "nsub": [
+    2,
+    2,
+    4
+   ],
+   "material": "Steel01 Fy=250 E=29000 b=0.002",
+   "residual_stress": "lehigh",
+   "out_of_plumb": "1/500",
+   "out_of_straightness": "L/1000",
+   "diaphragm": "rigid (as designed)",
+   "joints": "as designed",
+   "transfer_gate": {
+    "pass": true,
+    "rows": [
+     {
+      "quantity": "T1 (s)",
+      "steltic": 0.3012,
+      "gmnia": 0.3021,
+      "ratio": 1.0029,
+      "ok": true
+     },
+     {
+      "quantity": "T2 (s)",
+      "steltic": 0.2661,
+      "gmnia": 0.2668,
+      "ratio": 1.0026,
+      "ok": true
+     },
+     {
+      "quantity": "T3 (s)",
+      "steltic": 0.1907,
+      "gmnia": 0.1909,
+      "ratio": 1.001,
+      "ok": true
+     },
+     {
+      "quantity": "roof disp X under ELF pattern (in)",
+      "steltic": 2.526,
+      "gmnia": 2.5409,
+      "ratio": 1.0059,
+      "ok": true
+     },
+     {
+      "quantity": "roof disp Y under ELF pattern (in)",
+      "steltic": 3.2667,
+      "gmnia": 3.2889,
+      "ratio": 1.0068,
+      "ok": true
+     }
+    ]
+   }
+  },
+  "combinations": [
+   {
+    "label": "1.5DL+1.5LL",
+    "kind": "gravity",
+    "imperfection": "+X",
+    "scheme": "proportional",
+    "lambda_u": 0.913,
+    "lambda_first_yield": 0.85,
+    "phi_s": 0.8,
+    "phi_class": "HR-G",
+    "phi_source": "Zhang H., Rasmussen K.J.R., Shayan S., Ellingwood B.R. -- System reliability of steel frames designed by inelastic analysis, SSRC Annual Stability Conference 2013 (open PDF, aisc.org). Table 10: phi_s = 0.90/0.85/0.80/0.70 at beta_T = 2.5/2.75/3.0/3.5, 1.2G+1.5Q, nine planar moment frames; Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+    "check": "phi_s*lambda_u = 0.730 FAIL",
+    "mechanism": "beam yielding (8 beam members at hinge level), limited post-peak ductility",
+    "hinges_by_role": {
+     "roof": 8
+    },
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": null,
+    "steps": 19,
+    "seconds": 367.5
+   },
+   {
+    "label": "1.5DL+1.5EQ_X",
+    "kind": "seismic",
+    "imperfection": "+X",
+    "scheme": "proportional",
+    "lambda_u": 1.4,
+    "lambda_first_yield": 0.96,
+    "phi_s": null,
+    "phi_class": "SEIS",
+    "phi_source": null,
+    "check": "n/a",
+    "mechanism": "partial yielding (64 floor, 16 roof) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 3.511,
+    "steps": 29,
+    "seconds": 183.6
+   },
+   {
+    "label": "1.5DL+1.5EQ_Y",
+    "kind": "seismic",
+    "imperfection": "+Y",
+    "scheme": "proportional",
+    "lambda_u": 0.959,
+    "lambda_first_yield": 0.953,
+    "phi_s": null,
+    "phi_class": "SEIS",
+    "phi_source": null,
+    "check": "n/a",
+    "mechanism": "partial yielding (8 roof) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 3.332,
+    "steps": 22,
+    "seconds": 212.9
+   },
+   {
+    "label": "1.2DL+1.2LL+1.2EQ_X",
+    "kind": "seismic",
+    "imperfection": "+X",
+    "scheme": "proportional",
+    "lambda_u": 1.004,
+    "lambda_first_yield": 0.746,
+    "phi_s": null,
+    "phi_class": "SEIS",
+    "phi_source": null,
+    "check": "n/a",
+    "mechanism": "partial yielding (50 floor) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 2.726,
+    "steps": 23,
+    "seconds": 274.3
+   },
+   {
+    "label": "1.2DL+1.2LL+1.2EQ_Y",
+    "kind": "seismic",
+    "imperfection": "+Y",
+    "scheme": "proportional",
+    "lambda_u": 0.995,
+    "lambda_first_yield": 0.744,
+    "phi_s": null,
+    "phi_class": "SEIS",
+    "phi_source": null,
+    "check": "n/a",
+    "mechanism": "partial yielding (60 floor) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 3.504,
+    "steps": 23,
+    "seconds": 190.2
+   },
+   {
+    "label": "0.9DL+1.5EQ_X",
+    "kind": "seismic",
+    "imperfection": "+X",
+    "scheme": "proportional",
+    "lambda_u": 2.385,
+    "lambda_first_yield": 1.85,
+    "phi_s": null,
+    "phi_class": "SEIS",
+    "phi_source": null,
+    "check": "n/a",
+    "mechanism": "partial yielding (64 floor) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 6.379,
+    "steps": 50,
+    "seconds": 204.9
+   },
+   {
+    "label": "0.9DL+1.5EQ_Y",
+    "kind": "seismic",
+    "imperfection": "+Y",
+    "scheme": "proportional",
+    "lambda_u": 1.595,
+    "lambda_first_yield": null,
+    "phi_s": null,
+    "phi_class": "SEIS",
+    "phi_source": null,
+    "check": "n/a",
+    "mechanism": "peak reached while elastic (geometric instability)",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 5.487,
+    "steps": 33,
+    "seconds": 240.5
+   },
+   {
+    "label": "1.5DL+1.5W_X",
+    "kind": "wind",
+    "imperfection": "+X",
+    "scheme": "proportional",
+    "lambda_u": 0.961,
+    "lambda_first_yield": null,
+    "phi_s": 0.85,
+    "phi_class": "HR-W",
+    "phi_source": "Wan W. -- System reliability of semi-rigid steel frames designed with Direct Design Method, PhD thesis, University of Sydney 2024 (open access, hdl 2123/32474): Tables 6.10-6.14 (rigid rows: mean beta 3.02 at phi_s 0.80, 2.80 at 0.85; five planar hot-rolled frames, 1.2D+0.5L+W), Table 6.15 and Eq. 6.9 beta = -4.41 phi_s + 6.65 (semi-rigid); Arrayago I., Rasmussen K.J.R., Zhang H. -- System-based reliability analysis of stainless steel frames subjected to gravity and wind loads, Structural Safety 97 (2022) 102211 (CC-BY, UPCommons), sec. 5.3, quoting the carbon-steel calibrations for gravity + wind at beta_0 ~ 2.50; Liu W., Zhang H., Rasmussen K.J.R., Yan S. -- System-based limit state design criterion for 3D steel frames under wind loads, J. Constr. Steel Res. 157 (2019) 440-449; Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+    "check": "phi_s*lambda_u = 0.817 FAIL",
+    "mechanism": "peak reached while elastic (geometric instability)",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 1.031,
+    "steps": 21,
+    "seconds": 255.9
+   },
+   {
+    "label": "1.5DL+1.5W_Y",
+    "kind": "wind",
+    "imperfection": "+Y",
+    "scheme": "proportional",
+    "lambda_u": 0.908,
+    "lambda_first_yield": 0.822,
+    "phi_s": 0.85,
+    "phi_class": "HR-W",
+    "phi_source": "Wan W. -- System reliability of semi-rigid steel frames designed with Direct Design Method, PhD thesis, University of Sydney 2024 (open access, hdl 2123/32474): Tables 6.10-6.14 (rigid rows: mean beta 3.02 at phi_s 0.80, 2.80 at 0.85; five planar hot-rolled frames, 1.2D+0.5L+W), Table 6.15 and Eq. 6.9 beta = -4.41 phi_s + 6.65 (semi-rigid); Arrayago I., Rasmussen K.J.R., Zhang H. -- System-based reliability analysis of stainless steel frames subjected to gravity and wind loads, Structural Safety 97 (2022) 102211 (CC-BY, UPCommons), sec. 5.3, quoting the carbon-steel calibrations for gravity + wind at beta_0 ~ 2.50; Liu W., Zhang H., Rasmussen K.J.R., Yan S. -- System-based limit state design criterion for 3D steel frames under wind loads, J. Constr. Steel Res. 157 (2019) 440-449; Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+    "check": "phi_s*lambda_u = 0.771 FAIL",
+    "mechanism": "beam yielding (2 beam members at hinge level), limited post-peak ductility",
+    "hinges_by_role": {
+     "roof": 2
+    },
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 1.468,
+    "steps": 19,
+    "seconds": 400.1
+   },
+   {
+    "label": "1.2DL+1.2LL+1.2W_X",
+    "kind": "wind",
+    "imperfection": "+X",
+    "scheme": "proportional",
+    "lambda_u": 0.651,
+    "lambda_first_yield": null,
+    "phi_s": 0.85,
+    "phi_class": "HR-W",
+    "phi_source": "Wan W. -- System reliability of semi-rigid steel frames designed with Direct Design Method, PhD thesis, University of Sydney 2024 (open access, hdl 2123/32474): Tables 6.10-6.14 (rigid rows: mean beta 3.02 at phi_s 0.80, 2.80 at 0.85; five planar hot-rolled frames, 1.2D+0.5L+W), Table 6.15 and Eq. 6.9 beta = -4.41 phi_s + 6.65 (semi-rigid); Arrayago I., Rasmussen K.J.R., Zhang H. -- System-based reliability analysis of stainless steel frames subjected to gravity and wind loads, Structural Safety 97 (2022) 102211 (CC-BY, UPCommons), sec. 5.3, quoting the carbon-steel calibrations for gravity + wind at beta_0 ~ 2.50; Liu W., Zhang H., Rasmussen K.J.R., Yan S. -- System-based limit state design criterion for 3D steel frames under wind loads, J. Constr. Steel Res. 157 (2019) 440-449; Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+    "check": "phi_s*lambda_u = 0.554 FAIL",
+    "mechanism": "peak reached while elastic (geometric instability)",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 0.707,
+    "steps": 14,
+    "seconds": 183.0
+   },
+   {
+    "label": "1.2DL+1.2LL+1.2W_Y",
+    "kind": "wind",
+    "imperfection": "+Y",
+    "scheme": "proportional",
+    "lambda_u": 0.996,
+    "lambda_first_yield": 0.746,
+    "phi_s": 0.85,
+    "phi_class": "HR-W",
+    "phi_source": "Wan W. -- System reliability of semi-rigid steel frames designed with Direct Design Method, PhD thesis, University of Sydney 2024 (open access, hdl 2123/32474): Tables 6.10-6.14 (rigid rows: mean beta 3.02 at phi_s 0.80, 2.80 at 0.85; five planar hot-rolled frames, 1.2D+0.5L+W), Table 6.15 and Eq. 6.9 beta = -4.41 phi_s + 6.65 (semi-rigid); Arrayago I., Rasmussen K.J.R., Zhang H. -- System-based reliability analysis of stainless steel frames subjected to gravity and wind loads, Structural Safety 97 (2022) 102211 (CC-BY, UPCommons), sec. 5.3, quoting the carbon-steel calibrations for gravity + wind at beta_0 ~ 2.50; Liu W., Zhang H., Rasmussen K.J.R., Yan S. -- System-based limit state design criterion for 3D steel frames under wind loads, J. Constr. Steel Res. 157 (2019) 440-449; Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+    "check": "phi_s*lambda_u = 0.846 FAIL",
+    "mechanism": "partial yielding (15 floor) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 1.728,
+    "steps": 23,
+    "seconds": 307.1
+   },
+   {
+    "label": "0.9DL+1.5W_X",
+    "kind": "wind",
+    "imperfection": "+X",
+    "scheme": "proportional",
+    "lambda_u": 2.303,
+    "lambda_first_yield": 1.83,
+    "phi_s": 0.85,
+    "phi_class": "HR-W",
+    "phi_source": "Wan W. -- System reliability of semi-rigid steel frames designed with Direct Design Method, PhD thesis, University of Sydney 2024 (open access, hdl 2123/32474): Tables 6.10-6.14 (rigid rows: mean beta 3.02 at phi_s 0.80, 2.80 at 0.85; five planar hot-rolled frames, 1.2D+0.5L+W), Table 6.15 and Eq. 6.9 beta = -4.41 phi_s + 6.65 (semi-rigid); Arrayago I., Rasmussen K.J.R., Zhang H. -- System-based reliability analysis of stainless steel frames subjected to gravity and wind loads, Structural Safety 97 (2022) 102211 (CC-BY, UPCommons), sec. 5.3, quoting the carbon-steel calibrations for gravity + wind at beta_0 ~ 2.50; Liu W., Zhang H., Rasmussen K.J.R., Yan S. -- System-based limit state design criterion for 3D steel frames under wind loads, J. Constr. Steel Res. 157 (2019) 440-449; Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+    "check": "phi_s*lambda_u = 1.957 PASS",
+    "mechanism": "partial yielding (64 floor) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 2.441,
+    "steps": 48,
+    "seconds": 243.8
+   },
+   {
+    "label": "0.9DL+1.5W_Y",
+    "kind": "wind",
+    "imperfection": "+Y",
+    "scheme": "proportional",
+    "lambda_u": 1.596,
+    "lambda_first_yield": 1.544,
+    "phi_s": 0.85,
+    "phi_class": "HR-W",
+    "phi_source": "Wan W. -- System reliability of semi-rigid steel frames designed with Direct Design Method, PhD thesis, University of Sydney 2024 (open access, hdl 2123/32474): Tables 6.10-6.14 (rigid rows: mean beta 3.02 at phi_s 0.80, 2.80 at 0.85; five planar hot-rolled frames, 1.2D+0.5L+W), Table 6.15 and Eq. 6.9 beta = -4.41 phi_s + 6.65 (semi-rigid); Arrayago I., Rasmussen K.J.R., Zhang H. -- System-based reliability analysis of stainless steel frames subjected to gravity and wind loads, Structural Safety 97 (2022) 102211 (CC-BY, UPCommons), sec. 5.3, quoting the carbon-steel calibrations for gravity + wind at beta_0 ~ 2.50; Liu W., Zhang H., Rasmussen K.J.R., Yan S. -- System-based limit state design criterion for 3D steel frames under wind loads, J. Constr. Steel Res. 157 (2019) 440-449; Zhang H., Shayan S., Rasmussen K.J.R., Ellingwood B.R. -- System-based design of planar steel frames, II: Reliability results and design recommendations, J. Constr. Steel Res. 123 (2016) 154-161",
+    "check": "phi_s*lambda_u = 1.357 PASS",
+    "mechanism": "partial yielding (8 roof) without a developed hinge at the peak",
+    "hinges_by_role": {},
+    "buckled_braces": 0,
+    "roof_disp_at_peak_in": 2.676,
+    "steps": 33,
+    "seconds": 195.7
+   }
+  ],
+  "sensitivity": [],
+  "member_state_at_collapse": [
+   {
+    "role": "brace",
+    "section": "CHS168.3X8",
+    "n": 180,
+    "DC": 0.233,
+    "combo": "0.9DL+1.5EQ_X",
+    "ratio": 0.19,
+    "yielded": 0,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "floor",
+    "section": "NPB450X190X67.16",
+    "n": 196,
+    "DC": 0.426,
+    "combo": "1.2DL+1.2LL+1.2EQ_X",
+    "ratio": 2.42,
+    "yielded": 50,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "gravity_col",
+    "section": "MB300",
+    "n": 12,
+    "DC": 0.412,
+    "combo": "1.5DL+1.5EQ_X",
+    "ratio": 0.2,
+    "yielded": 0,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "gravity_col",
+    "section": "WPB300X300X69.8",
+    "n": 24,
+    "DC": 0.49,
+    "combo": "0.9DL+1.5EQ_X",
+    "ratio": 0.35,
+    "yielded": 0,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "gravity_col",
+    "section": "WPB300X300X88.34",
+    "n": 24,
+    "DC": 0.689,
+    "combo": "0.9DL+1.5EQ_X",
+    "ratio": 0.49,
+    "yielded": 0,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "lateral_col",
+    "section": "HB300",
+    "n": 18,
+    "DC": 0.187,
+    "combo": "0.9DL+1.5EQ_X",
+    "ratio": 0.12,
+    "yielded": 0,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "lateral_col",
+    "section": "WPB300X300X100.85",
+    "n": 36,
+    "DC": 0.356,
+    "combo": "0.9DL+1.5EQ_X",
+    "ratio": 0.32,
+    "yielded": 0,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "lateral_col",
+    "section": "WPB300X300X88.34",
+    "n": 36,
+    "DC": 0.258,
+    "combo": "0.9DL+1.5EQ_X",
+    "ratio": 0.18,
+    "yielded": 0,
+    "hinges": 0,
+    "buckled": 0
+   },
+   {
+    "role": "roof",
+    "section": "NPB400X180X57.38",
+    "n": 49,
+    "DC": 0.385,
+    "combo": "1.5DL+1.5LL",
+    "ratio": 13.8,
+    "yielded": 8,
+    "hinges": 8,
+    "buckled": 0
+   }
+  ],
+  "caveats": [
+   "LTB/local buckling of beams outside the fibre model",
+   "collector axial not in rigid-diaphragm model",
+   "connections not modelled",
+   "composite action ignored"
+  ]
+ }
+}

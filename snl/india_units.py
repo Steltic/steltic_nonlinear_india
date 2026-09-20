@@ -721,6 +721,14 @@ def mass_tonne_to_kip_sec2_in(m: float) -> float:
     return float(m) * MM_PER_IN / KIP_TO_N
 
 
+def rot_mass_tonne_mm2_to_kip_s2_in(v: float) -> float:
+    """Rotational mass tonne·mm² -> kip·s²·in (WP4.2 / NLREPO-02).
+
+    1 tonne·mm² = 1 N·s²·mm = (1/4448.22 kip)·s²·(1/25.4 in) -> divide by KIP_TO_N·MM_PER_IN.
+    """
+    return float(v) / (KIP_TO_N * MM_PER_IN)
+
+
 def build_nl_unit_bridge(source: str = "N-mm", detail: dict | None = None) -> dict:
     """Provenance block stored on calc['_nl_unit_bridge'] / cfg['_nl_unit_bridge']."""
     return {

@@ -6,7 +6,8 @@ What we read (all produced by steltic's pipeline.design_and_report / bundle.make
   <building>/design/member_schedule.csv   ele_tag -> member kind (col/beam/brace) + AISC section
   <building>/design/calc_package.json     roles, demands, agent capacities, capacity_design block
   <building>/cfg.py                   the agent's cfg (seis params, system, heights, loads) -- optional
-  <building>/report.html              fallback source for SDS/SD1/R/Cd/Om0/Ie, W, V, T (regex on text)
+  <building>/report.html              USA only: fallback source for SDS/SD1/R/Cd/Om0/Ie, W, V, T (regex)
+  <building>/seismic_calc.json, load_plan.json   India: structured IS 1893 Z/I/R/soil/Ta/W/VB (no SDS/SD1/Cd/Om0)
 
 Nothing here runs the model: model_opensees.py is PARSED (regex on `ops.<cmd>(...)` lines), never
 exec'd, so a package can be inspected safely before anything is analysed.
@@ -50,6 +51,8 @@ class DesignBasis:
     heights_in: Optional[list] = None
     site_class: Optional[str] = None
     package_units: Optional[str] = None      # "kip-in" | "N-mm" | "N-mm→kip-in"
+    jurisdiction: Optional[str] = None       # "india" | None (USA scaffolding)
+    india: Optional[dict] = None             # structured IS 1893 inputs (zone, Z, soil, I, R, Ta, W, VB, W_by_floor)
     sources: dict = field(default_factory=dict)   # field -> where it came from
 
 
@@ -256,12 +259,59 @@ def _basis_from_report(report_html: Path, b: DesignBasis):
     grab("T_design_s", r"design period T\s*=\s*min\([^)]*\)\s*=\s*" + _NUM)
 
 
+def is_india_package(root: Path, calc: dict | None = None) -> bool:
+    """India HR package: calc/load_plan jurisdiction india, or an IS seismic_calc.json next to the model."""
+    calc = calc or {}
+    if str(calc.get("jurisdiction") or "").lower() == "india" or "IS 800" in str(calc.get("code") or ""):
+        return True
+    lp = root / "load_plan.json"
+    if lp.exists():
+        try:
+            if str((json.load(open(lp, encoding="utf-8")) or {}).get("jurisdiction") or "").lower() == "india":
+                return True
+        except Exception:
+            pass
+    return (root / "seismic_calc.json").exists()
+
+
+def _basis_india(root: Path, b: DesignBasis):
+    """India: structured IS 1893 values only. SDS/SD1/Cd/Om0 are ASCE quantities and are NEVER read (WP4.1)."""
+    from nlrha.india_hazard import inputs_from_package
+    from snl.india_units import KN_TO_KIP
+    ind = inputs_from_package(root)
+    b.jurisdiction = "india"
+    b.india = ind
+    if ind.get("R") is not None:
+        b.R = float(ind["R"]); b.sources["R"] = ind["sources"].get("R")
+    if ind.get("I") is not None:
+        b.Ie = float(ind["I"]); b.sources["Ie"] = ind["sources"].get("I") + " (IS 1893 Table 8 I)"
+    if ind.get("W_kN") is not None:
+        b.W_kip = float(ind["W_kN"]) * KN_TO_KIP; b.sources["W_kip"] = ind["sources"].get("W_kN") + " (kN→kip)"
+    if ind.get("VB_kN") is not None:
+        b.V_design_kip = float(ind["VB_kN"]) * KN_TO_KIP; b.sources["V_design_kip"] = ind["sources"].get("VB_kN") + " (kN→kip)"
+    if ind.get("Ta") is not None:
+        b.T_design_s = float(ind["Ta"]); b.sources["T_design_s"] = ind["sources"].get("Ta")
+    b.SDS = b.SD1 = b.S1 = b.Cd = b.Om0 = None
+    b.sources["SDS/SD1/Cd/Om0"] = "not read for India (ASCE quantities; IS 1893 elastic spectrum used, D6)"
+
+
 def read_basis(root: Path, calc: dict) -> DesignBasis:
     b = DesignBasis()
-    if (root / "cfg.py").exists():
-        _basis_from_cfg(root / "cfg.py", b)
-    if (root / "report.html").exists():
-        _basis_from_report(root / "report.html", b)
+    if is_india_package(root, calc):
+        _basis_india(root, b)
+        if (root / "cfg.py").exists():
+            src = (root / "cfg.py").read_text(encoding="utf-8", errors="replace")
+            mo = re.search(r"['\"]?\bsystem['\"]?\s*[:=]\s*['\"]([^'\"]+)['\"]", src)
+            if mo:
+                b.system = mo.group(1); b.sources["system"] = "cfg.py"
+            mo = re.search(r"['\"]?\bunits['\"]?\s*[:=]\s*['\"]([^'\"]+)['\"]", src)
+            if mo:
+                b.package_units = mo.group(1); b.sources["package_units"] = "cfg.py"
+    else:
+        if (root / "cfg.py").exists():
+            _basis_from_cfg(root / "cfg.py", b)
+        if (root / "report.html").exists():
+            _basis_from_report(root / "report.html", b)
     dr = root / "design" / "design_report.md"
     if b.system is None and dr.exists():
         mo = re.search(r";\s*system\s+([A-Za-z0-9 +/-]+?)\s*;", dr.read_text(errors="replace"))
@@ -270,11 +320,19 @@ def read_basis(root: Path, calc: dict) -> DesignBasis:
     cd = calc.get("capacity_design") or {}
     if b.system is None and cd.get("system"):
         b.system = cd["system"]; b.sources["system"] = "calc_package.capacity_design"
+    if b.system is None and b.jurisdiction == "india":
+        lp = root / "load_plan.json"
+        try:
+            sysn = ((json.load(open(lp, encoding="utf-8")) or {}).get("seismic_summary") or {}).get("system")
+            if sysn:
+                b.system = sysn; b.sources["system"] = "load_plan.seismic_summary.system"
+        except Exception:
+            pass
     return b
 
 
 # --------------------------------------------------------------------------- entry point
-def load(path: str | os.PathLike) -> Package:
+def load(path: str | os.PathLike, apply_is_mass: bool = True) -> Package:
     root = locate(path)
     files = {"model": root / "model_opensees.py",
              "schedule": root / "design" / "member_schedule.csv",
@@ -289,6 +347,9 @@ def load(path: str | os.PathLike) -> Package:
     pkg = Package(root=root, name=name, model=model, schedule=schedule, calc=calc, basis=basis,
                   files={k: str(v) for k, v in files.items() if v.exists()})
     apply_nl_unit_bridge(pkg)  # Stage B: N-mm HR → kip-in analysis (no-op if already kip-in)
+    if basis.jurisdiction == "india" and apply_is_mass:
+        from . import india_model as IMD
+        IMD.apply_is_seismic_mass(pkg)   # WP4.8: mass = IS seismic weight W_i/g (gate <= 1 %)
     return pkg
 
 
@@ -334,11 +395,16 @@ def apply_nl_unit_bridge(pkg: "Package") -> "Package":
         pkg.basis.package_units = pkg.basis.package_units or "kip-in"
         return pkg
 
-    # Stage D: keep native N-mm for analysis when cfg requests it (skip kip bridge)
+    # Stage D (native N-mm analysis) is DISABLED for pushover/NLRHA until brace_spec, column capacity,
+    # pushover gravity and the NSP delta_t are ported to N-mm (NLREPO-09 / WP4.7). Always Stage B.
     cfg_probe = dict(pkg.calc or {})
     if pkg.basis.package_units:
         cfg_probe.setdefault("units", pkg.basis.package_units)
     if U.wants_native_nmm_analysis(cfg_probe):
+        print("[unit_bridge] native N-mm analysis requested but NOT ported for pushover/NLRHA "
+              "(WP4.7) -- forcing Stage B (N-mm -> kip-in at ingest)")
+        pkg.basis.sources["stage_d_refused"] = "WP4.7: Stage B forced"
+    if False:  # Stage D path kept for reference; re-enable per routine once ported
         U.set_analysis_units("N-mm")
         pkg.calc["_nl_analysis_units"] = "N-mm"
         pkg.calc["_nl_unit_bridge"] = {
@@ -357,8 +423,9 @@ def apply_nl_unit_bridge(pkg: "Package") -> "Package":
         n_nodes += 1
     n_mass = 0
     for tag, mvec in list(pkg.model.masses.items()):
+        # translations: tonne -> kip·s²/in ; rotations (Izz etc.): tonne·mm² -> kip·s²·in (WP4.2)
         pkg.model.masses[tag] = [
-            U.mass_tonne_to_kip_sec2_in(v) if i < 3 else float(v)
+            U.mass_tonne_to_kip_sec2_in(v) if i < 3 else U.rot_mass_tonne_mm2_to_kip_s2_in(v)
             for i, v in enumerate(mvec)
         ]
         n_mass += 1
@@ -383,6 +450,7 @@ def apply_nl_unit_bridge(pkg: "Package") -> "Package":
     detail = dict(signals, n_nodes=n_nodes, n_mass_nodes=n_mass, n_elements=n_ele)
     bridge = U.build_nl_unit_bridge(source="N-mm", detail=detail)
     pkg.calc["_nl_unit_bridge"] = bridge
+    pkg.calc["_nl_analysis_units"] = "kip-in"      # explicit: fibre/hinge builders must not assume N-mm (WP4.7)
     pkg.basis.package_units = "N-mm→kip-in"
     pkg.basis.sources["unit_bridge"] = "apply_nl_unit_bridge Stage B"
     return pkg

@@ -101,32 +101,57 @@ def build(pkg, prm, ch16, PG, member_nseg=None, plasticity=None):
     return hinges, stats, elastic_eles
 
 
-def modal(pkg, nmodes=12):
-    """Periods + effective modal mass fractions in X and Y (for the period range and the 90% rule)."""
+def _participation(pkg, nmodes):
+    """Eigen solve + effective modal mass fractions using the FULL nodal mass vector (all nodes, all DOFs), so that
+    each fraction is <= 1 and the sum over a complete basis is 1 (WP4.12: fixes local modes reporting 100 %)."""
     ops.wipeAnalysis()
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
     w2 = ops.eigen("-genBandArpack", nmodes)
     lv = NM.levels(pkg)
-    mk = {k: pkg.model.masses[m][0] for k, z, m, s in lv}; Mtot = sum(mk.values())
+    tags = ops.getNodeTags()
+    mass = {t: ops.nodeMass(t) for t in tags}
+    mass = {t: m for t, m in mass.items() if any(abs(v) > 0 for v in m)}
+    Mx = sum(m[0] for m in mass.values()); My = sum(m[1] for m in mass.values())
+    Jz = sum(m[5] for m in mass.values())
     modes = []
     for i, w in enumerate(w2):
         T = 2 * math.pi / math.sqrt(max(w, 1e-12))
-        fr = {}
-        Jk = {k: pkg.model.masses[m][5] for k, z, m, s in lv}
-        px = {k: ops.nodeEigenvector(m, i + 1, 1) for k, z, m, s in lv}; py = {k: ops.nodeEigenvector(m, i + 1, 2) for k, z, m, s in lv}
-        pr = {k: ops.nodeEigenvector(m, i + 1, 6) for k, z, m, s in lv}
-        Mn = sum(mk[k] * (px[k] ** 2 + py[k] ** 2) + Jk[k] * pr[k] ** 2 for k in mk)      # full generalised mass (x, y, torsion)
-        for d, phi in (("X", px), ("Y", py)):
-            Ln = sum(mk[k] * phi[k] for k in phi)
-            fr[d] = (Ln ** 2 / Mn / Mtot) if Mn > 0 else 0.0
-        modes.append(dict(mode=i + 1, T=T, fx=fr["X"], fy=fr["Y"]))
+        Mn = Lx = Ly = Lr = 0.0
+        for t, m in mass.items():
+            v = ops.nodeEigenvector(t, i + 1)
+            Mn += sum(m[j] * v[j] * v[j] for j in range(6))
+            Lx += m[0] * v[0]; Ly += m[1] * v[1]; Lr += m[5] * v[5]
+        fx = (Lx * Lx / Mn / Mx) if Mn > 0 and Mx > 0 else 0.0
+        fy = (Ly * Ly / Mn / My) if Mn > 0 and My > 0 else 0.0
+        fr = (Lr * Lr / Mn / Jz) if Mn > 0 and Jz > 0 else 0.0
+        modes.append(dict(mode=i + 1, T=T, fx=fx, fy=fy, frz=fr))
+    return modes
+
+
+def modal(pkg, nmodes=12, target=0.90, max_modes=60):
+    """Periods + effective modal mass fractions in X, Y (and torsion). Solves more modes until the cumulative mass
+    reaches `target` in both directions (IS 1893 7.7.5.2 90 % rule; WP4.12), and flags spurious modes
+    (T > 5 x the fundamental with < 1 % mass in every direction)."""
+    n = int(nmodes)
+    while True:
+        modes = _participation(pkg, n)
+        cx = sum(m["fx"] for m in modes); cy = sum(m["fy"] for m in modes)
+        if (cx >= target and cy >= target) or n >= max_modes:
+            break
+        n = min(max_modes, n * 2)
     T1x = max(modes, key=lambda m: m["fx"])["T"]; T1y = max(modes, key=lambda m: m["fy"])["T"]
+    Tf = max(T1x, T1y)
+    spurious = [m for m in modes if m["T"] > 5.0 * Tf and max(m["fx"], m["fy"], m["frz"]) < 0.01]
     cx = cy = 0.0; T90 = None
     for m in modes:                                 # cumulative mass, both directions -> the period at which both reach 90%
         cx += m["fx"]; cy += m["fy"]
-        if cx >= 0.9 and cy >= 0.9:
-            T90 = m["T"]; break
-    return dict(modes=modes, T1x=T1x, T1y=T1y, T90=T90, cum_x=cx, cum_y=cy)
+        if T90 is None and cx >= target and cy >= target:
+            T90 = m["T"]
+    tors = max(modes, key=lambda m: m["frz"]) if modes else None
+    return dict(modes=modes, T1x=T1x, T1y=T1y, T90=T90, cum_x=cx, cum_y=cy, n_modes=len(modes),
+                T_torsion=(tors["T"] if tors else None), spurious_modes=[m["mode"] for m in spurious],
+                spurious_ok=not spurious, participation_sum_ok=bool(cx <= 1.0 + 1e-6 and cy <= 1.0 + 1e-6),
+                basis="full nodal mass vector; spurious = T > 5 x T1 with < 1 % mass")
 
 
 def set_damping(xi, T1, elastic_eles, T_upper_ratio=0.2):
