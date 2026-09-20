@@ -1216,6 +1216,9 @@ def artefact_gate(job_dir: str | None) -> dict:
             if "no R" not in str(lp.get("target_label") or ""):
                 reasons.append("NLRHA %s target is not the IS elastic spectrum (label %r)" % (lv, lp.get("target_label")))
             rs = lp.get("response_summary") or {}
+            n_suite = len(((lp.get("ground_motions") or {}).get("selected")) or [])
+            if n_suite and (rs.get("n_records") or 0) < n_suite:
+                reasons.append("NLRHA %s: only %s of the %d suite records analysed" % (lv, rs.get("n_records"), n_suite))
             if not rs.get("converged_all"):
                 reasons.append("NLRHA %s: %s of %s records converged" % (lv, rs.get("n_converged"), rs.get("n_records")))
             if not (rs.get("non_vacuous") or {}).get("ok"):
