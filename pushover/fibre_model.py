@@ -97,7 +97,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
     mat = MAT_BASE
     stats = dict(col=0, beam=0, brace=0, brace_nonlinear=0, force_controlled=0, released_ends=0,
                  panel_zones=0, panel_zone_mode="rigid", plasticity="fibre", member_nseg=nseg,
-                 fibre_eles=[], fibre_secs=0, fibre_units=units)
+                 fibre_eles=[], fibre_secs=0, fibre_units=units, fibre_nip=nip)
     sec_cache = {}  # (section, kind) -> secTag
     cover = stats.setdefault("_dof_cover", {})
 
