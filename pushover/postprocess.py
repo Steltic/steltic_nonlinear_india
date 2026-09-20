@@ -61,12 +61,38 @@ def initial_stiffness(u, V, frac=0.3):
 
 
 # --------------------------------------------------------------------------- NSP target displacement
+def india_levels(prm=None):
+    """NSP hazard levels for India (D6): IS-DBE = (Z/2)·I·Sa/g, IS-MCE = Z·I·Sa/g (factor 2, not ASCE 1.5)."""
+    return {"IS-DBE": "DBE", "IS-MCE": "MCE"}
+
+
+def _india_sa_fn(basis, level):
+    from nlrha import india_hazard as IH
+    ind = basis.india or {}
+    Z, I, soil = ind.get("Z"), ind.get("I"), ind.get("soil")
+    if Z is None or I is None or soil is None:
+        raise ValueError("India NSP needs Z, I and soil from seismic_calc/load_plan (got Z=%r I=%r soil=%r)" % (Z, I, soil))
+    lv = IH.normalize_level(level)
+    return (lambda T: IH.elastic_sa(T, Z=Z, I=I, soil=soil, level=lv)), lv
+
+
 def nsp_target(run, basis, prm, hazard_factor, site_class="D"):
-    """ASCE 41 Eq. 7-28 target displacement for one hazard level (hazard_factor 1.0 = BSE-1N, 1.5 = BSE-2N).
+    """ASCE 41 Eq. 7-28 form target displacement (the only NSP available; IS has none — informative, D7).
+
+    India (basis.jurisdiction == 'india'): `hazard_factor` is the level 'DBE' | 'MCE' and Sa(Te) comes from the
+    IS 1893 ELASTIC spectrum (same function as the NLRHA target, factor 2 between levels, no R).
+    USA scaffolding: hazard_factor 1.0 = BSE-1N, 1.5 = BSE-2N on SDS/SD1.
     Iterates because the idealisation depends on the target it produces."""
     u, V = run["rec"]["u"], run["rec"]["V"]
     W = basis.W_kip or sum(m * G_IN for m in run["pattern"]["masses"].values())
-    SXS, SX1 = basis.SDS * hazard_factor, basis.SD1 * hazard_factor
+    india = getattr(basis, "jurisdiction", None) == "india"
+    if india:
+        sa_fn, level = _india_sa_fn(basis, hazard_factor)
+        SXS = SX1 = None
+    else:
+        level = None
+        SXS, SX1 = basis.SDS * hazard_factor, basis.SD1 * hazard_factor
+        sa_fn = lambda T: spectrum_sa(T, SXS, SX1)  # noqa: E731
     T1 = run["pattern"]["T1"]
     Ki = initial_stiffness(u, V)
     phi, mk = run["pattern"]["phi"], run["pattern"]["masses"]
@@ -74,13 +100,20 @@ def nsp_target(run, basis, prm, hazard_factor, site_class="D"):
     nst = len(phi)
     Cm_tab = prm["nsp"]
     Cm = Cm_tab["Cm_1_2_stories"] if nst <= 2 else Cm_tab["Cm_steel_MF_3plus_stories"]
-    a_site = Cm_tab["C1_site_factor_a"].get(site_class.upper(), 60)
+    if india:
+        # ASCE 41 C1 'a' is keyed to ASCE site classes, which have no IS mapping: EOR input, else the most
+        # conservative tabulated value (60) — disclosed in the output.
+        a_site = float(Cm_tab.get("C1_a_eor") or 60.0)
+        a_basis = "EOR input nsp.C1_a_eor" if Cm_tab.get("C1_a_eor") else "a = 60 (conservative ASCE 41 value; no IS analogue)"
+    else:
+        a_site = Cm_tab["C1_site_factor_a"].get((site_class or "D").upper(), 60)
+        a_basis = "ASCE site class %s" % site_class
     ud = max(u) * 0.5
     out = None
     for it in range(25):
         ide = idealize(u, V, ud)
         Te = T1 * math.sqrt(Ki / ide["Ke"]) if ide["Ke"] > 0 else T1          # Eq. 7-27
-        Sa = spectrum_sa(Te, SXS, SX1)
+        Sa = sa_fn(Te)
         Cm_eff = 1.0 if Te > 1.0 else Cm
         mu_str = Sa * Cm_eff / (ide["Vy"] / W)                                  # Eq. 7-31
         Te_c = max(Te, 0.2)
@@ -88,7 +121,8 @@ def nsp_target(run, basis, prm, hazard_factor, site_class="D"):
         C2 = 1.0 if Te > 0.7 else 1.0 + (1.0 / 800.0) * ((mu_str - 1.0) / Te_c) ** 2   # Eq. 7-30
         dt = C0 * C1 * C2 * Sa * (Te ** 2 / (4 * math.pi ** 2)) * G_IN         # Eq. 7-28 (in)
         new_ud = min(dt, u[-1])
-        out = dict(hazard_factor=hazard_factor, SXS=SXS, SX1=SX1, Te=Te, Ki=Ki, Ke=ide["Ke"], Vy=ide["Vy"], uy=ide["uy"],
+        out = dict(hazard_factor=hazard_factor, level=level, spectrum=("IS 1893 elastic %s (no R)" % level) if india else "ASCE SXS/SX1",
+                   C1_a=a_site, C1_a_basis=a_basis, SXS=SXS, SX1=SX1, Te=Te, Ki=Ki, Ke=ide["Ke"], Vy=ide["Vy"], uy=ide["uy"],
                    alpha1=ide["alpha1"], Sa=Sa, C0=C0, C1=C1, C2=C2, Cm=Cm_eff, mu_strength=mu_str,
                    target_disp_in=dt, target_over_H=dt / run["H"], reached_150pct=(u[-1] >= 1.5 * dt),
                    reached_target=(u[-1] >= dt), W_kip=W, iterations=it + 1)
@@ -107,7 +141,8 @@ def nsp_target(run, basis, prm, hazard_factor, site_class="D"):
     story1 = run["rec"]["story_u"][i_el][0]
     theta1 = QG * story1 / (V[i_el] * run["heights"][0]) if V[i_el] > 0 else 0.0
     alpha_pd = -theta1
-    lam = 0.8 if SX1 >= 0.6 else 0.2
+    sx1_eq = (sa_fn(1.0) if india else SX1)
+    lam = 0.8 if sx1_eq >= 0.6 else 0.2
     alpha_e = alpha_pd + lam * (alpha2 - alpha_pd)
     h = 1.0 + 0.15 * math.log(max(out["Te"], 0.05))
     mu_max = (out["target_disp_in"] / max(out["uy"], 1e-9)) + (abs(alpha_e) ** (-h)) / 4.0 if alpha_e != 0 else float("inf")
@@ -141,6 +176,23 @@ def p695_factors(run, basis, nsp_bse1):
 def step_at(run, disp):
     u = np.asarray(run["rec"]["u"])
     return int(min(np.searchsorted(u, disp), len(u) - 1))
+
+
+def interp_state(run, disp):
+    """(i0, i1, w): the recorded steps bracketing roof displacement `disp` and the linear weight of i1.
+    Acceptance is read AT delta_t by interpolation (WP4.3), not at the first step past it."""
+    u = np.asarray(run["rec"]["u"], float)
+    if disp <= u[0]:
+        return 0, 0, 0.0
+    if disp >= u[-1]:
+        return len(u) - 1, len(u) - 1, 0.0
+    i1 = int(np.searchsorted(u, disp)); i0 = max(0, i1 - 1)
+    du = u[i1] - u[i0]
+    return i0, i1, (float((disp - u[i0]) / du) if du > 0 else 0.0)
+
+
+def _lerp(a, b, w):
+    return [x + w * (y - x) for x, y in zip(a, b)]
 
 
 def acceptance(run, hinges, disp, level_name):
@@ -186,3 +238,63 @@ def acceptance(run, hinges, disp, level_name):
     return dict(level=level_name, roof_disp_in=float(run["rec"]["u"][i]), step=i, groups=table, worst_DC=worst,
                 census=sorted(census.values(), key=lambda c: c["z_in"]), story_drifts=drifts,
                 max_story_drift=max(d["drift_ratio"] for d in drifts), col_N_max_kip=float(max(colN)) if colN else None)
+
+
+# --------------------------------------------------------------------------- India (D7): informative response at delta_t
+IS_NL_STATEMENT = ("IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; "
+                   "results are for information.")
+
+
+def response_at(run, disp, level_name, meta=None, ref_rot=None, basis=None):
+    """India NSP response quantities AT delta_t (linear interpolation between the bracketing steps; the push step is
+    <= delta_t/10 near the target). No IO/LS/CP verdict (D7): storey drifts, base shear vs VB, member fibre-strain
+    ratios and chord rotations vs the IS 800 §12 REFERENCE rotation, brace ductility, and the yield census."""
+    from .member_response import group_summary
+    i0, i1, w = interp_state(run, disp)
+    u = float(run["rec"]["u"][i0] + w * (run["rec"]["u"][i1] - run["rec"]["u"][i0]))
+    V = float(run["rec"]["V"][i0] + w * (run["rec"]["V"][i1] - run["rec"]["V"][i0]))
+    story_u = _lerp(run["rec"]["story_u"][i0], run["rec"]["story_u"][i1], w)
+    drifts, prev = [], 0.0
+    for k, (uk, hk) in enumerate(zip(story_u, run["heights"])):
+        drifts.append(dict(story=k + 1, drift_ratio=(uk - prev) / hk)); prev = uk
+    mem = None
+    if run["rec"].get("members") and meta:
+        a, b = run["rec"]["members"][i0], run["rec"]["members"][i1]
+        m = {t: tuple(x + w * (y - x) for x, y in zip(a["m"][t], b["m"].get(t, a["m"][t]))) for t in a["m"]}
+        bb = {t: (a["b"][t][0] + w * (b["b"].get(t, a["b"][t])[0] - a["b"][t][0]), bool(b["b"].get(t, a["b"][t])[1] if w > 0.5 else a["b"][t][1]))
+              for t in a["b"]}
+        pk = MR_envelope_single(m, bb)
+        mem = group_summary([pk], meta, ref_rot)
+    Vdes = getattr(basis, "V_design_kip", None) if basis is not None else None
+    census = None
+    if mem:
+        census = dict(members_yielded=sum(1 for g in mem["member_groups"] if g["yielded"]),
+                      member_groups=len(mem["member_groups"]),
+                      braces_yielded_tension=sum(1 for g in mem["brace_groups"] if g["yielded_tension"]),
+                      braces_buckled=sum(g["n_buckled_max"] for g in mem["brace_groups"]),
+                      basis="fibre yielding (strain ratio >= 1) and brace tension yield / buckling at delta_t")
+    return dict(level=level_name, roof_disp_in=u, roof_disp_mm=u * 25.4, step_bracket=[i0, i1], weight=w,
+                base_shear_kip=V, base_shear_kN=V * 4.4482216152605, V_over_VB=(V / Vdes if Vdes else None),
+                story_drifts=drifts, max_story_drift=max(d["drift_ratio"] for d in drifts),
+                members=mem, census=census, non_vacuous=bool(mem and (mem["member_groups"] or mem["brace_groups"])),
+                statement=IS_NL_STATEMENT)
+
+
+def MR_envelope_single(m, b):
+    return dict(m={t: [v[0], v[1]] for t, v in m.items()},
+                b={t: [max(v[0], 0.0), max(-v[0], 0.0), v[1]] for t, v in b.items()})
+
+
+def capacity_summary(run, basis, nsp_dbe):
+    """India: capacity-curve quantities for information -- Vmax, Vmax/VB, Vmax/W, yield displacement from the
+    bilinear fit at delta_t(DBE), displacement ductility at each level and at the end of the curve."""
+    u = np.asarray(run["rec"]["u"]); V = np.asarray(run["rec"]["V"])
+    Vmax = float(V.max()); i_max = int(np.argmax(V))
+    W = basis.W_kip
+    ide = idealize(u, V, float(u[-1]))
+    return dict(Vmax_kip=Vmax, Vmax_kN=Vmax * 4.4482216152605, u_at_Vmax_in=float(u[i_max]),
+                V_design_kip=basis.V_design_kip, Vmax_over_VB=(Vmax / basis.V_design_kip if basis.V_design_kip else None),
+                Vmax_over_W=(Vmax / W if W else None), uy_fit_in=ide["uy"], Vy_fit_kip=ide["Vy"],
+                u_end_in=float(u[-1]), mu_end=float(u[-1] / ide["uy"]) if ide["uy"] > 0 else None,
+                stop_reason=run.get("stop_reason"), tail_status=(run.get("tail") or {}).get("status"),
+                note="bilinear fit over the whole recorded curve (ASCE 41 7.4.3.2.4 form, information)")

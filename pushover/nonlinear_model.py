@@ -707,7 +707,7 @@ def _tail_recovery(rec, snapshot, roof, dof, dU0, umax, Vmax, strategies, verbos
 
 
 def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, verbose=True, gravity_table=None,
-             tail_strategies=("fine_step", "arclength")):
+             tail_strategies=("fine_step", "arclength"), recorder=None, target_estimator=None):
     """Gravity (load control) then displacement-controlled push at the roof master in `direction`
     with the first-mode force pattern. Records the capacity curve, story displacements and every
     hinge's plastic rotation at each step. Stops at max_roof_drift*H, at 20% strength loss past the
@@ -720,6 +720,14 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
     lv = levels(pkg); dof = 1 if direction.upper() == "X" else 2
     roof = lv[-1][2]; H = lv[-1][1]
     dU0 = dU0 or H / 1500.0
+    dU_coarse, u_fine_until = dU0, 0.0
+    if target_estimator is not None:
+        # WP4.3: resolve the response at delta_t -- step <= delta_t/10 up to 2 x the largest estimated target
+        est = [float(x) for x in (target_estimator(pat) or []) if x and x > 0]
+        if est:
+            dU0 = min(dU0, min(est) / 10.0)
+            u_fine_until = 2.0 * max(est)
+    dU_fine_used = dU0
     ops.timeSeries("Linear", 2); ops.pattern("Plain", 2, 2)
     for k, z, master, s in lv:
         f = [0.0] * 6; f[dof - 1] = pat["F"][k]
@@ -729,7 +737,7 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
     ops.integrator("DisplacementControl", roof, dof, dU0); ops.analysis("Static")
     fixed = [t for t, fl in pkg.model.fixes.items() if fl[dof - 1] == 1]
     cols = [e["tag"] for e in pkg.model.elements if "etype" not in e and member_kind(pkg, e) == "col"]
-    rec = dict(u=[], V=[], story_u=[], hinge_pl=[], hinge_M=[], col_N=[])
+    rec = dict(u=[], V=[], story_u=[], hinge_pl=[], hinge_M=[], col_N=[], members=[])
     hz = sorted(hinges)
     K0 = [hinges[t]["K0"] for t in hz]
     B = [max(hinges[t]["spec"].b_pl, 1e-9) for t in hz]
@@ -765,6 +773,8 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
         rec["a_ratio"].append(max([abs(pl[i]) / A[i] for i in range(len(pl)) if grav[i]] or [0.0]))
         rec["brace_b_ratio"].append(max([abs(pl[i]) / B[i] for i in range(len(pl)) if not grav[i]] or [0.0]))
         rec["col_N"].append([ops.eleResponse(c, "localForce")[0] for c in cols])
+        if recorder is not None:
+            rec["members"].append(recorder.sample())
     snapshot()
     dU, umax, Vmax, halvings, step = dU0, max_roof_drift * H, 0.0, 0, 0
     stop_reason = "reached max roof drift %.1f%% of H" % (100 * max_roof_drift)
@@ -778,10 +788,15 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
         step += 1
         snapshot()
         Vmax = max(Vmax, rec["V"][-1])
+        if verbose and step % 25 == 0:
+            print("[pushover %s] step %d u=%.3f in V=%.0f kip dU=%.4f halvings=%d" % (direction, step, rec["u"][-1], rec["V"][-1], dU, halvings), flush=True)
         if rec["V"][-1] < 0.2 * Vmax and rec["u"][-1] > 0.3 * umax:
             stop_reason = "strength dropped below 20%% of Vmax at u=%.2f in" % rec["u"][-1]; break
         if halvings and step % 20 == 0 and dU < dU0:
             dU *= 2.0                                        # try to speed back up
+        if u_fine_until and rec["u"][-1] > u_fine_until and dU0 < dU_coarse:
+            dU0 = dU_coarse; dU = max(dU, dU_coarse)          # past the target region: back to the normal step
+            ops.integrator("DisplacementControl", roof, dof, dU)
     if verbose:
         print("[pushover %s] T1=%.3fs (mode %d, %.0f%% mass) steps=%d Vmax=%.0f kip u_end=%.2f in  -- %s"
               % (direction, pat["T1"], pat["mode"], 100 * pat["meff_frac"], step, Vmax, rec["u"][-1], stop_reason))
@@ -803,6 +818,7 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
     elif stop_reason.startswith("reached max") and rec["V"][-1] > 0.8 * Vmax:
         tail = dict(needed=True, tried=[], captured=False, status="max_drift",
                     message="reached the max roof drift before losing 20%; raise --max-drift to capture delta_u")
-    return dict(direction=direction, H=H, col_tags=cols, tail=tail,
+    return dict(direction=direction, H=H, col_tags=cols, tail=tail, dU_fine=dU_fine_used,
+                u_fine_until=u_fine_until,
                 gravity_table_QG=[r["QG_kip"] for r in (gravity_table or [])], heights=[lv[0][1]] + [lv[i][1] - lv[i - 1][1] for i in range(1, len(lv))],
                 pattern=pat, rec=rec, hinge_tags=hz, stop_reason=stop_reason, Vmax=Vmax, roof_node=roof)

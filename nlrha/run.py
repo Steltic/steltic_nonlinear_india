@@ -6,6 +6,7 @@ import math, time
 import numpy as np
 import openseespy.opensees as ops
 from pushover import nonlinear_model as NM
+from pushover.member_response import MemberRecorder
 from . import model as MD
 
 G_IN = 386.4  # legacy; Stage D uses snl.india_units.g_accel
@@ -55,6 +56,15 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
     """Build a fresh model and run one scaled pair. Returns peaks/histories for the acceptance module."""
     t0 = time.time()
     hinges, stats, elastic = MD.build(pkg, prm, ch16, PG)
+    recorder = None
+    try:
+        from pushover.member_response import MemberRecorder
+        recorder = MemberRecorder(pkg, hinges, stats)
+    except Exception as ex:  # noqa: BLE001
+        print("[nlrha] member recorder unavailable:", ex)
+    member_peaks = {}
+    fixed_nodes = [t for t in pkg.model.fixes]
+    peak_V = [0.0, 0.0]
     ok = _apply_gravity(loads)
     if ok != 0:
         return dict(record=rec["id"], converged=False, reason="gravity stage failed")
@@ -165,6 +175,12 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
                 p, n = signed_def[tg]; signed_def[tg] = (max(p, v), min(n, v))
             for c in cols:
                 f = ops.eleResponse(c, "localForce"); peak_colN[c] = max(peak_colN[c], f[0] if f else 0.0)
+            # peak base shear (sum of support reactions) and member fibre strain / chord rotation envelopes (WP4.3)
+            ops.reactions()
+            vx = abs(sum(ops.nodeReaction(n, 1) for n in fixed_nodes)); vy = abs(sum(ops.nodeReaction(n, 2) for n in fixed_nodes))
+            peak_V = [max(peak_V[0], vx), max(peak_V[1], vy)]
+            if recorder is not None:
+                MemberRecorder.envelope(member_peaks, recorder.sample())
             if sample_brace and sample_brace in hinges:
                 d = ops.eleResponse(sample_brace, "deformation"); f = ops.eleResponse(sample_brace, "axialForce")
                 brace_hist.append((d[0] if d else 0.0, f[0] if f else 0.0))
@@ -179,7 +195,10 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
                peak_def=peak_def, signed_def=signed_def, peak_colN=peak_colN, hist_t=hist_t, hist_roof=hist_roof, brace_hist=brace_hist,
                frames=dict(t=frames_t, story=frames_story, brace_tags=braces, brace=frames_brace, ag=frames_ag, masters=masters),
                hinges_meta={t: dict(kind=hinges[t]["kind"], section=hinges[t]["section"], z=hinges[t]["z"], ele=hinges[t]["ele"], end=hinges[t]["end"]) for t in hz},
-               specs={t: hinges[t]["spec"] for t in hz}, heights=H, stats=stats)
+               specs={t: hinges[t]["spec"] for t in hz}, heights=H, stats=stats,
+               peak_base_shear_kip=peak_V, member_peaks=member_peaks,
+               member_meta=(recorder.meta() if recorder is not None else None),
+               torsion=getattr(pkg, "_torsion_shift", None))
     if verbose:
         print("[nlrha] %-40s sf=%.2f  %s  steps=%d fails=%d  max drift X %.2f%% Y %.2f%%  roof %.1f/%.1f in  (%.0f s)"
               % (out["label"][:40], sf, "ok " if converged else "NC ", step, fails, 100 * peak_drift[:, 0].max(), 100 * peak_drift[:, 1].max(),
@@ -187,12 +206,38 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
     return out
 
 
+def plan_dims(pkg):
+    """(bx, by) plan dimensions of the diaphragm levels (max over levels), model length units."""
+    bx = by = 0.0
+    for k, z, master, slaves in NM.levels(pkg):
+        xs = [pkg.model.nodes[n][0] for n in slaves]; ys = [pkg.model.nodes[n][1] for n in slaves]
+        bx = max(bx, max(xs) - min(xs)); by = max(by, max(ys) - min(ys))
+    return bx, by
+
+
+def shift_masses(pkg, torsion: dict):
+    """Accidental eccentricity (IS 1893 7.8.2, e = 0.05 b): move each diaphragm master (the centre of mass) by
+    (sx·0.05·bx, sy·0.05·by). The rigid-diaphragm constraint follows the master, so the mass acts eccentrically."""
+    bx, by = plan_dims(pkg)
+    f = float(torsion.get("e_ratio", 0.05))
+    dx, dy = torsion.get("sx", 1) * f * bx, torsion.get("sy", 1) * f * by
+    for k, z, master, slaves in NM.levels(pkg):
+        x, y, zz = pkg.model.nodes[master]
+        pkg.model.nodes[master] = (x + dx, y + dy, zz)
+    pkg._torsion_shift = dict(torsion, dx_mm=dx * 25.4, dy_mm=dy * 25.4, bx_mm=bx * 25.4, by_mm=by * 25.4,
+                              clause="IS 1893 7.8.2 accidental eccentricity 0.05 b")
+    return pkg._torsion_shift
+
+
 def run_record_worker(args):
     """multiprocessing entry: (package_path, params_path, ch16, PG, loads, rec, xi, dt, free_vib, sample_brace) -> result dict."""
     package_path, params_path, ch16, PG, loads, rec, xi, dt, free_vib, sample_brace = args[:10]
     integrator = args[10] if len(args) > 10 else "hht"
+    torsion = args[11] if len(args) > 11 else None
     from pushover import package_reader as PR, hinge_models as HM
     pkg = PR.load(package_path); prm = HM.load_params(params_path)
+    if torsion:
+        shift_masses(pkg, torsion)
     out = run_record(pkg, prm, ch16, PG, loads, rec, xi, None, dt_max=dt, free_vib_s=free_vib, sample_brace=sample_brace, integrator=integrator)
     if not out.get("converged") and "gravity" not in out.get("reason", ""):
         # one automatic retry at half the time step: separates numerical loss of convergence from a genuine dynamic instability
