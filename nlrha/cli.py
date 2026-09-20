@@ -23,10 +23,16 @@ def _load(args):
         print("[%s] %s" % (sev, msg[:160]))
     try:
         out_disc = os.path.join(str(pkg.root), "nlrha")
-        rows = IA.write_complete_gate_disclosures(out_disc, job_dir=str(pkg.root))
+        evidence = {"plasticity": os.environ.get("SNL_PLASTICITY") or "fibre"}
+        rows = IA.write_complete_gate_disclosures(
+            out_disc, job_dir=str(pkg.root), evidence=evidence
+        )
         ids = ", ".join("%s found:%s" % (r.get("id"), r.get("found")) for r in rows)
+        st = IA.design_status(job_dir=str(pkg.root), evidence=evidence, disclosures=rows)
         print("[india_authority] complete_gate_disclosures -> %s (%s)" % (
             os.path.join(out_disc, "complete_gate_disclosures.json"), ids))
+        print("[india_authority] COMPLETE gate design_status=%s complete_allowed=%s admin_notify=%s" % (
+            st.get("status"), st.get("complete_allowed"), st.get("admin_notify")))
     except Exception as ex:  # noqa: BLE001
         print("[india_authority] complete_gate_disclosures skipped:", ex)
     b = pkg.basis

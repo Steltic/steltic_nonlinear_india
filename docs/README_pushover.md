@@ -161,4 +161,5 @@ India COMPLETE-gate honesty: pushover run writes `complete_gate_disclosures.json
 (`india_nsp_acceptance_tables` found:false, prefer fibre / hinge_params UNVERIFIED;
 `asce_16_1_2_drift_relief_analogue` found:false → feedback drift loop ineligible). Do not invent
 NSP acceptance or §16.1.2 drift-relief text.
+Michael 2026-09-20 COMPLETE gate: fibre + those found:false disclosures → `complete_allowed=true` / `design_status=complete` (found:false alone no longer forces PARTIAL). Hinge-only UNVERIFIED without EOR stays PARTIAL.
 

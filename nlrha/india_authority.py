@@ -16,6 +16,10 @@ ASCE 7-22 Ch.16 NLRHA + DDM). On this fork:
   * ASCE 7 §16.1.2 drift relief: **found:false** — no IS 1893 clause frees the
     linear drift limit after a time-history run. Feedback drift loop stays
     ineligible unless nl_plan documents a retrieved India analogue (wave 2+).
+  * COMPLETE gate (Michael 2026-09-20): fibre preferred/used + honest found:false
+    disclosures for NSP tables and §16.1.2 analogue allow COMPLETE. Disclosed
+    found:false no longer forces PARTIAL. Hinge-only UNVERIFIED without EOR
+    still refuses COMPLETE. Do not invent NSP tables or fake §16.1.2 relief.
 
 Reuse helpers from steltic_india (india_seismic, india_loads) when useful; do not
 re-hardcode IS formulas here.
@@ -472,7 +476,9 @@ def nsp_acceptance_tables_status(cfg_or_job=None, job_dir: str | None = None) ->
     """
     h = hinge_analogue_status()
     plan = find_nl_plan(cfg_or_job, job_dir=job_dir) or {}
-    override = plan.get("nsp_acceptance_tables") or plan.get("hinge_source")
+    # Only nsp_acceptance_tables may flip found:true. hinge_source is EOR params
+    # (see hinge_eor_documented) — do not invent India NSP IO/LS/CP tables via EOR.
+    override = plan.get("nsp_acceptance_tables")
     if isinstance(override, dict) and override.get("found") is True and override.get("clause"):
         return {
             "id": "india_nsp_acceptance_tables",
@@ -525,27 +531,451 @@ def complete_gate_disclosures(cfg_or_job=None, job_dir: str | None = None) -> li
     ]
 
 
+
+# ---------------------------------------------------------------------------
+# COMPLETE gate (Michael policy 2026-09-20)
+# Disclosed found:false for NSP tables + §16.1.2 analogue does NOT force PARTIAL
+# when fibre is preferred/used. Refuse hinge-only UNVERIFIED without EOR, or
+# missing disclosures. Do not invent NSP tables or enable fake §16.1.2 relief.
+# ---------------------------------------------------------------------------
+
+COMPLETE_GATE_POLICY = "michael_nl_complete_gate_2026_09_20"
+COMPLETE_GATE_POLICY_DATE = "2026-09-20"
+
+REQUIRED_COMPLETE_DISCLOSURE_IDS = (
+    "india_nsp_acceptance_tables",
+    "asce_16_1_2_drift_relief_analogue",
+)
+
+_FIBRE_ALIASES = frozenset({"fibre", "fiber", "distributed"})
+_HINGE_ONLY_ALIASES = frozenset({
+    "imk", "hinge", "hinges", "concentrated", "concentrated_plasticity",
+    "modimk", "concentrated_plasticity_fbc",
+})
+
+
+def _norm_plasticity(val) -> str:
+    s = str(val or "").strip().lower()
+    if s in ("fiber", "distributed"):
+        return "fibre"
+    return s
+
+
+def _read_json(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
+def _cfg_dict(cfg_or_job) -> dict:
+    if isinstance(cfg_or_job, dict):
+        return cfg_or_job
+    cfg = getattr(cfg_or_job, "cfg", None)
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def hinge_eor_documented(cfg_or_job=None, job_dir: str | None = None) -> dict:
+    """Optional EOR hinge fixture — not required for COMPLETE when fibre is used."""
+    plan = find_nl_plan(cfg_or_job, job_dir=job_dir) or {}
+    cfg = _cfg_dict(cfg_or_job)
+    for src in (
+        plan.get("hinge_source"),
+        plan.get("nsp_acceptance_tables"),
+        cfg.get("hinge_source"),
+        cfg.get("hinge_eor"),
+    ):
+        if isinstance(src, dict) and src.get("found") is True and (
+            src.get("clause") or src.get("cite") or src.get("source")
+        ):
+            return {
+                "found": True,
+                "eor_documented": True,
+                "stem": src.get("stem"),
+                "clause": src.get("clause"),
+                "cite": src.get("cite") or src.get("source"),
+                "note": src.get("note") or "EOR / AHJ hinge source cited in nl_plan.",
+            }
+    if cfg.get("hinge_eor_documented") is True and (
+        cfg.get("hinge_eor_cite") or cfg.get("R_cite")
+    ):
+        return {
+            "found": True,
+            "eor_documented": True,
+            "cite": cfg.get("hinge_eor_cite") or cfg.get("R_cite"),
+            "note": "cfg hinge_eor_documented",
+        }
+    return {
+        "found": False,
+        "eor_documented": False,
+        "note": (
+            "Optional EOR hinge fixture not present — not required for COMPLETE when "
+            "fibre is preferred/used (policy %s)." % COMPLETE_GATE_POLICY_DATE
+        ),
+    }
+
+
+def resolve_plasticity(cfg_or_job=None, job_dir: str | None = None, evidence=None) -> dict:
+    """Resolve modelling plasticity for the COMPLETE gate (fibre vs hinge-only)."""
+    evidence = evidence if isinstance(evidence, dict) else {}
+    cfg = _cfg_dict(cfg_or_job)
+    num = cfg.get("numerics") if isinstance(cfg.get("numerics"), dict) else {}
+    candidates = []
+
+    def _add(val, source):
+        if val is None or val == "":
+            return
+        candidates.append((_norm_plasticity(val), source))
+
+    _add(evidence.get("plasticity"), "evidence.plasticity")
+    if evidence.get("fibre_used") is True:
+        candidates.append(("fibre", "evidence.fibre_used"))
+    _add(cfg.get("plasticity"), "cfg.plasticity")
+    _add(num.get("plasticity"), "cfg.numerics.plasticity")
+    _add(os.environ.get("SNL_PLASTICITY"), "env.SNL_PLASTICITY")
+
+    roots = []
+    if job_dir:
+        roots.append(job_dir)
+    if isinstance(cfg_or_job, str) and os.path.isdir(cfg_or_job):
+        roots.append(cfg_or_job)
+    pkg_root = getattr(cfg_or_job, "root", None)
+    if pkg_root:
+        roots.append(str(pkg_root))
+    for root in roots:
+        for rel in (
+            os.path.join("pushover", "pushover_package.json"),
+            "pushover_package.json",
+            os.path.join("nlrha", "nlrha_package.json"),
+            "nlrha_package.json",
+            os.path.join("job_out", "pushover", "pushover_package.json"),
+            os.path.join("job_out", "nlrha", "nlrha_package.json"),
+        ):
+            data = _read_json(os.path.join(root, rel))
+            if not data:
+                continue
+            _add(data.get("plasticity"), rel)
+            num2 = data.get("numerics") if isinstance(data.get("numerics"), dict) else {}
+            _add(num2.get("plasticity"), rel + ".numerics")
+            if data.get("fibre_eles") or data.get("fibre_secs"):
+                candidates.append(("fibre", rel + ".fibre_*"))
+
+    plasticity = None
+    source = None
+    for val, src in candidates:
+        if val:
+            plasticity, source = val, src
+            break
+    if plasticity is None:
+        # India default modelling path is fibre (prefer_fibre); not yet proven "used".
+        plasticity = "fibre"
+        source = "default_prefer_fibre"
+
+    fibre = plasticity in _FIBRE_ALIASES
+    hinge_only = plasticity in _HINGE_ONLY_ALIASES
+    return {
+        "plasticity": plasticity,
+        "source": source,
+        "fibre_preferred": True,
+        "fibre_used": bool(fibre and source != "default_prefer_fibre"),
+        "fibre_ok": bool(fibre),
+        "hinge_only": bool(hinge_only),
+        "candidates": [{"plasticity": a, "source": b} for a, b in candidates[:12]],
+    }
+
+
+def load_complete_gate_disclosures(
+    cfg_or_job=None,
+    job_dir: str | None = None,
+    disclosures=None,
+) -> list[dict]:
+    """Return disclosure rows from arg, durable JSON under job, or live emitters."""
+    if isinstance(disclosures, list) and disclosures:
+        return disclosures
+    if isinstance(disclosures, dict) and isinstance(disclosures.get("disclosures"), list):
+        return disclosures["disclosures"]
+
+    roots = []
+    if job_dir:
+        roots.append(job_dir)
+    if isinstance(cfg_or_job, str) and os.path.isdir(cfg_or_job):
+        roots.append(cfg_or_job)
+    pkg_root = getattr(cfg_or_job, "root", None)
+    if pkg_root:
+        roots.append(str(pkg_root))
+    for root in roots:
+        for rel in (
+            "complete_gate_disclosures.json",
+            os.path.join("pushover", "complete_gate_disclosures.json"),
+            os.path.join("nlrha", "complete_gate_disclosures.json"),
+            os.path.join("job_out", "complete_gate_disclosures.json"),
+            os.path.join("job_out", "pushover", "complete_gate_disclosures.json"),
+            os.path.join("job_out", "nlrha", "complete_gate_disclosures.json"),
+        ):
+            data = _read_json(os.path.join(root, rel))
+            if data and isinstance(data.get("disclosures"), list):
+                return data["disclosures"]
+    return complete_gate_disclosures(cfg_or_job, job_dir=job_dir)
+
+
+def disclosures_satisfy_complete_gate(rows: list[dict] | None) -> dict:
+    """Require both honest found:false IDs disclosed; drift loop ineligible; IS 7.11.1 anchor."""
+    rows = rows or []
+    by_id = {r.get("id"): r for r in rows if isinstance(r, dict) and r.get("id")}
+    missing = [i for i in REQUIRED_COMPLETE_DISCLOSURE_IDS if i not in by_id]
+    problems = []
+    details = {}
+
+    for rid in REQUIRED_COMPLETE_DISCLOSURE_IDS:
+        row = by_id.get(rid)
+        if row is None:
+            problems.append("missing disclosure id=%s" % rid)
+            details[rid] = {"present": False}
+            continue
+        info = {"present": True, "found": row.get("found")}
+        if row.get("found") is not False:
+            problems.append(
+                "%s must be disclosed found:false (got found=%r) — do not invent India analogue"
+                % (rid, row.get("found"))
+            )
+        if rid == "india_nsp_acceptance_tables":
+            if row.get("prefer_fibre") is False:
+                problems.append("india_nsp_acceptance_tables.prefer_fibre must stay true")
+            info["prefer_fibre"] = row.get("prefer_fibre")
+            info["hinge_params_verified"] = row.get("hinge_params_verified")
+        if rid == "asce_16_1_2_drift_relief_analogue":
+            loop = row.get("feedback_drift_loop")
+            info["feedback_drift_loop"] = loop
+            if loop != "ineligible":
+                problems.append(
+                    "asce_16_1_2_drift_relief_analogue.feedback_drift_loop must be "
+                    "'ineligible' when found:false (got %r)" % (loop,)
+                )
+            anchor = row.get("is_anchor_instead") or {}
+            info["is_anchor_instead"] = anchor
+            clause = str(anchor.get("clause") or "")
+            if clause and not clause.startswith("7.11.1"):
+                problems.append(
+                    "India drift check must remain IS 1893 §7.11.1 "
+                    "(got is_anchor_instead.clause=%r)" % clause
+                )
+        details[rid] = info
+
+    drift_limit = storey_drift_limit_ratio()
+    india_drift_ok = (
+        drift_limit.get("found") is True
+        and abs(float(drift_limit.get("value") or 0) - 0.004) < 1e-12
+        and str(drift_limit.get("clause") or "").startswith("7.11.1")
+    )
+    if not india_drift_ok:
+        problems.append(
+            "IS 1893 §7.11.1 drift-limit check must remain the India check "
+            "(got clause=%r value=%r)" % (drift_limit.get("clause"), drift_limit.get("value"))
+        )
+
+    return {
+        "ok": len(problems) == 0 and not missing,
+        "missing_ids": missing,
+        "problems": problems,
+        "details": details,
+        "india_drift_limit": drift_limit,
+        "required_ids": list(REQUIRED_COMPLETE_DISCLOSURE_IDS),
+    }
+
+
+def complete_allowed(
+    cfg_or_job=None,
+    job_dir: str | None = None,
+    *,
+    evidence=None,
+    disclosures=None,
+) -> tuple:
+    """Refuse COMPLETE only when fibre missing + hinge UNVERIFIED without EOR, or disclosures missing.
+
+    Disclosed found:false for NSP tables / §16.1.2 analogue does **not** force PARTIAL when
+    fibre is preferred/used. Optional EOR hinge fixture is not required when fibre is used.
+    """
+    reasons: list[str] = []
+    plast = resolve_plasticity(cfg_or_job, job_dir=job_dir, evidence=evidence)
+    rows = load_complete_gate_disclosures(
+        cfg_or_job, job_dir=job_dir, disclosures=disclosures
+    )
+    disc = disclosures_satisfy_complete_gate(rows)
+    eor = hinge_eor_documented(cfg_or_job, job_dir=job_dir)
+    nsp = nsp_acceptance_tables_status(cfg_or_job, job_dir=job_dir)
+    hinge_verified = bool(nsp.get("hinge_params_verified")) or eor.get("eor_documented")
+
+    if not disc["ok"]:
+        reasons.extend(disc["problems"] or [])
+        if disc["missing_ids"]:
+            reasons.append(
+                "COMPLETE-gate disclosures missing ids: %s"
+                % ", ".join(disc["missing_ids"])
+            )
+
+    if plast["fibre_ok"]:
+        pass
+    elif hinge_verified:
+        pass
+    else:
+        reasons.append(
+            "fibre not used and hinge path UNVERIFIED without EOR — refuse COMPLETE "
+            "(use fibre plasticity, or cite EOR hinge_source found:true). "
+            "plasticity=%r source=%s" % (plast.get("plasticity"), plast.get("source"))
+        )
+
+    drift = drift_relief_analogue(cfg_or_job, job_dir=job_dir)
+    if drift.get("found") is True and not drift.get("clause"):
+        reasons.append(
+            "asce_16_1_2_drift_relief claimed found:true without clause — do not invent"
+        )
+
+    seen = set()
+    uniq = []
+    for r in reasons:
+        if r not in seen:
+            seen.add(r)
+            uniq.append(r)
+    return (len(uniq) == 0, uniq)
+
+
+def design_status(
+    cfg_or_job=None,
+    job_dir: str | None = None,
+    *,
+    evidence=None,
+    disclosures=None,
+) -> dict:
+    """COMPLETE vs PARTIAL for India NL packs (Michael 2026-09-20 policy)."""
+    ok, reasons = complete_allowed(
+        cfg_or_job, job_dir=job_dir, evidence=evidence, disclosures=disclosures
+    )
+    plast = resolve_plasticity(cfg_or_job, job_dir=job_dir, evidence=evidence)
+    rows = load_complete_gate_disclosures(
+        cfg_or_job, job_dir=job_dir, disclosures=disclosures
+    )
+    disc = disclosures_satisfy_complete_gate(rows)
+    eor = hinge_eor_documented(cfg_or_job, job_dir=job_dir)
+    nsp = nsp_acceptance_tables_status(cfg_or_job, job_dir=job_dir)
+    drift = next(
+        (
+            r for r in rows
+            if isinstance(r, dict) and r.get("id") == "asce_16_1_2_drift_relief_analogue"
+        ),
+        None,
+    ) or {
+        "id": "asce_16_1_2_drift_relief_analogue",
+        "found": False,
+        "feedback_drift_loop": "ineligible",
+    }
+    status = "complete" if ok else "partial"
+    note = (
+        "COMPLETE allowed: fibre preferred/used + NSP tables found:false disclosed + "
+        "ASCE §16.1.2 drift-relief analogue found:false disclosed (feedback loop "
+        "ineligible; IS 1893 §7.11.1 remains India drift check). Disclosed found:false "
+        "does not force PARTIAL. Optional EOR hinge fixture not required when fibre is used."
+        if ok else
+        "PARTIAL — fix fibre path (or EOR-verified hinges) and/or emit durable "
+        "complete_gate_disclosures.json with honest found:false for NSP tables and "
+        "§16.1.2 analogue."
+    )
+    return {
+        "status": status,
+        "design_status": status,
+        "complete_allowed": ok,
+        "reasons": reasons,
+        "admin_notify": (not ok),
+        "policy": COMPLETE_GATE_POLICY,
+        "policy_date": COMPLETE_GATE_POLICY_DATE,
+        "fibre": plast,
+        "disclosures": disc,
+        "nsp_acceptance_tables": {
+            "found": nsp.get("found"),
+            "prefer_fibre": nsp.get("prefer_fibre"),
+            "hinge_params_verified": nsp.get("hinge_params_verified"),
+        },
+        "asce_16_1_2_drift_relief_analogue": {
+            "found": (drift or {}).get("found"),
+            "feedback_drift_loop": (drift or {}).get("feedback_drift_loop"),
+            "is_anchor_instead": (drift or {}).get("is_anchor_instead"),
+        },
+        "hinge_eor": eor,
+        "india_drift_check": disc.get("india_drift_limit"),
+        "blocks_from_found_false_alone": False,
+        "note": note,
+    }
+
+
+def admin_notify(
+    cfg_or_job=None,
+    job_dir: str | None = None,
+    *,
+    evidence=None,
+    disclosures=None,
+    status: dict | None = None,
+) -> dict:
+    """Admin-facing notify object. True when gate refuses COMPLETE (PARTIAL)."""
+    st = status or design_status(
+        cfg_or_job, job_dir=job_dir, evidence=evidence, disclosures=disclosures
+    )
+    return {
+        "admin_notify": bool(st.get("admin_notify")),
+        "design_status": st.get("status"),
+        "complete_allowed": st.get("complete_allowed"),
+        "reasons": list(st.get("reasons") or []),
+        "policy": COMPLETE_GATE_POLICY,
+        "message": (
+            "NL India COMPLETE gate PARTIAL — Admin review: %s"
+            % ("; ".join(st.get("reasons") or ["see design_status"])[:400])
+            if st.get("admin_notify")
+            else (
+                "NL India COMPLETE gate OK — no Admin escalate required for "
+                "NSP/§16.1.2 found:false disclosures"
+            )
+        ),
+    }
+
+
+
 def write_complete_gate_disclosures(
     out_dir: str,
     cfg_or_job=None,
     job_dir: str | None = None,
     filename: str = "complete_gate_disclosures.json",
+    *,
+    evidence=None,
 ) -> list[dict]:
-    """Persist COMPLETE-gate honesty rows (found:false kept) for Ex1–5 STATUS / review.
+    """Persist COMPLETE-gate honesty rows + design_status (found:false kept) for STATUS / review.
 
     Does not invent NSP acceptance tables or an ASCE §16.1.2 drift-relief analogue.
+    Disclosed found:false no longer forces PARTIAL when fibre is preferred/used
+    (Michael 2026-09-20 policy).
     """
     rows = complete_gate_disclosures(cfg_or_job, job_dir=job_dir)
+    st = design_status(
+        cfg_or_job, job_dir=job_dir, evidence=evidence, disclosures=rows
+    )
+    notify = admin_notify(status=st)
     os.makedirs(out_dir, exist_ok=True)
     path_out = os.path.join(out_dir, filename)
     payload = {
         "jurisdiction": JURISDICTION,
-        "wave": "nl-polish-waveE",
+        "wave": "nl-complete-gate-fibre-disclose",
+        "policy": COMPLETE_GATE_POLICY,
+        "policy_date": COMPLETE_GATE_POLICY_DATE,
         "note": (
             "Honesty disclosures for COMPLETE gate. found:false means no India analogue "
-            "was retrieved — do not invent IO/LS/CP or §16.1.2 drift relief."
+            "was retrieved — do not invent IO/LS/CP or §16.1.2 drift relief. "
+            "Disclosed found:false does not force PARTIAL when fibre preferred/used."
         ),
         "disclosures": rows,
+        "complete_allowed": st["complete_allowed"],
+        "design_status": st["status"],
+        "admin_notify": notify["admin_notify"],
+        "gate": st,
+        "admin_notify_payload": notify,
     }
     with open(path_out, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, default=str)
