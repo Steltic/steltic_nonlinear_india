@@ -1246,6 +1246,9 @@ def artefact_gate(job_dir: str | None) -> dict:
                 reasons.append("DDM run %s has no limit-point status (pre-WP4.9 results)" % r.get("label")); continue
             if stt == "NO_LIMIT_POINT" and r.get("kind") in ("gravity", "wind") and (r.get("lambda_end") or 0) < 1.0:
                 reasons.append("DDM %s: NO_LIMIT_POINT and terminated below lambda 1 (%.3f)" % (r.get("label"), r.get("lambda_end") or 0))
+        o_ = ddm.get("options") or {}
+        if o_.get("n_combos_default") and (o_.get("n_combos_run") or 0) < o_["n_combos_default"]:
+            reasons.append("DDM ran %s of the %s default combinations" % (o_.get("n_combos_run"), o_["n_combos_default"]))
         b12 = ddm.get("b12_check")
         if not b12:
             reasons.append("IS 800 B-1.2 section-capacity check at lambda = 1 missing")

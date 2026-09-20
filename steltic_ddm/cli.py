@@ -129,6 +129,7 @@ def run(args):
     portal = PA.is_portal(cfg)
     cases = loads.steltic_combos(cfg, nm=nm)
     kept = loads.prune(cases, policy=args.combos, torsion=args.torsion, include_om0=args.om0)
+    n_default = len(kept)
     if args.only:
         kept = [c for c in kept if any(s in c[0] for s in args.only)]
     print(">> %d combinations from Steltic, %d selected%s" % (len(cases), len(kept), " [portal CFS-P]" if portal else ""))
@@ -183,6 +184,7 @@ def run(args):
     opts = dict(nsub=list(args.nsub), residual=args.residual, Fy=args.fy, hardening=args.hardening, fast=args.fast, nip=args.nip,
                 bow=bow, psi=psi, dlam=args.dlam, max_steps=args.max_steps, time_limit=args.time_limit,
                 rigid_end_offset=rigid_off, india=india, strain_cap=args.strain_cap,
+                n_combos_default=n_default, n_combos_run=len(kept),
                 bow_hollow=(args.bow_hollow if args.bow_hollow is not None else (1 / 500.0 if india else None)),
                 psi_basis=("IS 800:2007 4.3.6: notional horizontal force 0.5 %% of factored gravity load -> equivalent "
                            "out-of-plumb psi = 1/200 (equivalence, EOR to confirm)" if india and args.psi is None else
