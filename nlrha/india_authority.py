@@ -577,6 +577,147 @@ def _cfg_dict(cfg_or_job) -> dict:
     return cfg if isinstance(cfg, dict) else {}
 
 
+# Descending-branch evidence is informative only. A fibre run that stops at
+# max_drift/lower_bound before a 20% Vmax drop remains COMPLETE-eligible; the
+# limitation is disclosed for STATUS/review rather than turned into PARTIAL.
+_DESCENDING_CAPTURED_STATUSES = frozenset({"captured", "not_needed", "component_limit"})
+_DESCENDING_INCOMPLETE_STATUSES = frozenset({"max_drift", "lower_bound", "not_captured"})
+
+
+def _descending_tail_records(value, direction=None):
+    """Flatten the small tail/run shapes emitted by pushover into tail records."""
+    if not isinstance(value, dict):
+        return []
+    if "status" in value or "captured" in value:
+        return [(direction, value)]
+    out = []
+    for key, item in value.items():
+        if isinstance(item, dict):
+            out.extend(_descending_tail_records(item, direction=str(key)))
+    return out
+
+
+def descending_branch_disclosure(
+    cfg_or_job=None,
+    job_dir: str | None = None,
+    *,
+    evidence=None,
+) -> dict:
+    """Return descending-branch evidence without making it a COMPLETE gate.
+
+    ``pushover_package.json`` is consulted when available. Callers may provide
+    live ``descending_branch_runs``/``tail`` evidence so the disclosure can be
+    written after a run. No evidence is deliberately reported as not_observed,
+    not as a blocking failure.
+    """
+    evidence = evidence if isinstance(evidence, dict) else {}
+    records = []
+    source = None
+
+    if isinstance(evidence.get("descending_branch_captured"), bool):
+        records.append((None, {
+            "captured": evidence["descending_branch_captured"],
+            "status": evidence.get("descending_branch_status"),
+        }))
+        source = "evidence.descending_branch_captured"
+    else:
+        for key in ("descending_branch_runs", "tails", "tail"):
+            if key in evidence:
+                records.extend(_descending_tail_records(evidence[key]))
+                source = "evidence.%s" % key
+                if records:
+                    break
+
+    # Explicit/live evidence is authoritative for the current run; do not
+    # contaminate it with a stale package from an earlier run in the same job.
+    if not records:
+        roots = []
+        if job_dir:
+            roots.append(str(job_dir))
+        if isinstance(cfg_or_job, str) and os.path.isdir(cfg_or_job):
+            roots.append(str(cfg_or_job))
+        pkg_root = getattr(cfg_or_job, "root", None)
+        if pkg_root:
+            roots.append(str(pkg_root))
+        seen = set()
+        for root in roots:
+            for rel in (
+                "pushover_package.json",
+                os.path.join("pushover", "pushover_package.json"),
+                os.path.join("job_out", "pushover", "pushover_package.json"),
+            ):
+                path = os.path.join(root, rel)
+                if path in seen:
+                    continue
+                seen.add(path)
+                data = _read_json(path)
+                dirs = data.get("directions") if isinstance(data, dict) else None
+                if isinstance(dirs, dict):
+                    for direction, run in dirs.items():
+                        tail = run.get("tail") if isinstance(run, dict) else None
+                        records.extend(_descending_tail_records(tail, direction=str(direction)))
+                    if records and source is None:
+                        source = path
+                    if records:
+                        break
+            if records and source:
+                break
+
+    if not records:
+        return {
+            "descending_branch_captured": False,
+            "captured": False,
+            "status": "not_observed",
+            "directions": {},
+            "source": None,
+            "required_for_complete": False,
+            "note": (
+                "Descending branch was not observed in this gate emission; incomplete "
+                "capture is optional and does not force PARTIAL."
+            ),
+        }
+
+    directions = {}
+    normalized = []
+    for direction, tail in records:
+        status = str(tail.get("status") or "").strip().lower()
+        captured = tail.get("captured")
+        if not isinstance(captured, bool):
+            captured = status in _DESCENDING_CAPTURED_STATUSES
+        if not status:
+            status = "captured" if captured else "not_captured"
+        item = {"captured": bool(captured), "status": status}
+        if direction is not None:
+            directions[str(direction)] = item
+        normalized.append(item)
+
+    all_captured = all(item["captured"] for item in normalized)
+    statuses = [item["status"] for item in normalized]
+    if all_captured:
+        status = statuses[0] if len(set(statuses)) == 1 else "captured_all_directions"
+    elif "max_drift" in statuses:
+        status = "max_drift"
+    elif "lower_bound" in statuses:
+        status = "lower_bound"
+    else:
+        status = "not_captured"
+    return {
+        "descending_branch_captured": all_captured,
+        "captured": all_captured,
+        "status": status,
+        "directions": directions,
+        "source": source,
+        "required_for_complete": False,
+        "note": (
+            "Descending branch incomplete (%s) is optional under Michael policy; "
+            "it is disclosed for STATUS and does not force PARTIAL."
+            % status
+            if not all_captured else
+            "Descending branch captured/valid; this evidence is disclosed and is not a COMPLETE gate requirement."
+        ),
+    }
+
+
 def hinge_eor_documented(cfg_or_job=None, job_dir: str | None = None) -> dict:
     """Optional EOR hinge fixture — not required for COMPLETE when fibre is used."""
     plan = find_nl_plan(cfg_or_job, job_dir=job_dir) or {}
@@ -859,6 +1000,9 @@ def design_status(
     disc = disclosures_satisfy_complete_gate(rows)
     eor = hinge_eor_documented(cfg_or_job, job_dir=job_dir)
     nsp = nsp_acceptance_tables_status(cfg_or_job, job_dir=job_dir)
+    descending = descending_branch_disclosure(
+        cfg_or_job, job_dir=job_dir, evidence=evidence
+    )
     drift = next(
         (
             r for r in rows
@@ -903,6 +1047,9 @@ def design_status(
         },
         "hinge_eor": eor,
         "india_drift_check": disc.get("india_drift_limit"),
+        "descending_branch": descending,
+        "descending_branch_captured": descending["descending_branch_captured"],
+        "descending_branch_status": descending["status"],
         "blocks_from_found_false_alone": False,
         "note": note,
     }
@@ -971,6 +1118,9 @@ def write_complete_gate_disclosures(
             "Disclosed found:false does not force PARTIAL when fibre preferred/used."
         ),
         "disclosures": rows,
+        "descending_branch_captured": st["descending_branch_captured"],
+        "descending_branch_status": st["descending_branch_status"],
+        "descending_branch": st["descending_branch"],
         "complete_allowed": st["complete_allowed"],
         "design_status": st["status"],
         "admin_notify": notify["admin_notify"],

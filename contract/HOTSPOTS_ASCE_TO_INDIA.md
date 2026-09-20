@@ -55,3 +55,12 @@ mode 10 at T≈0.0007 s with ~100% mass; re-run Y pushover after this tip.
 - `write_complete_gate_disclosures` persists `complete_allowed` / `design_status` /
   `admin_notify` beside the honesty rows.
 
+## Descending branch (Michael 2026-09-20)
+
+A fibre pushover that stops with `tail.status=max_drift` or `lower_bound` before
+losing 20% of `Vmax` may still be `COMPLETE`; descending-branch capture is
+optional and does not force `PARTIAL`. The gate discloses
+`descending_branch_captured`, `descending_branch_status`, and a status note in
+`complete_gate_disclosures.json`; the limitation remains visible for STATUS and
+review.
+
