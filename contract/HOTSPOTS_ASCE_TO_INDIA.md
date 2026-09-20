@@ -41,3 +41,17 @@ This is an engineering sanity filter for spurious stiff eigenmodes — **not** a
 IS 1893 / ASCE approximate-period provision. IN_Ex3 Chennai Y previously selected
 mode 10 at T≈0.0007 s with ~100% mass; re-run Y pushover after this tip.
 
+## COMPLETE gate (Michael 2026-09-20)
+
+`nlrha.india_authority.complete_allowed` / `design_status` / `admin_notify`:
+
+- **COMPLETE** when fibre preferred/used **and** durable disclosures show
+  `india_nsp_acceptance_tables` + `asce_16_1_2_drift_relief_analogue` as **found:false**
+  (feedback drift loop **ineligible**; IS 1893 §7.11.1 remains the India drift check).
+- Disclosed found:false **does not** force PARTIAL.
+- **PARTIAL** if fibre not used and hinges UNVERIFIED without EOR, or disclosures missing.
+- Do **not** invent NSP IO/LS/CP tables or a fake §16.1.2 waiver. Optional EOR hinge
+  fixture is not required when fibre is used.
+- `write_complete_gate_disclosures` persists `complete_allowed` / `design_status` /
+  `admin_notify` beside the honesty rows.
+

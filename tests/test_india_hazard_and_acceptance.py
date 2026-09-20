@@ -124,8 +124,96 @@ def test_write_complete_gate_disclosures_json(tmp_path=None):
         assert os.path.isfile(path)
         payload = json.load(open(path, encoding="utf-8"))
         assert payload["jurisdiction"] == "india"
-        assert payload["wave"] == "nl-polish-waveE"
+        assert payload["wave"] in ("nl-polish-waveE", "nl-complete-gate-fibre-disclose")
+        assert "complete_allowed" in payload
+        assert "design_status" in payload
+        assert "admin_notify" in payload
+        assert payload["policy"] == IA.COMPLETE_GATE_POLICY
         ids = {r["id"] for r in payload["disclosures"]}
         assert "india_nsp_acceptance_tables" in ids
         assert "asce_16_1_2_drift_relief_analogue" in ids
         assert rows and all(r.get("found") is False for r in rows)
+
+
+def test_complete_allowed_fibre_with_found_false_disclosures():
+    """Michael 2026-09-20: disclosed found:false + fibre → COMPLETE (not PARTIAL)."""
+    rows = IA.complete_gate_disclosures()
+    ok, reasons = IA.complete_allowed(evidence={"plasticity": "fibre"}, disclosures=rows)
+    assert ok is True, reasons
+    st = IA.design_status(evidence={"plasticity": "fibre"}, disclosures=rows)
+    assert st["status"] == "complete"
+    assert st["complete_allowed"] is True
+    assert st["admin_notify"] is False
+    assert st["blocks_from_found_false_alone"] is False
+    assert st["nsp_acceptance_tables"]["found"] is False
+    assert st["asce_16_1_2_drift_relief_analogue"]["found"] is False
+    assert st["asce_16_1_2_drift_relief_analogue"]["feedback_drift_loop"] == "ineligible"
+    assert st["india_drift_check"]["clause"] == "7.11.1.1"
+    notify = IA.admin_notify(status=st)
+    assert notify["admin_notify"] is False
+
+
+def test_complete_refuses_hinge_only_unverified_without_eor():
+    rows = IA.complete_gate_disclosures()
+    ok, reasons = IA.complete_allowed(
+        evidence={"plasticity": "imk"}, disclosures=rows
+    )
+    assert ok is False
+    assert any("fibre not used" in r for r in reasons)
+    st = IA.design_status(evidence={"plasticity": "imk"}, disclosures=rows)
+    assert st["status"] == "partial"
+    assert st["admin_notify"] is True
+
+
+def test_complete_refuses_missing_disclosures():
+    ok, reasons = IA.complete_allowed(
+        evidence={"plasticity": "fibre"},
+        disclosures=[{"id": "unrelated", "found": False}],
+    )
+    assert ok is False
+    assert any("missing" in r.lower() or "india_nsp_acceptance_tables" in r for r in reasons)
+
+
+def test_complete_refuses_invented_found_true_nsp_tables():
+    rows = IA.complete_gate_disclosures()
+    by = {r["id"]: dict(r) for r in rows}
+    by["india_nsp_acceptance_tables"]["found"] = True  # invent — refuse
+    ok, reasons = IA.complete_allowed(
+        evidence={"plasticity": "fibre"}, disclosures=list(by.values())
+    )
+    assert ok is False
+    assert any("found:false" in r for r in reasons)
+
+
+def test_hinge_eor_allows_complete_without_fibre():
+    cfg = {
+        "nl_plan": {
+            "jurisdiction": "india",
+            "retrieval": [
+                {"stem": "IS_1893_Part_1_2016", "query": "7.7.4", "found": True, "cite": "7.7.4"},
+            ],
+            "hinge_source": {
+                "found": True,
+                "clause": "EOR EXAMPLE",
+                "cite": "EXAMPLE EOR hinge fixture — not-for-construction",
+            },
+        },
+        "numerics": {"plasticity": "imk"},
+    }
+    rows = IA.complete_gate_disclosures(cfg)
+    ok, reasons = IA.complete_allowed(cfg, evidence={"plasticity": "imk"}, disclosures=rows)
+    assert ok is True, reasons
+    assert IA.hinge_eor_documented(cfg)["eor_documented"] is True
+
+
+def test_write_complete_gate_includes_design_status_fields(tmp_path=None):
+    with tempfile.TemporaryDirectory() as td:
+        IA.write_complete_gate_disclosures(
+            td, evidence={"plasticity": "fibre"}
+        )
+        payload = json.load(open(os.path.join(td, "complete_gate_disclosures.json")))
+        assert payload["complete_allowed"] is True
+        assert payload["design_status"] == "complete"
+        assert payload["admin_notify"] is False
+        assert payload["gate"]["blocks_from_found_false_alone"] is False
+        assert payload["policy"] == IA.COMPLETE_GATE_POLICY

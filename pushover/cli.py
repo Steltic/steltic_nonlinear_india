@@ -66,14 +66,19 @@ def _run(args):
             nsp_acceptance_tables_status,
             drift_relief_analogue,
             write_complete_gate_disclosures,
+            design_status,
         )
         job = str(getattr(pkg, "root", "") or args.package)
         nsp_st = nsp_acceptance_tables_status(job_dir=job)
         dr_st = drift_relief_analogue(job_dir=job)
         print("[india_authority] india_nsp_acceptance_tables found:%s (prefer fibre; hinge_params UNVERIFIED; do not invent IO/LS/CP)" % nsp_st.get("found"))
         print("[india_authority] asce_16_1_2_drift_relief found:%s (feedback drift loop ineligible)" % dr_st.get("found"))
-        write_complete_gate_disclosures(out, job_dir=job)
+        plast = str(getattr(args, "plasticity", None) or "fibre")
+        write_complete_gate_disclosures(out, job_dir=job, evidence={"plasticity": plast})
+        st = design_status(job_dir=job, evidence={"plasticity": plast})
         print("[india_authority] wrote %s" % os.path.join(out, "complete_gate_disclosures.json"))
+        print("[india_authority] COMPLETE gate design_status=%s complete_allowed=%s admin_notify=%s (policy %s)" % (
+            st.get("status"), st.get("complete_allowed"), st.get("admin_notify"), st.get("policy_date")))
     except Exception as ex:
         print("[india_authority] status emit skipped:", ex)
     loads, gtable = NM.gravity_loads(pkg, prm)
