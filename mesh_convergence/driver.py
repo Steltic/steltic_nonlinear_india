@@ -372,7 +372,9 @@ def run_nlrha_product_ladder(package: str, out_root: str, *, args) -> dict:
                                       fc_not_computed=True))
                 print(">>", "FC refine aborted: governing record unknown", flush=True)
                 break
-            cmd = [py, "-m", "nlrha", "run", package, "--out", rung_dir,
+            # WP4.1: India packages get the IS 1893 elastic target explicitly (never the ASCE 'code' default)
+            _tgt = ["--target", "is1893"] if os.path.exists(os.path.join(package, "seismic_calc.json")) else []
+            cmd = [py, "-m", "nlrha", "run", package, "--out", rung_dir, *_tgt,
                    "--plasticity", plast, "--member-nseg", str(kn.get("member_nseg", 4)),
                    "--parallel", str(args.parallel), "--dt", str(args.dt),
                    "--n", str(n_for_run),

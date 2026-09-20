@@ -75,7 +75,8 @@ def cmd_run(a):
         elif s == "nlrha":
             cmd = [py, "-m", "nlrha", "run", job, "--parallel", str(a.parallel), "--dt", str(a.dt), "--integrator", a.integrator, "--n", str(a.n_records)] + site + params
             if a.records_set: cmd += ["--records-set"] + list(a.records_set)
-            if a.target and a.target != "code": cmd += ["--target", a.target]
+            if a.target: cmd += ["--target", a.target]          # default None: nlrha picks is1893 (elastic, D6) for India
+            if getattr(a, "level", None): cmd += ["--level", a.level]
             if a.site_hazard: cmd += ["--site-hazard", os.path.abspath(a.site_hazard)]
             if a.pulse_fraction is not None: cmd += ["--pulse-fraction", str(a.pulse_fraction)]
             if a.sf_bounds: cmd += ["--sf-bounds", a.sf_bounds]
@@ -148,7 +149,8 @@ def main(argv=None):
     r.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="override plasticity (defaults: NSP fibre, NLRHA imk)")
     r.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default 4 fibre / 1 imk)")
     r.add_argument("--records-set", nargs="*", default=None, help="NLRHA record set folder(s): indexed sets and/or user folders of PEER .AT2 / CSV pairs (default: the shipped P-695 far-field set)")
-    r.add_argument("--target", default="code", choices=["code", "mcer", "cs"], help="NLRHA scaling target (mcer / cs need `nlrha hazard` first)")
+    r.add_argument("--target", default=None, choices=["is1893", "code", "mcer", "cs"], help="NLRHA scaling target (default: is1893 elastic DBE/MCE for India; code for USA scaffolding)")
+    r.add_argument("--level", default=None, choices=["DBE", "MCE", "both"], help="India NL hazard level(s) (default both)")
     r.add_argument("--site-hazard", help="site_hazard.json from `nlrha hazard` (default <job>/nlrha/site_hazard.json)")
     r.add_argument("--pulse-fraction", type=float, default=None, help="share of the suite reserved for pulse-type records")
     r.add_argument("--sf-bounds", help="NLRHA: keep records whose shape-fit scale factor lies in lo-hi, e.g. 0.25-4")

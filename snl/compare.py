@@ -142,7 +142,82 @@ def svg_lambda(sel):
 
 
 # --------------------------------------------------------------------------------------------- the sheet
+def _is_india_job(job):
+    for rel in ("pushover/pushover_package.json", "nlrha/nlrha_package.json"):
+        d = _load_json(os.path.join(job, rel), {}) or {}
+        if d.get("jurisdiction") == "india":
+            return True
+    return os.path.exists(os.path.join(job, "seismic_calc.json"))
+
+
+def build_india(job, out_name="four_analyses.html"):
+    """India four-analyses sheet (D6/D7): elastic IS targets actually used, informative NL quantities, B-1.2 code
+    check, and snl_summary.json recording the sha256 of every package it read (WP4.13 freshness gate)."""
+    from nlrha import india_authority as IA
+    po = _load_json(os.path.join(job, "pushover", "pushover_package.json"), {}) or {}
+    nl = _load_json(os.path.join(job, "nlrha", "nlrha_package.json"), {}) or {}
+    ddm = _load_json(os.path.join(job, "ddm_results.json"), {}) or {}
+    sc = _load_json(os.path.join(job, "seismic_calc.json"), {}) or {}
+    stmt = "IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information."
+    summ = dict(jurisdiction="india", generated=datetime.datetime.now().isoformat(timespec="seconds"), statement=stmt,
+                inputs_sha256=IA.summary_inputs(job), design=dict(Z=sc.get("Z"), I=sc.get("I"), R=sc.get("R"),
+                                                                  VB_kN=sc.get("VB_kN"), W_kN=sum(sc.get("W_kN") or [])),
+                pushover=None, nlrha=None, ddm=None, verdict=None)
+    rows = []
+    if po.get("directions"):
+        p = {}
+        for d, dd in po["directions"].items():
+            p[d] = dict(T1=dd.get("T1"), Vmax_kN=(dd.get("capacity") or {}).get("Vmax_kN"),
+                        Vmax_over_VB=(dd.get("capacity") or {}).get("Vmax_over_VB"), stop=dd.get("stop_reason"),
+                        nsp={lv: dict(Sa=n.get("Sa"), Te=n.get("Te"), dt_mm=n.get("target_disp_mm"), reached=n.get("reached_target"))
+                             for lv, n in (dd.get("nsp") or {}).items()},
+                        response={lv: dict(V_over_VB=r.get("V_over_VB"), max_story_drift=r.get("max_story_drift"), census=r.get("census"))
+                                  for lv, r in (dd.get("response") or {}).items()})
+            for lv, n in (dd.get("nsp") or {}).items():
+                r = (dd.get("response") or {}).get(lv) or {}
+                rows.append(("Pushover %s %s" % (d, lv), "Sa(Te=%.3f s) = %.3f g (elastic, no R)" % (n.get("Te") or 0, n.get("Sa") or 0),
+                             "δt = %.1f mm; V/VB = %s; max storey drift %.3f %%" % (n.get("target_disp_mm") or 0, fmt(r.get("V_over_VB")), 100 * (r.get("max_story_drift") or 0))))
+        summ["pushover"] = p
+    if nl.get("levels"):
+        summ["nlrha"] = nl["levels"]
+        for lv, d in nl["levels"].items():
+            sf = d.get("scale_factors") or [0]
+            rows.append(("NLRHA %s" % lv, "%s; %d records (%d converged), SF %.3f–%.3f" % (d.get("target_label"), d.get("n_records") or 0,
+                                                                                       d.get("n_converged") or 0, min(sf), max(sf)),
+                         "max mean drift %s %%; mean V/VB %s" % (fmt(100 * d["max_mean_drift"] if d.get("max_mean_drift") is not None else None, 3),
+                                                                 fmt((d.get("base_shear") or {}).get("mean_over_VB")))))
+    if ddm.get("runs") is not None:
+        summ["ddm"] = dict(gravity_gate=(ddm.get("gravity_gate") or {}).get("summary"), gravity_gate_ok=(ddm.get("gravity_gate") or {}).get("ok"),
+                           b12_ok=(ddm.get("b12_check") or {}).get("ok"),
+                           runs=[dict(label=r.get("label"), status=r.get("status"), lambda_u=r.get("lambda_u"), lambda_end=r.get("lambda_end"))
+                                 for r in ddm.get("runs") or []])
+        for r in ddm.get("runs") or []:
+            rows.append(("DDM %s" % r.get("label"), r.get("status") or "?",
+                         ("λu = %.3f" % r["lambda_u"]) if r.get("lambda_u") is not None else "NO_LIMIT_POINT (λ reached %.3f)" % (r.get("lambda_end") or 0)))
+        rows.append(("IS 800 B-1.2 section check at λ = 1", "code check", "satisfied" if (ddm.get("b12_check") or {}).get("ok") else "NOT satisfied / not run"))
+    H = ["<!doctype html><meta charset='utf-8'><title>Four analyses (IS)</title><style>body{font-family:Georgia,serif;max-width:1000px;margin:24px auto;padding:0 16px}"
+         "table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #bbb;padding:4px 6px;text-align:left}.s{background:#fff4d6;padding:8px 12px;font-weight:bold}</style>",
+         "<h1>%s — linear design + pushover + NLRHA + advanced analysis</h1>" % html.escape(os.path.basename(os.path.abspath(job))),
+         "<p>IS 1893 (Part 1):2016 + Amd 1–2 · IS 800:2007 · design VB %s kN, W %s kN, R %s (linear design only)</p>" % (
+             fmt(sc.get("VB_kN"), 1), fmt(summ["design"]["W_kN"], 1), sc.get("R")),
+         "<div class='s'>%s</div>" % stmt,
+         "<p>NL targets used: IS 1893 elastic spectrum — DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g (no R).</p>",
+         "<table><tr><th>analysis</th><th>demand</th><th>response (information)</th></tr>"]
+    H += ["<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % tuple(html.escape(str(x)) for x in r) for r in rows]
+    H.append("</table><p>Inputs (sha256): %s</p>" % html.escape(json.dumps(summ["inputs_sha256"])))
+    open(os.path.join(job, out_name), "w", encoding="utf-8").write("\n".join(H))
+    json.dump(summ, open(os.path.join(job, "snl_summary.json"), "w"), indent=1, default=str)
+    try:
+        st = IA.write_complete_gate(job)
+        summ["gate"] = st["status"]
+    except Exception:
+        pass
+    return os.path.join(job, out_name)
+
+
 def build(job, out_name="four_analyses.html", title=None):
+    if _is_india_job(job):
+        return build_india(job, out_name)
     job = os.path.abspath(job)
     st = steltic_facts(job)
     po = _load_json(os.path.join(job, "pushover", "pushover_package.json"))
