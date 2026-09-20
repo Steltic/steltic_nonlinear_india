@@ -456,8 +456,9 @@ Z0 = {1: 0.002, 2: 0.02, 3: 0.2, 4: 2.0}                                        
 DAMPING_TABLE36 = {"welded_steel": 0.010, "bolted_steel": 0.020, "rcc": 0.020, "prestressed": 0.016}
 
 # Table 6 (7.3.3.2) pitched roofs, overall coefficients: {h/w band: {alpha: (EF, GH, EG, FH)}}
-# read from the PDF p.16 scan (400 dpi); mid band row 45/60 and bottom band row 40 are low-contrast
-# in the scan -- TODO(verify) against a clean copy.
+# read from the PDF p.16 scan (400 dpi); the mid band rows 45/60 (+0.2/-0.5/-0.8/-0.8, +0.6/-0.5/-0.8/-0.6) and
+# the bottom band rows 30/40/50/60 (-1.0/-0.5/-0.8/-0.7, -0.2/-0.5/-0.8/-0.7, +0.2/-0.5/-0.8/-0.7,
+# +0.5/-0.5/-0.8/-0.7) were re-read from a 300 dpi crop on 2026-09-20 (HR-INTEGRATE) and match the values below.
 TABLE_6_CPE_PITCHED = {
     "le_0.5": {0: (-0.8, -0.4, -0.8, -0.4), 5: (-0.9, -0.4, -0.8, -0.4), 10: (-1.2, -0.4, -0.8, -0.6),
                20: (-0.4, -0.4, -0.7, -0.6), 30: (0.0, -0.4, -0.7, -0.6), 45: (0.3, -0.5, -0.7, -0.6),

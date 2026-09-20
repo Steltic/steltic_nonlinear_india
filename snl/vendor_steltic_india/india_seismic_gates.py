@@ -946,6 +946,9 @@ def _screen_findings(pkg, cfg_hint=None) -> list:
     for row in (pkg.get("drift_table") or []):
         if isinstance(row, dict) and row.get("ok") is False:
             out.append("drift_table storey %s fails" % row.get("storey"))
+    d764 = pkg.get("diaphragm_7_6_4")
+    if isinstance(d764, dict) and d764.get("ok") is None:
+        out.append("IS 1893 7.6.4 diaphragm classification not evaluated: %s" % (d764.get("reason") or d764.get("error")))
     comp = pkg.get("composite_design")
     if isinstance(comp, dict) and comp.get("blocks_complete"):
         out.append("composite_design: IS 11384 not in the corpus -- record the scope (bare_steel + construction "

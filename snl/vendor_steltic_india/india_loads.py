@@ -1170,3 +1170,67 @@ def gantry_girder_demands(cfg):
             "lateral_limit_mm": L / 400.0, "lateral_relative_rails_limit_mm": 10.0,
             "note": "Checks (HR-MEMBERS): biaxial bending with top-flange surge, LTB with the actual restraint, web "
                     "bearing/buckling under the wheel, Section 13 fatigue by crane class", "cite": CRANE_CITE}
+
+
+# =====================================================================================================
+# IS 875 (Part 4):2021 -- multilevel-roof snow drift (5.2.4) and ponding instability (4.4)  [HR-INTEGRATE]
+# Read from the licensed PDF (/home/claude/rv/pdfs/INDIA_STEEL/pdfs/IS_875_Part_4_1987.pdf is the 2021 edition,
+# pdf p. 7 = printed p. 5):  mu1 = 0.80;  mu2 = mus + muw;  muw = (l1 + l2)/(2h) <= k h/s0, 0.80 <= muw <= 4.0,
+# k = 2 kN/m2 (as printed);  l3 = 2h with 5 m <= l3 <= 15 m;  mus = 0 for the upper roof slope beta <= 15 deg
+# (the print shows 'beta > 15' on both lines -- the sliding term applies to the steeper roof, 50 % of the
+# maximum total load on the adjacent upper slope, distributed linearly);  4.4: 'Roofs shall be designed to
+# preclude ponding instability ... roof deflections caused by snow loads shall be investigated' (no numeric
+# criterion is printed).
+# =====================================================================================================
+SNOW_524_CITE = ("IS 875 (Part 4):2021 5.2.4 Multilevel roofs (pdf p. 7): mu1 = 0.80, mu2 = mus + muw, "
+                 "muw = (l1 + l2)/(2h) <= k h/s0 (0.80 <= muw <= 4.0, k = 2), l3 = 2h (5-15 m)")
+SNOW_44_CITE = ("IS 875 (Part 4):2021 4.4 Ponding instability (pdf p. 7): 'Roofs shall be designed to preclude "
+                "ponding instability' -- deflections under snow / rain-on-snow investigated; no numeric criterion")
+
+
+def snow_drift_5_2_4(s0_kNm2, h_m, l1_m, l2_m, *, beta_upper_deg=0.0, upper_roof_max_load_kNm2=None, k=2.0):
+    """Drift on the lower roof of a multilevel roof: returns the shape coefficients and the linear load profile
+    s(x) = s0 (mu2 - (mu2 - mu1) x/l3) for 0 <= x <= l3 from the wall, s0 mu1 beyond (kN/m2)."""
+    s0, h, l1, l2 = float(s0_kNm2), float(h_m), float(l1_m), float(l2_m)
+    if s0 <= 0 or h <= 0:
+        return {"found": False, "cite": SNOW_524_CITE, "required_inputs": ["s0_kNm2 > 0", "h_m > 0"]}
+    mu1 = 0.80
+    muw = (l1 + l2) / (2.0 * h)
+    muw = min(muw, k * h / s0)
+    muw = min(max(muw, 0.80), 4.0)
+    if float(beta_upper_deg) > 15.0:
+        if upper_roof_max_load_kNm2 is None:
+            return {"found": False, "cite": SNOW_524_CITE, "mu1": mu1, "muw": muw,
+                    "required_inputs": ["upper_roof_max_load_kNm2 (beta > 15 deg: mus = 50 % of the upper slope's "
+                                        "maximum total load, distributed linearly over l3)"]}
+        mus = 0.5 * float(upper_roof_max_load_kNm2) / s0
+    else:
+        mus = 0.0
+    mu2 = mus + muw
+    l3 = min(max(2.0 * h, 5.0), 15.0)
+    note = []
+    if l2 < l3:
+        note.append("l2 < l3: NOTE 2 -- the coefficient is determined by interpolation between mu1 and mu2 over l2")
+        l3_eff = l2
+    else:
+        l3_eff = l3
+    return {"found": True, "mu1": mu1, "muw": muw, "mus": mus, "mu2": mu2, "l3_m": l3, "l3_applied_m": l3_eff,
+            "s_wall_kNm2": s0 * mu2, "s_uniform_kNm2": s0 * mu1, "k": k, "s0_kNm2": s0, "h_m": h,
+            "profile": "linear from s0*mu2 at the wall to s0*mu1 at l3", "cite": SNOW_524_CITE, "notes": note,
+            "load_at": (lambda x_m: s0 * (mu2 - (mu2 - mu1) * min(max(float(x_m), 0.0), l3_eff) / l3_eff))}
+
+
+def ponding_screen_4_4(*, span_mm, delta_snow_mm, roof_slope, end_drainage=True):
+    """IS 875-4 4.4 requires ponding instability to be precluded but gives no numeric test.  Engineering-practice
+    screen (labelled as such): the roof still drains after deflecting when the fall over the half span exceeds the
+    mid-span deflection under the snow / rain-on-snow load, i.e. delta < slope x span/2 (free-draining ends).
+    ok=None when the slope is not declared."""
+    if roof_slope is None:
+        return {"found": False, "ok": None, "clause": "IS 875 (Part 4):2021 4.4", "cite": SNOW_44_CITE,
+                "reason": "roof slope not declared"}
+    fall = float(roof_slope) * float(span_mm) / 2.0
+    d = float(delta_snow_mm)
+    return {"found": True, "value": d, "limit": fall, "dc": (d / fall) if fall > 0 else None,
+            "ok": (fall > 0 and d < fall and bool(end_drainage)), "clause": "IS 875 (Part 4):2021 4.4",
+            "cite": SNOW_44_CITE + "; screen: delta < slope x L/2 (ENGINEERING PRACTICE, not an IS criterion)",
+            "source": "steel_engine/india_loads.py"}
