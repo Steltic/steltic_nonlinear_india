@@ -949,6 +949,12 @@ def _screen_findings(pkg, cfg_hint=None) -> list:
     d764 = pkg.get("diaphragm_7_6_4")
     if isinstance(d764, dict) and d764.get("ok") is None:
         out.append("IS 1893 7.6.4 diaphragm classification not evaluated: %s" % (d764.get("reason") or d764.get("error")))
+    pond = pkg.get("ponding")
+    if isinstance(pond, dict) and pond.get("ok") is None:
+        out.append("IS 875 (Part 4) 4.4 ponding screen not evaluated: %s" % (pond.get("reason") or pond.get("error")))
+    elif isinstance(pond, dict) and pond.get("ok") is False:
+        out.append("IS 875 (Part 4) 4.4 ponding screen fails: delta %.1f mm >= fall %.1f mm over the half span" % (
+            float(pond.get("value") or 0.0), float(pond.get("limit") or 0.0)))
     comp = pkg.get("composite_design")
     if isinstance(comp, dict) and comp.get("blocks_complete"):
         out.append("composite_design: IS 11384 not in the corpus -- record the scope (bare_steel + construction "
@@ -1020,7 +1026,7 @@ def design_status(cfg, pkg=None, *, job_dir=None, report_html=None) -> dict:
             for i, c in enumerate((dc_.get("checks") or []) + (dc_.get("separation") or [])):
                 reasons += entry_findings("7.11.2/7.11.3", {"id": c.get("element") or c.get("unit") or i,
                                                              "checks": [c]})
-            if G_zone_needs_7112(cfg) and not dc_.get("checks"):
+            if G_zone_needs_7112(cfg) and not dc_.get("checks") and not dc_.get("no_non_sfrs_columns"):
                 reasons.append("IS 1893 7.11.2 deformation-compatibility check of the gravity columns missing")
         reasons += _screen_findings(pk, cfg)
         reasons += analysis_findings(cfg, pk)

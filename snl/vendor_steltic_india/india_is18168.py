@@ -22,6 +22,10 @@ Every number below was read from the licensed PDF (/home/claude/rv/pdfs/INDIA_ST
   cl. 12.3.2.2 (pdf 21) capacity-protected elements: 1.1 Ry Sh x link design strength (Sh 1.25 I / 1.4 box)
   cl. 12.3.3.1 (pdf 21) "The link rotation angle shall not exceed 0.08 rad."
   cl. 12.3.4.5 (pdf 22) braces: 1.2 Ry x link design strength
+  Table 2 (pdf 8) limiting width-to-thickness (5.3): outstanding flange b/tf and web d/tw, all as coeff x eps / sqrt(Ry),
+                     eps = sqrt(250/fy): beam 9.0 / 44.5; column 9.0 / 72.7(1 - 1.04Ca) for Ca <= 0.118 and
+                     24.9(2.68 - Ca) >= 44.4 for Ca > 0.118, Ca = Pu/(Py/gamma_m0); brace I 11.3 / 44.4, box 21.4 / 21.4;
+                     link I 11.3 / 44.4, box 21.4 / 49.4   (WP6: applied to EBF links, braces, beams outside links, columns)
 """
 from __future__ import annotations
 
@@ -39,6 +43,11 @@ LINK_ROTATION_LIMIT = 0.08                                             # cl. 12.
 LINK_LENGTH_FACTOR = 1.6                                               # cl. 11.3
 SH = {"I": 1.25, "box": 1.4}                                           # cl. 12.3.2.2
 SMRF_HEIGHT_LIMIT_M_ZONES_IV_V = 15.0                                  # cl. 1.3 / 12.1.1
+TABLE2 = {"beam": (9.0, 44.5), "brace": (11.3, 44.4), "brace_box": (21.4, 21.4),
+          "link": (11.3, 44.4), "link_box": (21.4, 49.4), "column": (9.0, None)}   # Table 2 (pdf p. 8), x eps/sqrt(Ry)
+CITE_TABLE2 = (DOC + " Table 2 (pdf p. 8; 5.3): outstanding flange b/tf and web d/tw limits = coefficient x eps/sqrt(Ry), "
+               "eps = sqrt(250/fy); beam 9.0/44.5, column 9.0/[72.7(1-1.04Ca) | 24.9(2.68-Ca) >= 44.4], brace 11.3/44.4, "
+               "link 11.3/44.4 (I-sections)")
 
 CITE_1_3 = (DOC + " 1.3 (pdf p. 3): 'In seismic zone V, all steel buildings shall be made of EBF systems; SCBFs "
             "shall not be used. In seismic zones IV and V, SMRFs may be used in buildings of height less than 15 m.'")
@@ -54,9 +63,20 @@ PRECEDENCE = ("IS 18168:2023 Foreword: governs over IS 800:2007 Section 12 where
 _SYS = {"SMF": "SMRF", "SMRF": "SMRF", "SCBF": "SCBF", "EBF": "EBF"}
 
 
+def components(system):
+    """IS 18168 systems named in a (possibly mixed, '+'-joined) system string: 'SMF+SCBF' -> ['SMRF', 'SCBF']
+    (WP6-fix: a transverse SMRF with longitudinal SCBF bays is covered by both sets of rules)."""
+    out = []
+    for part in str(system or "").upper().replace("-", "").replace("_", "").replace(" ", "").split("+"):
+        c = _SYS.get(part)
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
 def normalize_system(system):
-    s = str(system or "").upper().replace("-", "").replace("_", "").replace(" ", "")
-    return _SYS.get(s)
+    comps = components(system)
+    return comps[0] if comps else None
 
 
 def _zone(z):
@@ -94,11 +114,13 @@ def gamma_LL(LL_kNm2) -> float:
 
 
 def omega(system) -> dict:
-    sysn = normalize_system(system)
+    comps = components(system)
+    sysn = comps[0] if comps else None
     if sysn is None:
         return {"found": False, "Omega": None, "clause": DOC + " 1.3 / 5.5", "cite": CITE_5_5,
                 "reason": "no Omega for systems outside IS 18168 (1.3)"}
-    return {"found": True, "Omega": OMEGA[sysn], "system": sysn, "clause": DOC + " 5.5", "cite": CITE_5_5}
+    om = max(OMEGA[c] for c in comps)                    # mixed system: the larger Omega governs every member (stricter)
+    return {"found": True, "Omega": om, "system": sysn, "components": comps, "clause": DOC + " 5.5", "cite": CITE_5_5}
 
 
 def overstrength_rows(system, LL_kNm2) -> list:
@@ -111,26 +133,27 @@ def overstrength_rows(system, LL_kNm2) -> list:
 
 
 def overstrength_members(system) -> dict:
-    """Who must be designed for the 5.5 combinations (cl. 5.5 a-d)."""
-    sysn = normalize_system(system)
-    return {"column": sysn in ("SMRF", "SCBF", "EBF"), "beam": sysn in ("SCBF", "EBF"), "brace": sysn == "EBF",
-            "connection": sysn is not None}
+    """Who must be designed for the 5.5 combinations (cl. 5.5 a-d); mixed systems: the union of the components."""
+    comps = components(system)
+    return {"column": any(c in ("SMRF", "SCBF", "EBF") for c in comps), "beam": any(c in ("SCBF", "EBF") for c in comps),
+            "brace": "EBF" in comps, "connection": bool(comps)}
 
 
 def system_gate(system, zone, height_m=None) -> dict:
     """cl. 1.3: Zone V -> EBF only (SCBF not permitted); SMRF in Zones IV/V only when h < 15 m.
     Returns a {value, limit, ok, clause, cite} record; ok=None when the height is needed and missing."""
-    sysn = normalize_system(system)
+    comps = components(system)
+    sysn = comps[0] if comps else None
     z = _zone(zone)
-    rec = {"id": "is18168_1_3_system", "clause": DOC + " 1.3 / 12.1.1", "cite": CITE_1_3, "value": sysn, "zone": z,
-           "limit": "Zone V: EBF only; SMRF in Zones IV/V: h < 15 m", "dc": None, "source": "steel_engine/india_is18168.py"}
+    rec = {"id": "is18168_1_3_system", "clause": DOC + " 1.3 / 12.1.1", "cite": CITE_1_3, "value": "+".join(comps) or sysn,
+           "zone": z, "limit": "Zone V: EBF only; SMRF in Zones IV/V: h < 15 m", "dc": None, "source": "steel_engine/india_is18168.py"}
     if sysn is None or z is None:
         rec.update(ok=None, reason="system/zone not resolved")
         return rec
-    if z == "V" and sysn == "SCBF":
+    if z == "V" and "SCBF" in comps:
         rec.update(ok=False, reason="SCBF not permitted in Zone V (1.3): use EBF (or SMRF < 15 m)")
         return rec
-    if z in ("IV", "V") and sysn == "SMRF":
+    if z in ("IV", "V") and "SMRF" in comps:
         if height_m is None:
             rec.update(ok=None, reason="building height needed for the 15 m limit (1.3 / 12.1.1)")
             return rec
@@ -158,3 +181,34 @@ def stricter(is800_limit, is18168_limit, *, kind="max"):
     if is18168_limit is None:
         return is800_limit
     return min(is800_limit, is18168_limit) if kind == "max" else max(is800_limit, is18168_limit)
+
+
+def table2_limits(component, fy_MPa, Ry, Ca=None, box=False):
+    """Table 2 (5.3) limiting outstanding-flange b/tf and web d/tw for an I-section (or closed box) of the lateral
+    load resisting system: component in beam | column | brace | link; Ca = Pu/(Py/gamma_m0) for columns."""
+    eps = (250.0 / float(fy_MPa)) ** 0.5
+    f = eps / float(Ry) ** 0.5
+    key = component + ("_box" if box and component in ("brace", "link") else "")
+    cf, cw = TABLE2[key]
+    if component == "column":
+        ca = float(Ca or 0.0)
+        cw = 72.7 * (1 - 1.04 * ca) if ca <= 0.118 else max(24.9 * (2.68 - ca), 44.4)
+    return {"flange_b_over_tf": cf * f, "web_d_over_tw": cw * f, "eps": eps, "Ry": Ry, "Ca": Ca,
+            "clause": DOC + " Table 2 / 5.3", "cite": CITE_TABLE2}
+
+
+def table2_check(component, props, fy_MPa, Ry, Ca=None, member=None):
+    """{id, member, value, limit, dc, ok, clause, cite, flange, web} for a rolled I-section: b = bf/2 outstand,
+    d = clear web depth (d - 2 tf) as IS 800 Table 2 defines them."""
+    p = props
+    box = p.get("section_type") not in ("I", None)
+    lim = table2_limits(component, fy_MPa, Ry, Ca=Ca, box=box)
+    bf, tf, tw, d = float(p["bf"]), float(p["tf"]), float(p["tw"]), float(p["d"])
+    rf = (bf / 2.0) / tf
+    rw = (d - 2.0 * tf) / tw
+    dcf, dcw = rf / lim["flange_b_over_tf"], rw / lim["web_d_over_tw"]
+    dc = max(dcf, dcw)
+    return {"id": "is18168_table2_%s" % component, "member": member, "value": {"b/tf": round(rf, 2), "d/tw": round(rw, 2)},
+            "limit": {"b/tf": round(lim["flange_b_over_tf"], 2), "d/tw": round(lim["web_d_over_tw"], 2)},
+            "dc": dc, "ok": dc <= 1.0, "clause": lim["clause"], "cite": lim["cite"], "eps": lim["eps"], "Ry": Ry,
+            "Ca": Ca, "source": "steel_engine/india_is18168.py"}

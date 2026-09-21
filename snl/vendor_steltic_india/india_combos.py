@@ -273,6 +273,15 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
     g = add(_grav_label(1.5, 1.5, 1.5), 1.5, 1.5, 1.5, family="T4 DL+LL", cite=IS800_T4 + " DL+LL")
     if snow:
         add(_grav_label(1.5, 1.5, 0, 1.5), 1.5, 1.5, 0.0, fS=1.5, family="T4 DL+LL(snow)", cite=IS800_T4 + " DL+LL (snow)")
+        # IS 875 (Part 4):2021 4.3: severe imbalance (zero snow on one half of the roof) -- cfg['snow_partial'] =
+        # {'axis': 'X'|'Y' (direction across the ridge / the half-split)} adds the two half-loaded rows (WP6-fix)
+        spx = cfg.get("snow_partial")
+        if spx:
+            ax_ = str((spx.get("axis") if isinstance(spx, dict) else spx) or "X").upper()
+            for side in ("lo", "hi"):
+                add(_grav_label(1.5, 1.5, 0, 1.5) + "[SL:%s-%s]" % (ax_, side), 1.5, 1.5, 0.0, fS=1.5,
+                    family="T4 DL+LL(snow) + IS 875-4 4.3 partial", snow_pattern=[ax_, side],
+                    cite=IS800_T4 + " DL+LL (snow); IS 875 (Part 4):2021 4.3 partial loading (zero snow on one half)")
     if cfg.get("notional_loads", True):
         for d in ("X", "Y"):
             for s in (1, -1):

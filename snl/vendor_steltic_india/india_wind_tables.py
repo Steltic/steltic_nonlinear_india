@@ -171,8 +171,11 @@ def _hw_band(h_over_w: float) -> str | None:
 def _lw_band(h_band: str, l_over_w: float) -> str | None:
     """Map plan ratio into the printed Table 5 band for the given height band."""
     r = float(l_over_w)
+    # WP6-fix: a square plan (l/w = 1.0) belongs to the first band.  The printed Table 5 writes '1 < l/w <= 3/2' for
+    # h/w <= 1/2 and 3/2 < h/w < 6 but '1 <= l/w <= 3/2' for the middle band; the lower bound is read as inclusive
+    # everywhere (no other row could apply to a square building).
     if h_band == "<=0.5":
-        if 1.0 < r <= 1.5:
+        if 1.0 <= r <= 1.5:
             return "1<l/w<=1.5"
         if 1.5 < r <= 4.0:
             return "1.5<l/w<=4"
@@ -184,7 +187,7 @@ def _lw_band(h_band: str, l_over_w: float) -> str | None:
             return "1.5<=l/w<4"
         return None
     if h_band == "1.5<h/w<=6":
-        if 1.0 < r <= 1.5:
+        if 1.0 <= r <= 1.5:
             return "1<l/w<=1.5"
         if 1.5 <= r <= 4.0:
             return "1.5<=l/w<=4"

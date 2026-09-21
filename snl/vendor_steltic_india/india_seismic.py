@@ -919,7 +919,8 @@ def irregularity_screens(cfg, run) -> dict:
     for d, v in dr.items():
         ss[d] = soft_storey_screen(v.get("stiffness_N_per_mm") or [], exempt)
     soft = {"irregular": any(v["irregular"] for v in ss.values()), "by_direction": ss,
-            "clause": "IS 1893 Table 6(i) (Amd 2)"}
+            "clause": "IS 1893 Table 6(i) (Amd 2)",
+            "stiffness_basis": next((v.get("stiffness_basis") for v in dr.values() if v.get("stiffness_basis")), None)}
     if soft["irregular"]:
         lim = [min(a, b) for a, b in zip(*(v["drift_limit_by_storey"] for v in ss.values()))] if len(ss) > 1 else \
             list(ss.values())[0]["drift_limit_by_storey"]

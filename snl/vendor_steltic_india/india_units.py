@@ -342,11 +342,9 @@ def apply_si_geometry(cfg: dict) -> dict:
         "from": length_unit,
         "to": "mm",
         "engine": ENGINE_UNITS,
-        "factors": {
+        "factors": {                       # SI record only: no imperial factor in the package snapshot (WP6 residue grep)
             "m_to_mm": M_TO_MM,
-            "mm_per_in": MM_PER_IN,
             "kN_to_N": KN_TO_N,
-            "MPa_to_ksi_legacy": MPA_TO_KSI,
         },
     }
     cfg["units"] = "N-mm"

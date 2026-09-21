@@ -484,6 +484,10 @@ TABLE4_SETS = {
     "is18168_5_5": [(1.2, 0.5, 3.0), (0.9, 0.0, 3.0), (1.2, 0.25, 3.0), (1.2, 0.25, 2.5)],
     "service": [(1.0, 1.0, 0.0), (1.0, 0.8, 0.8), (1.0, 0.0, 1.0), (1.0, 0.0, 0.0)],
 }
+# IS 800 Table 4 rows with crane load CL (fD, fL, fC, |f_lat|): DL+LL+CL 1.5/1.5/1.05 (LL leading) and 1.5/1.05/1.5
+# (CL leading); DL+LL+CL+WL/EL 1.2/1.2/1.05/0.6 and 1.2/1.2/0.53/1.2 -- the generator's own crane rows were refused by
+# the validator, which knew no CL column (WP6-fix)
+TABLE4_CRANE_SETS = [(1.5, 1.5, 1.05, 0.0), (1.5, 1.05, 1.5, 0.0), (1.2, 1.2, 1.05, 0.6), (1.2, 1.2, 0.53, 1.2)]
 
 
 def validate_table4(combos, cfg=None) -> list:
@@ -499,10 +503,19 @@ def validate_table4(combos, cfg=None) -> list:
         except (TypeError, ValueError):
             continue
         f, _ = combo_lateral_factor(c)
+        if f is None and c.get("fWM") is not None:               # WP6-fix: member-wind rows carry their factor in fWM
+            f = float(c["fWM"])
         fl = abs(f) if f is not None else 0.0
         vert = c.get("vertical") if isinstance(c.get("vertical"), dict) else {}
         if f is not None and abs(abs(float(vert.get("coef", 0.0))) - 1.0) < 1e-9:
             fl = fl / 0.3                          # IS 1893 6.3.4.1(c): ELZ leading, 0.3 EL accompanying
+        fC = float(c.get("fC") or 0.0)
+        if fC:
+            if not any(abs(fD - a) < 1e-6 and abs(fL - b) < 1e-6 and abs(fC - cc) < 1e-6 and abs(fl - e) < 1e-6
+                       for a, b, cc, e in TABLE4_CRANE_SETS):
+                out.append(("ERROR", "combinations[%d] (%s): factors DL %g / LL %g / CL %g / lateral %g are not an IS 800 "
+                                     "Table 4 crane set" % (i, c.get("label", "?"), fD, fL, fC, fl)))
+            continue
         if not any(abs(fD - a) < 1e-6 and abs(fL - b) < 1e-6 and abs(fl - e) < 1e-6 for a, b, e in allowed):
             out.append(("ERROR", "combinations[%d] (%s): factors DL %g / LL %g / lateral %g are not an IS 800 "
                                  "Table 4 (or 12.2.3 / IS 18168 5.5) set" % (i, c.get("label", "?"), fD, fL, fl)))
@@ -603,7 +616,8 @@ def case_from_combination(c, plan) -> Case:
                 service=bool(c.get("service")), crane=c.get("crane"), fC=float(c.get("fC", 0.0) or 0.0),
                 crane_pattern=(tuple(c["crane_pattern"]) if c.get("crane_pattern") else None),
                 fS=float(c.get("fS", 0.0) or 0.0), notional=c.get("notional"), source=c,
-                member_wind=c.get("member_wind"), fWM=float(c.get("fWM", 0.0) or 0.0))
+                member_wind=c.get("member_wind"), fWM=float(c.get("fWM", 0.0) or 0.0),
+                snow_pattern=(tuple(c["snow_pattern"]) if c.get("snow_pattern") else None))
 
 
 def render_findings(findings) -> str:
@@ -742,26 +756,36 @@ def resolve_building_length_m(cfg, *, bay_spacing_m=None, n_bays=None, n_frames=
     }
 
 
+STORAGE_UNIT_LOAD_KNPM2_PER_M = 2.4      # IS 875 (Part 2):1987 Table 1 viii)(a) (corpus row recovered, WP6-fix)
+STORAGE_MIN_KNPM2 = 7.5                  # "... with a minimum of 7.5 kN/m2" (HRLOAD-25 / VERIFY C14)
+STORAGE_CITE = ("IS 875 (Part 2):1987 Table 1 viii)(a) storage rooms / warehouses: 2.4 kN/m2 per each metre of "
+                "storage height with a minimum of 7.5 kN/m2 (bulk density of the stored goods governs when larger)")
+
+
 def resolve_storage_height_m(cfg=None, *, eor_h_m=None, eor_cite=None, eor_source=None,
-                             unit_load_kNpm2_per_m=2.0):
+                             unit_load_kNpm2_per_m=STORAGE_UNIT_LOAD_KNPM2_PER_M, minimum_kNpm2=STORAGE_MIN_KNPM2):
     """Mezz/warehouse storage height for IS 875 Part 2 storage UDL (kN/m² per m height).
 
     Prefer cfg['storage_height_m'] (brief). Else documented assumption with cite.
     Never invent a silent 2.5 m.
-    Returns L_floor = unit_load × height when resolved.
+    Returns L_floor = max(unit_load × height, minimum) when resolved (Table 1 viii)(a): 2.4 kN/m2 per m, min 7.5).
     """
     cfg = cfg or {}
+
+    def _L(h):
+        return max(float(unit_load_kNpm2_per_m) * float(h), float(minimum_kNpm2 or 0.0))
     for key in ("storage_height_m", "mezz_storage_height_m", "stack_height_m"):
         if cfg.get(key) is not None:
             h = float(cfg[key])
             return {
                 "found": True,
                 "h_m": h,
-                "L_kNpm2": float(unit_load_kNpm2_per_m) * h,
+                "L_kNpm2": _L(h),
                 "unit_load_kNpm2_per_m": float(unit_load_kNpm2_per_m),
+                "minimum_kNpm2": float(minimum_kNpm2 or 0.0),
                 "source": "cfg",
                 "key": key,
-                "cite": cfg.get("storage_height_cite") or "cfg explicit storage height",
+                "cite": (cfg.get("storage_height_cite") or "cfg explicit storage height") + "; " + STORAGE_CITE,
             }
     h = eor_h_m if eor_h_m is not None else cfg.get("storage_height_assumption_m")
     cite = eor_cite or cfg.get("storage_height_assumption_cite")
@@ -771,14 +795,14 @@ def resolve_storage_height_m(cfg=None, *, eor_h_m=None, eor_cite=None, eor_sourc
         return {
             "found": True,
             "h_m": float(h),
-            "L_kNpm2": float(unit_load_kNpm2_per_m) * float(h),
+            "L_kNpm2": _L(h),
             "unit_load_kNpm2_per_m": float(unit_load_kNpm2_per_m),
+            "minimum_kNpm2": float(minimum_kNpm2 or 0.0),
             "source": src or "documented_assumption",
             "resolved_via": "eor_documented" if "eor" in (src or "documented") else "documented_assumption",
-            "cite": str(cite),
+            "cite": str(cite) + "; " + STORAGE_CITE,
             "note": (
-                "Storage height documented (not silent invent). Prefer brief storage_height_m. "
-                "IS 875 P2 Table 1 warehouses 2.0 kN/m² per m of storage height."
+                "Storage height documented (not silent invent). Prefer brief storage_height_m. " + STORAGE_CITE
             ),
             "brief_field_required": "storage_height_m",
         }
@@ -791,7 +815,7 @@ def resolve_storage_height_m(cfg=None, *, eor_h_m=None, eor_cite=None, eor_sourc
             "OR storage_height_assumption_m + storage_height_assumption_cite",
         ],
         "brief_field_required": "storage_height_m",
-        "cite": "IS 875 (Part 2):1987 Table 1 STORAGE — 2.0 kN/m² per m of storage height",
+        "cite": STORAGE_CITE,
         "note": "Do not silently assume 2.5 m stack height — set cfg or document with cite.",
     }
 
@@ -992,10 +1016,17 @@ IS800_TABLE6 = {
 IS800_TABLE6_CITE = "IS 800:2007 Table 6 (5.6.1), serviceability loads at gamma_f = 1.0"
 
 
-def floor_deflection_limit(cfg) -> tuple:
-    """(span divisor, cite) for floor/roof live-load deflection per IS 800 Table 6."""
+def floor_deflection_limit(cfg, roof=False) -> tuple:
+    """(span divisor, cite) for floor/roof live-load deflection per IS 800 Table 6.  A declared Table 6 row for the
+    roof members (cfg['deflection_key_roof'], e.g. 'rafter_profiled_sheeting' = span/180 for a portal rafter carrying
+    profiled metal sheeting) is used for the roof beams when `roof` is true (WP6-fix)."""
     ind = str(cfg.get("building_type") or "").lower().startswith("industrial")
     crack = bool(cfg.get("finishes_susceptible_to_cracking", True))
+    rk = cfg.get("deflection_key_roof")
+    if roof and rk:
+        if rk not in IS800_TABLE6:
+            raise LoadPlanError("deflection_key_roof %r is not an IS 800 Table 6 row (%s)" % (rk, ", ".join(sorted(IS800_TABLE6))))
+        return IS800_TABLE6[rk], "%s: %s -> span/%d" % (IS800_TABLE6_CITE, rk, IS800_TABLE6[rk])
     if ind:
         key = "industrial_simple_span_live_brittle" if crack else "industrial_simple_span_live_elastic"
     else:
