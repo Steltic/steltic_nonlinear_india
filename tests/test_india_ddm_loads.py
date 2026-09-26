@@ -72,3 +72,25 @@ def test_gold_ex3_load_plan_expands():
     assert any("[col]" in l for l in labels)                         # IS 18168 5.5 Omega rows present
     kept = loads.prune(cases)
     assert any("EQ_X" in c[0] for c in kept) and any("W_" in c[0] or "DL" in c[0] for c in kept)
+
+
+def test_rsa_combinations_get_the_static_is1893_pattern_and_india_prune():
+    """NL-13: RSA-referenced EQ combinations carried only the 7.8.2 torsion moments -- the DDM 'EQ' sweeps had no lateral
+    force. They now carry load_plan.story_forces EQ_X / EQ_Y x the factor; the India prune keeps one gravity case, the
+    three IS 800 Table 4 lateral families per direction and sign, no notional / member-wind / 0.6 W / SLS / [col] rows."""
+    IL = pytest.importorskip("india_loads", reason="needs the HR steel_engine on sys.path (STELTIC_ENGINE_DIR)")
+    lp = json.load(open(FIX, encoding="utf-8"))
+    cfg = {"jurisdiction": "india", "heights": [8000.0], "load_plan": lp}
+    cases = loads.steltic_combos(cfg)
+    eq = [c for c in cases if c[0] == "1.2DL+1.2LL+1.2EQ_X[ea]"][0]
+    fx = sum(v[0] for v in eq[4].values())
+    vb_x = sum(v[0] for v in IL._as_lateral(lp["story_forces"]["EQ_X"]).values()) * IL._story_force_scale(lp)
+    assert fx == pytest.approx(1.2 * vb_x) and "7.6.3" in eq.meta["lateral_basis"]
+    # the accidental-torsion moments (when the engine could compute esi) are kept alongside: fx added, mz untouched
+    kept = loads.prune(cases)
+    labels = [c[0] for c in kept]
+    assert labels.count("1.5DL+1.5LL") == 1 and not any("N_" in l or "WM" in l or "0.6W" in l or l.startswith("SLS")
+                                                           or "[col]" in l or "[eb]" in l for l in labels)
+    assert all(sum(abs(v[0]) + abs(v[1]) for v in c[4].values()) > 0 for c in kept if "EQ" in c[0] or "W_" in c[0])
+    assert len([l for l in labels if "EQ_X" in l]) == 6 and len([l for l in labels if "W_Y" in l]) == 6
+    assert len(loads.prune(cases, torsion="both")) > len(kept)
