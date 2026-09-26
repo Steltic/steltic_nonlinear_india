@@ -37,6 +37,27 @@ def _schedule(job_dir):
     return rows
 
 
+def _combo_forces(job_dir):
+    """design/member_combo_forces.json (HR engine): {ele_tag: {combo: [N, Mmaj, ...]}}, N and N-mm; None if absent."""
+    import json
+    p = os.path.join(job_dir, "design", "member_combo_forces.json")
+    if not os.path.exists(p):
+        return None
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return None
+    fields = d.get("fields") or []
+    iN, iM = (fields.index("N") if "N" in fields else 0), (fields.index("Mmaj") if "Mmaj" in fields else 1)
+    out = {}
+    for t, rec in (d.get("elements") or {}).items():
+        try:
+            out[int(t)] = {c: (abs(float(v[iN])), abs(float(v[iM]))) for c, v in (rec.get("records") or {}).items()}
+        except Exception:
+            continue
+    return out
+
+
 def member_forces(g, lam_scale=1.0):
     """Per member: max |N| (compression +), max |M_major|, max |M_minor|, max |V| over its sub-element ends (N, N·mm)."""
     out = {}
@@ -57,6 +78,11 @@ def member_forces(g, lam_scale=1.0):
         cur = out.setdefault(e["mtag"], dict(kind=kind, role=e["role"], section=e["section"], N_comp=0.0, N_abs=0.0,
                                              M_major=0.0, M_minor=0.0, V=0.0))
         cur["N_comp"] = max(cur["N_comp"], N); cur["N_abs"] = max(cur["N_abs"], Nabs)
+        # the axial force at the member's j end (top of a column), compression +: what the HR engine records as N
+        # (static_model.member_records: localForce[6] of the single column element)
+        s_ = e.get("s") if e.get("s") is not None else 0
+        if s_ >= cur.get("_s_top", -10):
+            cur["_s_top"] = s_; cur["N_top"] = -f[6]
         cur["M_major"] = max(cur["M_major"], Mmaj); cur["M_minor"] = max(cur["M_minor"], Mmin); cur["V"] = max(cur["V"], V)
     return out
 
@@ -68,27 +94,74 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
     pres = present_sets(nm)
     grav = [c for c in cases if lateral_direction(c[4])[0] is None and not c[5]]
     rows, worst = [], None
+    # NL-14: when the HR design reduced the column imposed load (IS 875-2 3.2.1), compare like with like
+    hr = None
+    try:
+        from snl import hr_gravity as HG
+        hr = HG.ensure(nm.job_dir)
+    except Exception:
+        hr = None
+    llr = {int(k): float(v) for k, v in ((hr or {}).get("column_imposed_load_reduction") or {}).items()}
+    llr_used = False
     for c in grav:
         label, fD, fL, fLr, lat, _ = c
         g = GMNIAModel(nm, cfg, nsub=nsub, elastic=True, residual="none", out_of_plumb=(None, 0.0), bow=0.0, brace_bow=0.0,
                        rigid_end_offset=rigid_end_offset)
         g.build().prepare()
         ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-        g.apply_gravity(fD, fL, fLr, pres)
+        g.apply_gravity(fD, fL, fLr, pres, fS=float((getattr(c, "meta", None) or {}).get("fS") or 0.0))
         ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
         ops.test("NormDispIncr", 1e-8, 50, 0); ops.algorithm("Newton")
         ops.integrator("LoadControl", 1.0); ops.analysis("Static")
         if ops.analyze(1) != 0:
             rows.append(dict(combo=label, error="elastic gravity analysis failed")); continue
         mf = member_forces(g)
-        for tag, r in sched.items():
-            if (r.get("governing_combo") or "").strip() != label or tag not in mf:
-                continue
+        NLL = {}
+        if llr and fL and hr and (hr.get("states") or {}).get("Lfloor"):
+            g2 = GMNIAModel(nm, cfg, nsub=nsub, elastic=True, residual="none", out_of_plumb=(None, 0.0), bow=0.0,
+                            brace_bow=0.0, rigid_end_offset=rigid_end_offset)
+            g2.build().prepare()
+            ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+            from snl import hr_gravity as HG
+            chains = {}
+            for e in g2.elems:
+                sp, Lm = e.get("span"), e.get("Lm") or e.get("L")
+                if sp and Lm:
+                    chains.setdefault(int(e["mtag"]), []).append((e["tag"], sp[0] / Lm, sp[1] / Lm))
+            HG.apply(ops, HG.combine(hr, {"Lfloor": 1.0}), chains)
+            ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
+            ops.test("NormDispIncr", 1e-8, 50, 0); ops.algorithm("Newton")
+            ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+            if ops.analyze(1) == 0:
+                NLL = {t: (v.get("N_top") or 0.0) / 1e3 for t, v in member_forces(g2).items() if v["kind"] == "col"}
+            # the main model is gone from OpenSees after g2: the member forces mf above were read before
+        # NL-14: every member against the HR engine's own forces for THIS combination (member_combo_forces.json);
+        # the old path compared only members whose governing combination happened to be gravity, through schedule
+        # columns (Mx_kNm, P_comp_N) the current package no longer writes -> 0 comparisons and a failed gate
+        cf = _combo_forces(nm.job_dir)
+        pairs = []
+        if cf is not None:
+            for tag, recs in cf.items():
+                if label in recs and tag in mf:
+                    pairs.append((tag, recs[label][0] / 1e3, recs[label][1] / 1e6))
+        else:
+            for tag, r in sched.items():
+                if (r.get("governing_combo") or "").strip() != label or tag not in mf:
+                    continue
+                P = r.get("P_comp_kN") if r.get("P_comp_kN") not in (None, "") else (float(r.get("P_comp_N") or 0.0) / 1e3)
+                M = r.get("M_major_kNm") if r.get("M_major_kNm") not in (None, "") else r.get("Mx_kNm")
+                pairs.append((tag, float(P or 0.0), float(M or 0.0)))
+        for tag, P_des, M_des in pairs:
             m = mf[tag]
             if m["kind"] == "beam":
-                des = float(r.get("Mx_kNm") or 0.0); got = m["M_major"] / 1e6; q = "M (kN·m)"
+                des = M_des; got = m["M_major"] / 1e6; q = "M (kN·m)"
             elif m["kind"] == "col":
-                des = float(r.get("P_comp_N") or 0.0) / 1e3; got = m["N_comp"] / 1e3; q = "P (kN)"
+                des = P_des
+                if tag in llr and tag in NLL:
+                    des = P_des + fL * llr[tag] * NLL[tag]     # the HR N before the 3.2.1 reduction (llr = the reduction)
+                    llr_used = True
+                got = (m.get("N_top") if cf is not None and m.get("N_top") is not None else m["N_comp"]) / 1e3
+                q = "P (kN)" if cf is None else "P top (kN)"
             else:
                 continue
             if abs(des) < min_design:
@@ -101,6 +174,8 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
                 worst = row
     bad = [r for r in rows if r.get("ok") is False or r.get("error")]
     ok = bool(rows) and not bad
+    llr_note = ("columns: the HR N is IS 875-2 3.2.1 reduced (cfg column_imposed_load_reduction); compared as "
+                "N_HR + fL x reduction x N_LL(top), N_LL = the floor-imposed-only axial of the same GMNIA") if llr_used else None
     summary = ("%d member comparisons, %d outside +/-%.0f %%; worst %s" % (
         len(rows), len(bad), 100 * tol, ("%s ele %s %s ratio %.3f" % (worst["combo"], worst["ele"], worst["quantity"], worst["ratio"])) if worst else "n/a"))
     by_group = {}
@@ -113,8 +188,9 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
         b["n"] += 1; b["ratio_min"] = min(b["ratio_min"], r["ratio"]); b["ratio_max"] = max(b["ratio_max"], r["ratio"])
         b["n_bad"] += int(not r["ok"])
     return dict(ok=ok, tol=tol, summary=summary, rows=rows[:400], groups=list(by_group.values()), worst=worst,
-                n_compared=len(rows), n_bad=len(bad),
-                basis="linear-elastic GMNIA topology at lambda = 1 vs member_schedule.csv (same combination), +/-5 %")
+                n_compared=len(rows), n_bad=len(bad), imposed_load_reduction=llr_note,
+                basis=("linear-elastic GMNIA topology at lambda = 1 vs the HR engine's member forces for the same combination "
+                       "(design/member_combo_forces.json; member_schedule.csv when absent), +/-5 %"))
 
 
 def section_class(section: str, fy: float) -> dict:

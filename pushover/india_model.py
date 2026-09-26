@@ -103,14 +103,44 @@ def apply_is_seismic_mass(pkg) -> dict:
 
 
 def is_gravity_loads(pkg):
-    """NL gravity = IS seismic weight per level (D + Table 10 imposed share), equal shares on the level's column
-    nodes (same idealisation as the pushover). Returns ({node: Pz kip}, table)."""
+    """NL gravity = the IS 1893 7.3 seismic weight as a load (D6: the same W as the mass).
+
+    NL-14: the HR engine's own seismic-weight gravity state (snl.hr_gravity 'EV': dead incl. cladding line loads and
+    member self-weight, Table 10 share of the floor imposed load, nodal dead loads -- element by element, as the HR
+    design distributes it), topped up per level to the package's W_i with equal shares on the level's diaphragm
+    nodes (the HR EV state counts partitions in the imposed share, W at 100 %: IN_Ex1 360 kN / floor). Without the
+    HR engine the whole W_i goes on the diaphragm nodes (the former idealisation), and the table says so.
+    Returns ({node: Pz kip, '_hr': HR loads}, table)."""
     from snl.india_units import KN_TO_KIP
     ind = pkg.basis.india or {}
     W = ind.get("W_by_floor_kN")
     lv = _levels(pkg)
     if not W or len(W) != len(lv):
         raise ValueError("IS gravity: W_by_floor missing or level count mismatch (WP4.8)")
+    hr = None
+    try:
+        from snl import hr_gravity as HG
+        rec = HG.ensure(pkg.root)
+        if rec and (rec.get("states") or {}).get("EV"):
+            hr = rec
+    except Exception as ex:                                  # noqa: BLE001
+        print("[gravity IS] HR gravity state unavailable (%s) -- W_i as diaphragm nodal loads" % ex)
+    if hr is not None:
+        from snl import hr_gravity as HG
+        ev = hr["states"]["EV"]
+        lvt = ev.get("level_totals_N") or {}
+        loads, table = {"_hr": HG.combine(hr, {"EV": 1.0})}, []
+        for (k, z, master, slaves), Wi in zip(lv, W):
+            hr_kN = float(lvt.get(str(k), 0.0)) / 1e3
+            top = float(Wi) - hr_kN
+            for n in slaves:
+                loads[n] = loads.get(n, 0.0) - top * KN_TO_KIP / len(slaves)
+            table.append(dict(level=k, z_in=z, z_mm=z * 25.4, W_kN=float(Wi), QG_kN=float(Wi), QG_kip=round(float(Wi) * KN_TO_KIP, 2),
+                              WD_kip=round(float(Wi) * KN_TO_KIP, 2), QL25_kip=0.0, nodes=len(slaves),
+                              HR_EV_kN=round(hr_kN, 1), topup_kN=round(top, 1),
+                              basis="HR engine seismic-weight gravity state (element loads, IS 1893 7.3) + top-up to W_i on the "
+                                    "diaphragm nodes"))
+        return loads, table
     loads, table = {}, []
     for (k, z, master, slaves), Wi in zip(lv, W):
         QG = float(Wi) * KN_TO_KIP

@@ -24,8 +24,7 @@ def _g_accel(pkg=None):
 def _apply_gravity(loads):
     ops.wipeAnalysis()
     ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-    for n, pz in loads.items():
-        ops.load(n, 0.0, 0.0, pz, 0.0, 0.0, 0.0)
+    NM.apply_gravity_pattern(loads)                    # nodal Pz + the HR engine's element gravity (NL-14)
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
     ops.test("NormDispIncr", 1e-8, 50, 0); ops.algorithm("Newton")
     ops.integrator("LoadControl", 0.1); ops.analysis("Static")

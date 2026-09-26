@@ -353,11 +353,49 @@ class GMNIAModel:
                                    span=(L * s / nsub, L * (s + 1) / nsub), Lm=L))
 
     # ------------------------------------------------------------------ loads
-    def apply_gravity(self, fD, fL, fLr, pres):
-        """Two-way tributary UDL on every grid beam sub-element (kip/in, local z down)."""
+    def apply_gravity(self, fD, fL, fLr, pres, fS=0.0):
+        """Gravity for one combination.
+
+        India (NL-14): the HR engine's own gravity (snl.hr_gravity -- static_model.apply_gravity_state states D / L /
+        Lr / S, element by element, with member self-weight and nodal dead loads) combined with the factors and replayed
+        on the GMNIA sub-elements by span fraction -- the same loads the design used, which the gravity-transfer gate
+        then checks. Without the HR engine, and on the USA path: the two-way tributary UDL below (kip/in, local z down)."""
         from .loads import beam_udl
         total = 0.0
         india = self._india()
+        if india:
+            hr = getattr(self.nm, "_hr_gravity", None)
+            if hr is None:
+                try:
+                    from snl import hr_gravity as HG
+                    hr = HG.ensure(self.nm.job_dir) or False
+                except Exception as ex:                       # noqa: BLE001
+                    print("[gmnia] HR gravity state unavailable (%s) -- own tributary loads" % ex)
+                    hr = False
+                self.nm._hr_gravity = hr
+            if hr:
+                from snl import hr_gravity as HG
+                loads = HG.combine(hr, {"D": fD, "L": fL, "Lr": fLr, "S": fS})
+                chains = {}
+                for e in self.elems:
+                    sp, Lm = e.get("span"), e.get("Lm") or e.get("L")
+                    if sp and Lm:
+                        chains.setdefault(int(e["mtag"]), []).append((e["tag"], sp[0] / Lm, sp[1] / Lm))
+                    elif e.get("s") in (0, None):
+                        chains.setdefault(int(e["mtag"]), []).append((e["tag"], 0.0, 1.0))
+                scale = 1.0 if getattr(self, "_fibre_units", "kip-in") == "N-mm" else None
+                if scale is None:
+                    from snl.india_units import KIP_TO_N, MM_PER_IN
+                    info = HG.apply(ops, loads, chains, force_scale=1.0 / KIP_TO_N, length_scale=1.0 / MM_PER_IN)
+                else:
+                    info = HG.apply(ops, loads, chains)
+                self.gravity_info = dict(info, basis="HR engine gravity states (snl.hr_gravity)")
+                tot = 0.0
+                for name, f in (("D", fD), ("L", fL), ("Lr", fLr), ("S", fS)):
+                    st = (hr.get("states") or {}).get(name)
+                    if st and f:
+                        tot += f * float(st.get("total_N") or 0.0)
+                return tot if scale == 1.0 else tot / 4448.2216152605
         for e in self.elems:
             if e["kind"] != "beam" or (e.get("rigid_stub") and not india):
                 continue

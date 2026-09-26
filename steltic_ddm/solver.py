@@ -152,10 +152,11 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     `strain_cap` x eps_y -- lambda at the cap), or NO_LIMIT_POINT (time / step exhaustion / max steps / displacement
     cap with lambda still rising). lambda_u is None for NO_LIMIT_POINT (lambda_end holds the last peak)."""
     label, fD, fL, fLr, lat, col_only = combo
+    fS = float((getattr(combo, "meta", None) or {}).get("fS") or 0.0)
     t0 = time.time()
     model.build().prepare()
     ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-    W = model.apply_gravity(fD, fL, fLr, pres)
+    W = model.apply_gravity(fD, fL, fLr, pres, fS=fS)
     model.apply_lateral(lat)
     _solver_settings()
     ldir, lsgn = lateral_direction(lat)
@@ -172,7 +173,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
         # rewind failed attempt before retrying a smaller step
         model.build().prepare()
         ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-        W = model.apply_gravity(fD, fL, fLr, pres)
+        W = model.apply_gravity(fD, fL, fLr, pres, fS=fS)
         model.apply_lateral(lat)
         _solver_settings()
         ops.analysis("Static")

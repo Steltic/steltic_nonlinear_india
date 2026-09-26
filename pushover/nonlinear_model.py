@@ -203,10 +203,41 @@ def build_elastic(pkg):
         ops.rigidDiaphragm(perp, master, *slaves)
 
 
+def gravity_chains(parents):
+    """{parent element tag: [(sub_tag, s0, s1)]} for the model now in OpenSees: the fibre chain (the parent keeps its tag
+    for segment 0, SEG_ELE_BASE + tag*100 + si for the others) or the single elastic element."""
+    have = set(ops.getEleTags())
+    out = {}
+    for p in parents:
+        p = int(p)
+        if p not in have:
+            continue
+        chain = [p] + [t for t in (SEG_ELE_BASE + p * 100 + si for si in range(1, 100)) if t in have]
+        n = len(chain)
+        out[p] = [(t, si / n, (si + 1) / n) for si, t in enumerate(chain)]
+    return out
+
+
+def apply_gravity_pattern(loads):
+    """Nodal Pz loads (int keys, kip) and, NL-14, the HR engine's element / nodal gravity (key '_hr', N and N-mm) on
+    whatever model is built. Returns the replay record (element / nodal loads applied, load on absent parents)."""
+    info = None
+    for n, pz in loads.items():
+        if isinstance(n, str):
+            continue
+        ops.load(n, 0.0, 0.0, pz, 0.0, 0.0, 0.0)
+    hr = loads.get("_hr") if isinstance(loads, dict) else None
+    if hr:
+        from snl import hr_gravity as HG
+        from snl.india_units import KIP_TO_N, MM_PER_IN
+        chains = gravity_chains({int(e[0]) for e in hr.get("ele", [])})
+        info = HG.apply(ops, hr, chains, force_scale=1.0 / KIP_TO_N, length_scale=1.0 / MM_PER_IN)
+    return info
+
+
 def _apply_gravity(loads, nsteps=10):
     ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-    for n, pz in loads.items():
-        ops.load(n, 0.0, 0.0, pz, 0.0, 0.0, 0.0)
+    apply_gravity_pattern(loads)
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
     ops.test("NormDispIncr", 1e-8, 50); ops.algorithm("Newton")
     ops.integrator("LoadControl", 1.0 / nsteps); ops.analysis("Static")

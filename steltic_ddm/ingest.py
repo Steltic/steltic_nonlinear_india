@@ -229,11 +229,17 @@ def load_cfg(job_dir, steltic_engine_dir=None):
     src = open(os.path.join(job_dir, "cfg.py")).read()
     ns = {"__name__": "steltic_cfg", "__file__": os.path.join(job_dir, "cfg.py")}
     old = os.getcwd()
+    jd = os.path.abspath(job_dir)
+    added = jd not in sys.path
+    if added:                                         # NL-14: job-local helper modules (hrb_build6.py, retrieval_ex6.py)
+        sys.path.insert(0, jd)                        # -- the HR app runs cfg.py with the job folder importable
     try:
         os.chdir(job_dir)
         exec(compile(src, "cfg.py", "exec"), ns)
     finally:
         os.chdir(old)
+        if added and jd in sys.path:
+            sys.path.remove(jd)
     cfg = ns.get("cfg")
     if not isinstance(cfg, dict):
         raise ValueError("cfg.py does not define a top-level `cfg = dict(...)`")
