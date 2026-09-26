@@ -151,7 +151,10 @@ def cmd_revise(a):
 
 def cmd_collect(a):
     from . import collect
-    r = collect.run(a.job, out_name=a.out, emit=collect.Emitter())
+    r = collect.run(a.job, out_name=a.out, emit=collect.Emitter(), prepare=getattr(a, "prepare", False),
+                    answers=getattr(a, "answers", None))
+    if r.get("prepared"):
+        return 3
     return 0 if r["ok"] else 2
 
 
@@ -211,6 +214,10 @@ def main(argv=None):
                                         "corpus (RAG_API_URL) for this building and write hinge_params_collected.json; the hinge "
                                         "backbones stay modelling assumptions. Do this BEFORE `run`.")
     co.add_argument("job"); co.add_argument("--out", default="hinge_params_collected.json", help="file name written into the job folder")
+    co.add_argument("--prepare", action="store_true", help="fetch the IS passages (deterministic retrieval) and write "
+                    "collect_request.json / .md for a transcriber; nothing is collected (exit 3)")
+    co.add_argument("--answers", help="SCRIPTED transcriber: an answers file {group: {field: {value, quote}}} filled from "
+                    "collect_request.json; every value is still checked against the fetched passages")
     i = sub.add_parser("inspect"); i.add_argument("package"); i.add_argument("--out")
     rv = sub.add_parser("review", help="the model reads what the run measured, looks the governing clauses up in the standards (RAG_API_URL) and writes review.md / review.html")
     rv.add_argument("job"); rv.add_argument("--focus", default="", help="what the engineer wants the review to concentrate on")

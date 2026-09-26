@@ -425,7 +425,12 @@ def transcribe(gid: str, facts: dict, passages: list, conn: dict, em, trace) -> 
 
         def on_piece(kind, text):
             em.event(type=kind, text=text)
-        out = llm.chat_with_retry(tconn, messages, None, on_piece)
+        if conn.get("scripted") is not None:
+            # SCRIPTED transcriber (NL-9): the answer is the group's entry of an answers file written by an agent
+            # (or a person) from collect_request.json -- same passages, same checks; a file cannot answer a retry
+            out = {"content": json.dumps((conn["scripted"] or {}).get(gid) or {}), "reasoning": "", "usage": None}
+        else:
+            out = llm.chat_with_retry(tconn, messages, None, on_piece)
         if out.get("usage"):
             em.usage(out["usage"])
         trace({"type": "answer", "group": gid, "attempt": attempt + 1, "reasoning": out.get("reasoning", "")[:20000],
@@ -455,6 +460,8 @@ def transcribe(gid: str, facts: dict, passages: list, conn: dict, em, trace) -> 
                 got.setdefault("_quotes", {})[f] = a.get("quote")
         if not probs:
             break
+        if conn.get("scripted") is not None:
+            break                                   # the file is the answer: a rejected field stays rejected
         if not rejected and attempt >= 1:
             break                           # asked twice, both times "not in the passages": it is not
         if rejected:
@@ -669,8 +676,12 @@ def _parse_json(text: str) -> dict | None:
 
 def _readme(facts: dict, ok: bool, probs: dict, conn: dict, n_searches: int) -> list:
     when = datetime.datetime.now().isoformat(timespec="seconds")
+    who = conn.get("model") or "MOCK"
+    if conn.get("scripted") is not None:
+        who = "SCRIPTED -- transcribed by %s in %s (sha256 %s), every value checked against the fetched passages" % (
+            conn.get("transcriber"), os.path.basename(conn.get("answers_file") or ""), (conn.get("answers_sha256") or "")[:12])
     lines = ["RUN-SPECIFIC parameter file for %s, IS specification values collected from the IS corpus on this PC %s by `snl collect`." % (facts["name"], when),
-             "Model: %s. Standards searches: %d. Retrieval log: %s. Every india_spec group's `source` names the IS table / clause and page it was read from." % (conn.get("model") or "MOCK", n_searches, EVIDENCE_NAME),
+             "Model: %s. Standards searches: %d. Retrieval log: %s. Every india_spec group's `source` names the IS table / clause and page it was read from." % (who, n_searches, EVIDENCE_NAME),
              "IS groups this building needs: %s." % ", ".join(facts["needed"])]
     if ok:
         lines.append("spec_values_collected=true: every needed IS value was read from a retrieved passage, checked against the cell it came from and against the IS constants the engines use.")
@@ -685,6 +696,8 @@ def _readme(facts: dict, ok: bool, probs: dict, conn: dict, n_searches: int) -> 
 def write_evidence(job: str, facts: dict, searches: list, probs: dict, ok: bool, conn: dict, out_path: str) -> str:
     ev = {"asked": datetime.datetime.now().isoformat(timespec="seconds"), "rag_url": rag.url(),
           "model": conn.get("model") or "MOCK", "building": facts, "needed": facts["needed"],
+          "transcriber": ({k: conn.get(k) for k in ("transcriber", "answers_file", "answers_sha256")}
+                          if conn.get("scripted") is not None else None),
           "verified": ok, "spec_values_collected": ok, "problems": {g: p for g, p in probs.items() if p}, "written": out_path,
           "refused": [x for x in searches if x.get("via") == "refused"], "searches": searches}
     p = os.path.join(job, EVIDENCE_NAME)
@@ -702,10 +715,55 @@ def write_evidence(job: str, facts: dict, searches: list, probs: dict, ok: bool,
 
 
 # ---------------------------------------------------------------- the step
-def run(job: str, out_name: str = OUT_NAME, emit: Emitter | None = None, conn: dict | None = None) -> dict:
+REQUEST_NAME = "collect_request.json"
+
+
+def scripted_connection(answers_path: str) -> dict:
+    """NL-9: a transcriber that is not an LLM endpoint -- an answers file {group: {field: {value, quote}}} written by an
+    agent (or a person) from collect_request.json. Every value still passes check_field (the quote must occur verbatim
+    in the passages the program fetched, the value's digits must be in the quote) and validate()."""
+    import hashlib
+    raw = open(answers_path, "rb").read()
+    data = json.loads(raw.decode("utf-8"))
+    ans = data.get("answers", data) if isinstance(data, dict) else {}
+    who = (data.get("transcriber") if isinstance(data, dict) else None) or "agent (answers file)"
+    return {"model": "SCRIPTED", "mock": False, "scripted": ans, "answers_file": os.path.abspath(answers_path),
+            "answers_sha256": hashlib.sha256(raw).hexdigest(), "transcriber": who, "max_tokens": 4000, "reasoning": "low"}
+
+
+def write_request(job: str, facts: dict, fetched: dict) -> str:
+    """collect_request.json (+ .md): per group the TABLE AND ROW line, the fields and the passages the program fetched
+    -- exactly what a model is shown -- and an answers template. The transcriber fills the template and hands it back
+    with `snl collect <job> --answers <file>`."""
+    req = {"job": facts["name"], "instructions": TRANSCRIBE, "facts": {k: facts.get(k) for k in (
+               "system", "grade", "grade_basis", "other_grades", "tube_grades", "zone", "soil", "I", "Z", "needed")},
+           "groups": {}, "answers_template": {"transcriber": "who transcribed (model / agent / person)", "answers": {}}}
+    for gid in facts["needed"]:
+        variant, row = row_for(gid, facts)
+        req["groups"][gid] = {"table_and_row": row,
+                              "fields": [{"name": f, "what": w, "kind": k} for f, w, k in fields_for(gid, facts)],
+                              "optional": sorted(OPTIONAL.get(_split(gid)[0], set())),
+                              "passages": fetched.get(gid) or []}
+        req["answers_template"]["answers"][gid] = {f: {"value": None, "quote": None} for f, _w, _k in fields_for(gid, facts)}
+    p = os.path.join(job, REQUEST_NAME)
+    json.dump(req, open(p, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
+    md = ["# snl collect -- transcription request (%s)" % facts["name"], "", TRANSCRIBE, ""]
+    for gid, g in req["groups"].items():
+        md += ["## %s" % gid, "", "TABLE AND ROW: " + g["table_and_row"], "", "FIELDS:"]
+        md += ["- `%s`: %s" % (f["name"], f["what"]) for f in g["fields"]]
+        md += ["", "PASSAGES:"]
+        for x in g["passages"]:
+            md += ["", "[%s %s p. %s]" % (x.get("source"), x.get("section"), x.get("page")), "", x.get("text") or ""]
+        md.append("")
+    open(os.path.join(job, "collect_request.md"), "w", encoding="utf-8").write("\n".join(md))
+    return p
+
+
+def run(job: str, out_name: str = OUT_NAME, emit: Emitter | None = None, conn: dict | None = None,
+        prepare: bool = False, answers: str | None = None) -> dict:
     em = emit or Emitter()
     job = os.path.abspath(job)
-    conn = conn or llm.connection()
+    conn = conn or (scripted_connection(answers) if answers else llm.connection())
     t0 = time.time()
     em.event(type="status", text="reading the design package")
     try:
@@ -789,6 +847,15 @@ def run(job: str, out_name: str = OUT_NAME, emit: Emitter | None = None, conn: d
 
     groups: dict = {}
     tprobs: dict = {}
+    if prepare:
+        rp = write_request(job, facts, fetched)
+        tf.close()
+        write_evidence(job, facts, searches, {"prepare": ["request written; no values transcribed yet"]}, False,
+                       dict(conn, model="(prepare only)"), rp)
+        em.event(type="milestone", text="request written: %s (+ collect_request.md) -- fill answers_template and run "
+                                        "`snl collect <job> --answers <file>`" % os.path.basename(rp))
+        return {"ok": False, "prepared": rp, "verified": False, "path": "", "missing": facts["needed"],
+                "searches": searches, "usage": usage}
     if conn.get("mock"):
         em.event(type="status", text="model MOCK: taking the values from the repository's IS constants (not transcribed)")
         groups = mock_collect(facts, fetched)
@@ -898,8 +965,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="snl collect")
     ap.add_argument("job")
     ap.add_argument("--out", default=OUT_NAME, help="file name written into the job folder (default %s)" % OUT_NAME)
+    ap.add_argument("--prepare", action="store_true", help="fetch the passages and write collect_request.json only")
+    ap.add_argument("--answers", help="transcription answers file (SCRIPTED transcriber) -- see collect_request.json")
     a = ap.parse_args(argv)
-    r = run(a.job, out_name=a.out, emit=Emitter())
+    r = run(a.job, out_name=a.out, emit=Emitter(), prepare=a.prepare, answers=a.answers)
     return 0 if r["ok"] else 2
 
 
