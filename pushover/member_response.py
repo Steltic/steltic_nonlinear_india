@@ -91,6 +91,10 @@ class MemberRecorder:
                 continue
             s = h["spec"]
             self.braces.append(dict(tag=t, section=h["section"], dT=s.dT, dc=s.dc, z_in=h["z"], level=level_of(h["z"])))
+        # EBF links (NL-10): shear rotation = shear strain of the aggregated Vz component, against IS 18168 12.3.3.1
+        self.links = [dict(tag=t, section=r["section"], gamma_y=r["gamma_y"], nip=int(r.get("nip") or 5),
+                           level=level_of(r["z"]), Vp_kN=r["Vp_kN"])
+                      for t, r in (stats.get("link_registry") or {}).items()] if fibre else []
 
     def sample(self) -> dict:
         """{'m': {tag: (strain_ratio, chord_rot)}, 'b': {tag: (def/dT, buckled)}}"""
@@ -128,7 +132,18 @@ class MemberRecorder:
             except Exception:
                 v = 0.0
             out_b[b["tag"]] = (v / b["dT"] if b["dT"] else 0.0, bool(v < -b["dc"]))
-        return dict(m=out_m, b=out_b)
+        out_l = {}
+        for lk in self.links:
+            g = 0.0
+            for ip in range(1, lk["nip"] + 1):
+                try:
+                    d = ops.eleResponse(lk["tag"], "section", ip, "deformation")
+                except Exception:
+                    d = None
+                if d:
+                    g = max(g, abs(d[-1]))                  # Vz is the last (aggregated) component
+            out_l[lk["tag"]] = (g, g / lk["gamma_y"] if lk["gamma_y"] else 0.0)
+        return dict(m=out_m, b=out_b, l=out_l)
 
     @staticmethod
     def envelope(peaks: dict, smp: dict) -> dict:
@@ -141,12 +156,18 @@ class MemberRecorder:
         for t, (mu, bk) in smp["b"].items():
             cur = pb.setdefault(t, [0.0, 0.0, False])
             cur[0] = max(cur[0], mu); cur[1] = max(cur[1], -mu); cur[2] = cur[2] or bk
+        if smp.get("l"):
+            pl = peaks.setdefault("l", {})
+            for t, (g, mu) in smp["l"].items():
+                cur = pl.setdefault(t, [0.0, 0.0])
+                cur[0] = max(cur[0], g); cur[1] = max(cur[1], mu)
         return peaks
 
     def meta(self) -> dict:
         return dict(members={mm["tag"]: dict(kind=mm["kind"], section=mm["section"], level=mm["level"], fy_MPa=mm["fy_MPa"])
                              for mm in self.members},
                     braces={b["tag"]: dict(section=b["section"], level=b["level"]) for b in self.braces},
+                    links={lk["tag"]: dict(section=lk["section"], level=lk["level"], Vp_kN=lk["Vp_kN"]) for lk in self.links},
                     ips=self.ips, enabled=self.enabled)
 
 
@@ -196,4 +217,23 @@ def group_summary(peaks_list: list, meta: dict, ref_rot: dict | None = None) -> 
                           mu_tension_max=float(np.max(mt)), mu_compression_mean=float(np.mean(mc)),
                           mu_compression_max=float(np.max(mc)), n_buckled_max=int(max(nb) if nb else 0),
                           yielded_tension=bool(max(mt) >= 1.0)))
-    return dict(member_groups=rows, brace_groups=brows)
+    # EBF links (NL-10): total shear rotation vs the IS 18168:2023 12.3.3.1 link rotation 0.08 rad -- REFERENCE (D7)
+    lgroups = {}
+    for tag, lt in (meta.get("links") or {}).items():
+        lgroups.setdefault((lt["section"], lt["level"]), []).append(tag)
+    lrows = []
+    for (sec, lvl), tags in sorted(lgroups.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        gs, mus = [], []
+        for pk in peaks_list:
+            pl = pk.get("l", {})
+            vals = [pl.get(t) or pl.get(str(t)) for t in tags]
+            vals = [v for v in vals if v]
+            if vals:
+                gs.append(max(v[0] for v in vals)); mus.append(max(v[1] for v in vals))
+        if not gs:
+            continue
+        lrows.append(dict(section=sec, level=lvl, n=len(tags), gamma_mean_rad=float(np.mean(gs)), gamma_max_rad=float(np.max(gs)),
+                          shear_ductility_max=float(np.max(mus)), yielded=bool(np.max(mus) >= 1.0),
+                          reference_rot_rad=0.08, ratio_to_reference=float(np.max(gs)) / 0.08,
+                          reference="IS 18168:2023 12.3.3.1 link rotation angle 0.08 rad (reference only, D7)"))
+    return dict(member_groups=rows, brace_groups=brows, link_groups=lrows)

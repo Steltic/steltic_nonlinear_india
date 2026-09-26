@@ -166,6 +166,15 @@ def load_package(job_dir, steltic_engine_dir=None):
             A = float(a[4])
             kind, sec = secmap.get(tag, ("brace", "?"))
             nm.members.append(Member(tag, "brace", sec, n1, n2, 0, 3, 3, A, dirn="D"))
+        elif et == "ElasticTimoshenkoBeam":
+            # NL-10: EBF link (HR engine3d.add_link). eleTag iNode jNode E G A Jx Iy Iz Avy Avz transfTag
+            kind, sec = secmap.get(tag, ("beam", "?"))
+            i1, j1, k1 = decode_tag(n1); i2, j2, k2 = decode_tag(n2)
+            p1, p2 = nodes.get(n1), nodes.get(n2)
+            dirn = ("X" if (p1 and p2 and abs(p2[0] - p1[0]) >= abs(p2[1] - p1[1])) else "Y") if (p1 and p2) else ("X" if j1 == j2 else "Y")
+            m_ = Member(tag, "beam", sec, n1, n2, int(a[12]), 0, 0, float(a[6]), dirn=dirn)
+            m_.role = "link"
+            nm.members.append(m_)
 
     # levels
     zs = sorted({round(v[2], 6) for v in nodes.values()})

@@ -170,7 +170,8 @@ class GMNIAModel:
 
     def _section(self, m):
         axis = "y" if m.kind == "col" else "z"
-        key = (m.section.upper(), m.kind, axis)
+        link = (getattr(m, "role", "") == "link")
+        key = (m.section.upper(), "link" if link else m.kind, axis)
         if key not in self.secs:
             tag = len(self.secs) + 1
             bld, fy = self.builder, self.Fy
@@ -185,7 +186,12 @@ class GMNIAModel:
             props = bld.build(tag, m.section, m.kind, axis=axis)
             if bld is not self.builder:
                 self.builder.log.extend(bld.log[-1:])
-            ops.beamIntegration("Lobatto", tag, tag, self.nip)
+            if link:                                  # NL-10: IS 18168 11.2 shear yielding aggregated on the fibres
+                fy_mpa = fy if (self.fy_fn is not None or getattr(self, "_fibre_units", "kip-in") == "N-mm") else fy * 6.894757293168361
+                props["link"] = bld.link_aggregator(900000 + tag, tag, m.section, fy_mpa)
+                ops.beamIntegration("Lobatto", tag, 900000 + tag, self.nip)
+            else:
+                ops.beamIntegration("Lobatto", tag, tag, self.nip)
             self.secs[key] = tag
             self.sec_props[tag] = dict(label=m.section, kind=m.kind, Fy=fy, **props)
         return self.secs[key]
@@ -224,6 +230,8 @@ class GMNIAModel:
 
     def _add_member(self, m):
         nsub = {"col": self.nsub_col, "beam": self.nsub_beam, "brace": self.nsub_brace}[m.kind]
+        if getattr(m, "role", "") == "link":
+            nsub = 1                                  # a link is one force-based element (shear is uniform along it)
         tr = self._transf_for(m)
         p1, p2 = self._coord(m.n1), self._coord(m.n2)
         L = math.dist(p1, p2)

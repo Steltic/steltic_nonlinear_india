@@ -23,7 +23,9 @@ KIP_TO_KN = 4.4482216152605
 
 def _sfrs_kinds(system: str | None) -> set:
     s = str(system or "").upper()
-    if any(k in s for k in ("CBF", "SBF", "BRACE", "EBF")):
+    if "EBF" in s or "ECCENTRIC" in s:
+        return {"brace", "col", "beam", "link"}                 # NL-10: the links are the EBF's yielding members
+    if any(k in s for k in ("CBF", "SBF", "BRACE")):
         return {"brace", "col", "beam"}
     return {"col", "beam"}
 
@@ -94,9 +96,10 @@ def summarise(results, pkg, level: str, target_label: str, T1: float | None = No
     # members
     ref = IM.reference_rotation(pkg.basis.system)
     meta = results[0].get("member_meta") if results else None
-    mem = group_summary([r.get("member_peaks") or {} for r in ok], meta, ref) if (meta and ok) else dict(member_groups=[], brace_groups=[])
+    mem = group_summary([r.get("member_peaks") or {} for r in ok], meta, ref) if (meta and ok) else dict(member_groups=[], brace_groups=[], link_groups=[])
     kinds = _sfrs_kinds(pkg.basis.system)
-    have = {g["kind"] for g in mem["member_groups"]} | ({"brace"} if mem["brace_groups"] else set())
+    have = {g["kind"] for g in mem["member_groups"]} | ({"brace"} if mem["brace_groups"] else set()) | \
+        ({"link"} if mem.get("link_groups") else set())
     missing = sorted(kinds - have)
     nv = dict(ok=not missing and bool(ok), sfrs_kinds=sorted(kinds), missing_kinds=missing,
               n_member_rows=len(mem["member_groups"]), n_brace_rows=len(mem["brace_groups"]),
@@ -106,7 +109,8 @@ def summarise(results, pkg, level: str, target_label: str, T1: float | None = No
         acceptance_basis=None, verdict=None,
         n_records=len(results), n_converged=len(ok), converged_all=len(ok) == len(results) and bool(results),
         per_record=per, story=storey, base_shear=bs, ductility=duct,
-        member_groups=mem["member_groups"], brace_groups=mem["brace_groups"], reference_rotation=ref,
+        member_groups=mem["member_groups"], brace_groups=mem["brace_groups"], link_groups=mem.get("link_groups") or [],
+        reference_rotation=ref,
         force_controlled_columns=fc_rows or [], non_vacuous=nv,
         max_mean_drift=(max(max(s["mean_X"], s["mean_Y"]) for s in storey) if (storey and ok) else None),
         max_peak_drift=(max(max(s["max_X"], s["max_Y"]) for s in storey) if (storey and ok) else None),

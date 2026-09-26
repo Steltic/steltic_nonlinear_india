@@ -496,6 +496,32 @@ class FiberSectionBuilder:
                          "no residual stress" % (p["bf"], p["d"], p["tf"], p["tw"], "mm", axis, self.units)))
         return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib)
 
+    # ---- EBF shear link (NL-10) -------------------------------------------------------------
+    def link_aggregator(self, aggTag, fibreTag, label, fy_MPa, box=False, hardening=0.005):
+        """IS 18168:2023 11.2 shear yielding of an EBF link, added to the flexural fibre section `fibreTag`:
+        V_pL = fy A_wL / sqrt(3), A_wL = (d_L - 2 t_f) t_w (x2 for a box link); elastic shear stiffness G A_wL;
+        Steel01 on the vertical shear resultant (section code Vz: beams are built with their depth along local z).
+        The post-yield slope (`hardening`, default 0.5 % of G A_wL, about 1.2 V_pL at 0.08 rad) is a MODELLING
+        ASSUMPTION -- IS 18168 gives the strength, not a link hysteresis. Returns the record for the report."""
+        from pushover import india_materials as IM
+        sp = IM.section_props_mm(label)
+        d, tf, tw = float(sp["d"]), float(sp["tf"]), float(sp["tw"])
+        Aw_mm2 = (2.0 if box else 1.0) * (d - 2.0 * tf) * tw
+        Vp_N = float(fy_MPa) * Aw_mm2 / math.sqrt(3.0)
+        G_MPa_ = E_MPA / 2.6
+        if self.units == "N-mm":
+            Vp, K = Vp_N, G_MPa_ * Aw_mm2
+        else:
+            Vp, K = Vp_N / 4448.2216152605, (G_MPa_ / 6.894757293168361) * Aw_mm2 / MM_PER_IN ** 2
+        mt = self.next_mat; self.next_mat += 1
+        self.ops.uniaxialMaterial("Steel01", mt, Vp, K, hardening)
+        self.ops.section("Aggregator", aggTag, mt, "Vz", "-section", fibreTag)
+        rec = dict(section=label, Aw_mm2=Aw_mm2, fy_MPa=float(fy_MPa), Vp_kN=Vp_N / 1e3, gamma_y=float(fy_MPa) / math.sqrt(3.0) / G_MPa_,
+                   hardening=hardening, clause="IS 18168:2023 11.2 a) V_pL = fy A_wL / sqrt(3) (Pu/Py <= 0.15)",
+                   hardening_basis="modelling assumption (no IS link hysteresis)")
+        self.log.append((aggTag, label, "LINK", 0, "shear Vp %.1f kN on Vz, fibre section %d" % (Vp_N / 1e3, fibreTag)))
+        return rec
+
     def build(self, secTag, label, kind, axis=None):
         lab = str(label).upper().replace(" ", "")
         if lab.startswith("BOX"):

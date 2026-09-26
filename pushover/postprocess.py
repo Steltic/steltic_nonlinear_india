@@ -264,6 +264,8 @@ def response_at(run, disp, level_name, meta=None, ref_rot=None, basis=None, V_de
         bb = {t: (a["b"][t][0] + w * (b["b"].get(t, a["b"][t])[0] - a["b"][t][0]), bool(b["b"].get(t, a["b"][t])[1] if w > 0.5 else a["b"][t][1]))
               for t in a["b"]}
         pk = MR_envelope_single(m, bb)
+        if a.get("l"):                                     # EBF links (NL-10)
+            pk["l"] = {t: [x + w * (y - x) for x, y in zip(a["l"][t], b.get("l", {}).get(t, a["l"][t]))] for t in a["l"]}
         mem = group_summary([pk], meta, ref_rot)
     Vdes = V_design_kip if V_design_kip is not None else (getattr(basis, "V_design_kip", None) if basis is not None else None)
     census = None
@@ -272,12 +274,14 @@ def response_at(run, disp, level_name, meta=None, ref_rot=None, basis=None, V_de
                       member_groups=len(mem["member_groups"]),
                       braces_yielded_tension=sum(1 for g in mem["brace_groups"] if g["yielded_tension"]),
                       braces_buckled=sum(g["n_buckled_max"] for g in mem["brace_groups"]),
+                      links_yielded=sum(1 for g in mem.get("link_groups") or [] if g["yielded"]),
                       basis="fibre yielding (strain ratio >= 1) and brace tension yield / buckling at delta_t")
     return dict(level=level_name, roof_disp_in=u, roof_disp_mm=u * 25.4, step_bracket=[i0, i1], weight=w,
                 base_shear_kip=V, base_shear_kN=V * 4.4482216152605, V_over_VB=(V / Vdes if Vdes else None),
                 VB_design_kN=(Vdes * 4.4482216152605 if Vdes else None),
                 story_drifts=drifts, max_story_drift=max(d["drift_ratio"] for d in drifts),
-                members=mem, census=census, non_vacuous=bool(mem and (mem["member_groups"] or mem["brace_groups"])),
+                members=mem, census=census,
+                non_vacuous=bool(mem and (mem["member_groups"] or mem["brace_groups"] or mem.get("link_groups"))),
                 statement=IS_NL_STATEMENT)
 
 

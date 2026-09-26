@@ -147,9 +147,36 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         _cov(grid, dirs); _cov(dup, dirs)
         return zl
 
+    link_recs = {}
+
+    def _link(e, sec):
+        """EBF link (NL-10): the HR model's ElasticTimoshenkoBeam becomes a forceBeamColumn on the beam's fibre
+        section aggregated with the IS 18168 11.2 shear yielding (Vz), same nodes and transformation."""
+        raw = e["raw"]; transf = int(raw[12])
+        fib = _fibre_sec(sec, "beam", e["tag"])
+        bld = _builder_for(sec, "beam", e["tag"])
+        agg = FIB_SEC_BASE + 500000 + len(link_recs) + 1
+        fy = IMD_fy(sec, e["tag"]) if india else float(Fy) * 6.894757293168361
+        rec = bld.link_aggregator(agg, fib, sec, fy)
+        ops.beamIntegration("Lobatto", agg, agg, nip)
+        ops.element("forceBeamColumn", e["tag"], e["n1"], e["n2"], transf, agg, "-iter", 30, 1e-8)
+        _cov(e["n1"], range(1, 7)); _cov(e["n2"], range(1, 7))
+        p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
+        link_recs[e["tag"]] = dict(rec, ele=e["tag"], n1=e["n1"], n2=e["n2"], L_in=math.dist(p1, p2),
+                                   z=max(p1[2], p2[2]), nip=nip)
+        stats["fibre_eles"].append(e["tag"])
+        stats["links"] = stats.get("links", 0) + 1
+
+    def IMD_fy(sec, tag):
+        from . import india_model as IMD
+        return IMD.fy_section(pkg, sec, "beam", tag=tag)["fye_MPa"]
+
     for e in m.elements:
         if "etype" in e:
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
+            if e["etype"] == "ElasticTimoshenkoBeam" and sec and (pkg.schedule.get(e["tag"]) or {}).get("role") == "link":
+                _link(e, sec)
+                continue
             if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
                 spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
@@ -220,6 +247,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
             _cov(chain[si], range(1, 7)); _cov(chain[si + 1], range(1, 7))
             stats["fibre_eles"].append(etag)
         stats[kind] += 1
+    stats["link_registry"] = link_recs
     stats["panel_zone_registry"] = {}
     for perp, master, slaves in m.diaphragms:
         ops.rigidDiaphragm(perp, master, *slaves)
