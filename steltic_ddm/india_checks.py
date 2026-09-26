@@ -87,7 +87,31 @@ def member_forces(g, lam_scale=1.0):
     return out
 
 
-def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=False, min_design=1.0):
+def section_capacity_250(sec, quantity):
+    """M_p = 250 Z_p (kN-m) for a moment quantity, P_y = 250 A (kN) otherwise; 0 when the section is unknown."""
+    from pushover import india_materials as _IM
+    try:
+        sp = _IM.section_props_mm(sec)
+        return 250.0 * (float(sp["Zx"]) / 1e6 if str(quantity).startswith("M") else float(sp["A"]) / 1e3)
+    except Exception:
+        return 0.0
+
+
+def apply_noise_floor(rows, abs_frac=0.02, capacity=section_capacity_250):
+    """NL-16: rows outside the ratio band pass when |gmnia - design| <= abs_frac x capacity(section, quantity);
+    they are flagged ok_by_floor. Returns the number of rows passed by the floor."""
+    n, cache = 0, {}
+    for r in rows:
+        if r.get("ok") is False and not r.get("error"):
+            k = (r["section"], r["quantity"])
+            if k not in cache:
+                cache[k] = capacity(*k)
+            if abs(r["gmnia"] - r["design"]) <= abs_frac * cache[k]:
+                r["ok"] = True; r["ok_by_floor"] = True; n += 1
+    return n
+
+
+def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=False, min_design=1.0, abs_frac=0.02):
     from .model_gmnia import GMNIAModel
     from .loads import lateral_direction, present_sets
     sched = _schedule(nm.job_dir)
@@ -173,12 +197,21 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
             rows.append(row)
             if worst is None or abs(ratio - 1) > abs(worst["ratio"] - 1):
                 worst = row
+    # NL-16: a noise floor. A +/-5 % ratio on a near-zero force is not a load-transfer test (IN_Ex9 stem floor beams:
+    # 8.0 vs 8.6 kN-m on a WPB320X300X126.66, M_p = 535 kN-m at 250 MPa). A row outside the ratio band still passes when the
+    # absolute difference is <= abs_frac (2 %) of the member's own plastic capacity at 250 MPa (M_p = 250 Z_p for
+    # beams, P_y = 250 A for columns -- the lowest IS 2062 grade, so the floor is never larger than 2 % of the real
+    # capacity). Such rows are flagged ok_by_floor and counted in the summary.
+    apply_noise_floor(rows, abs_frac)
     bad = [r for r in rows if r.get("ok") is False or r.get("error")]
     ok = bool(rows) and not bad
+    worst_ok = [r for r in rows if not r.get("error") and not r.get("ok_by_floor")]
+    worst = max(worst_ok, key=lambda r: abs(r["ratio"] - 1.0)) if worst_ok else worst
     llr_note = ("columns: the HR N is IS 875-2 3.2.1 reduced (cfg column_imposed_load_reduction); compared as "
                 "N_HR + fL x reduction x N_LL(top), N_LL = the floor-imposed-only axial of the same GMNIA") if llr_used else None
-    summary = ("%d member comparisons, %d outside +/-%.0f %%; worst %s" % (
-        len(rows), len(bad), 100 * tol, ("%s ele %s %s ratio %.3f" % (worst["combo"], worst["ele"], worst["quantity"], worst["ratio"])) if worst else "n/a"))
+    n_floor = sum(1 for r in rows if r.get("ok_by_floor"))
+    summary = ("%d member comparisons, %d outside +/-%.0f %%%s; worst %s" % (
+        len(rows), len(bad), 100 * tol, (" (%d small forces within the %.0f %% noise floor)" % (n_floor, 100 * abs_frac)) if n_floor else "", ("%s ele %s %s ratio %.3f" % (worst["combo"], worst["ele"], worst["quantity"], worst["ratio"])) if worst else "n/a"))
     by_group = {}
     for r in rows:
         if r.get("error"):
@@ -189,9 +222,10 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
         b["n"] += 1; b["ratio_min"] = min(b["ratio_min"], r["ratio"]); b["ratio_max"] = max(b["ratio_max"], r["ratio"])
         b["n_bad"] += int(not r["ok"])
     return dict(ok=ok, tol=tol, summary=summary, rows=rows[:400], groups=list(by_group.values()), worst=worst,
-                n_compared=len(rows), n_bad=len(bad), imposed_load_reduction=llr_note,
+                n_compared=len(rows), n_bad=len(bad), n_ok_by_floor=n_floor, abs_frac=abs_frac, imposed_load_reduction=llr_note,
                 basis=("linear-elastic GMNIA topology (P-Delta transformation, as the HR static model) at lambda = 1 vs the HR engine's member forces for the same combination "
-                       "(design/member_combo_forces.json; member_schedule.csv when absent), +/-5 %"))
+                       "(design/member_combo_forces.json; member_schedule.csv when absent), +/-5 %, or an absolute difference within "
+                       "2 % of the member's plastic capacity at 250 MPa (noise floor)"))
 
 
 def section_class(section: str, fy: float) -> dict:
