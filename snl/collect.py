@@ -398,6 +398,15 @@ def check_field(kind: str, value, quote: str, passages_norm: str) -> str:
     if kind == "number" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
         return "must be a number"
     groups = _digit_groups(quote)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # NL-22: a decimal with trailing zeros in the quote ('0.10') is the same number as the JSON value 0.1, whose
+        # bare digits '01' the digit-group test below cannot find in '010'
+        for q in _NUM.findall(re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", quote)):
+            try:
+                if abs(float(q) - float(value)) <= 1e-9 * max(1.0, abs(float(q))):
+                    return ""
+            except ValueError:
+                pass
     for d in _numbers_in(value):
         if d and d.lstrip("0") and d not in groups and d.lstrip("0") not in {g.lstrip("0") for g in groups}:
             return "the number %s is not in the quote" % d
