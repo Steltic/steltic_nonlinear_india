@@ -1,0 +1,424 @@
+{
+ "jurisdiction": "india",
+ "partial_factors_cite": "IS 800:2007 Table 4",
+ "story_forces_units": "N",
+ "seismic_summary": {
+  "W_kN": 888.469,
+  "W_by_floor_kN": [
+   888.469
+  ],
+  "hi_m": [
+   8.0
+  ],
+  "Z": 0.16,
+  "I": 1.0,
+  "R": 5.0,
+  "soil": "II",
+  "zone": "III",
+  "cite": "IS 1893 Annex E / Table 3; Table 8 (iii); Table 9 i)(d); 6.4.2; 7.6.1; 7.6.2(a)",
+  "R_x": 5.0,
+  "Ta_x_s": 0.4269,
+  "Sa_g_x": 2.5,
+  "Ah_x": 0.04,
+  "VB_x_kN": 35.539,
+  "Qi_x_kN": [
+   35.539
+  ],
+  "R_y": 5.0,
+  "Ta_y_s": 0.4269,
+  "Sa_g_y": 2.5,
+  "Ah_y": 0.04,
+  "VB_y_kN": 35.539,
+  "Qi_y_kN": [
+   35.539
+  ],
+  "Ta_s": 0.4269,
+  "Sa_g": 2.5,
+  "Ah": 0.04,
+  "VB_kN": 35.539,
+  "rho_min": 0.011,
+  "W_components_kN": {
+   "1": {
+    "dead": 326.59,
+    "cladding": 112.8,
+    "self_weight": 449.08,
+    "snow": 0.0
+   }
+  },
+  "system": "SMF",
+  "Ta_formula": "0.085 h^0.75 (IS 1893 7.6.2(a), bare steel MRF; h = mean roof height 8.6 m)"
+ },
+ "story_forces": {
+  "EQ_X": {
+   "1": [
+    35538.744316799995,
+    0.0,
+    0.0
+   ]
+  },
+  "EQ_Y": {
+   "1": [
+    0.0,
+    35538.744316799995,
+    0.0
+   ]
+  },
+  "W_X": {
+   "1": [
+    171350.29439999993,
+    0.0,
+    0.0
+   ]
+  },
+  "W_Y": {
+   "1": [
+    0.0,
+    223500.3839999999,
+    0.0
+   ]
+  }
+ },
+ "wind_summary": {
+  "code": "IS 875 (Part 3):2015",
+  "Vb_mps": 50.0,
+  "Vb_source": "Chennai (Annex A)",
+  "terrain_category": 2,
+  "k1": 1.0,
+  "k2": 1.0,
+  "k3": 1.0,
+  "k4": 1.15,
+  "Kd": 1.0,
+  "Ka": 0.8693,
+  "Ka_basis": "frame_tributary",
+  "Ka_area_m2": 48.0,
+  "Kc": 1.0,
+  "pz_kNm2": 1.9837,
+  "pd_kNm2": 1.7245,
+  "cyclone_belt": true,
+  "structure_class": "industrial",
+  "cyclone_belt_cite": "Chennai lies on the east coast inside the 60 km cyclone belt (IS 875-3 6.3.4): industrial structures k4 = 1.15; Kd = 1.0 (7.2.1)",
+  "Cpe_windward": 0.7,
+  "Cpe_leeward": -0.2,
+  "Cpi": 0.5,
+  "roof_Cpe": {
+   "found": true,
+   "band": "le_0.5",
+   "alpha_deg": 5.710593137499642,
+   "EF": -0.9426355882499785,
+   "GH": -0.4,
+   "EG": -0.8,
+   "FH": -0.4284237254999857,
+   "cite": "IS 875 (Part 3):2015 Table 6 (7.3.3.2), linear interpolation on roof angle"
+  },
+  "eave_forces_kN": {
+   "X": 171.35,
+   "Y": 223.5
+  },
+  "cite": "Annex A Vb; Table 1 k1; Table 2 k2; 6.3.4 k4; 7.2.1 Kd; 7.2 pd; Table 4 Ka; Table 5/6 Cpe; 7.3.2.2 Cpi"
+ },
+ "member_wind": [
+  {
+   "name": "WM0+",
+   "direction": "across_ridge",
+   "roof_windward_kNm2": -2.4878827773606176,
+   "roof_leeward_kNm2": -1.5520859999999996,
+   "wall_windward_kNm2": 0.3449079999999998,
+   "wall_leeward_kNm2": -1.2071779999999996,
+   "Cpi": 0.5,
+   "roof": {
+    "found": true,
+    "band": "le_0.5",
+    "alpha_deg": 5.710593137499642,
+    "EF": -0.9426355882499785,
+    "GH": -0.4,
+    "EG": -0.8,
+    "FH": -0.4284237254999857,
+    "cite": "IS 875 (Part 3):2015 Table 6 (7.3.3.2), linear interpolation on roof angle"
+   },
+   "walls_source": "fallback",
+   "wind_axis": "Y"
+  },
+  {
+   "name": "WM90+",
+   "direction": "along_ridge",
+   "roof_windward_kNm2": -2.2419019999999996,
+   "roof_leeward_kNm2": -1.6011038515737448,
+   "wall_windward_kNm2": 0.3449079999999998,
+   "wall_leeward_kNm2": -1.2071779999999996,
+   "Cpi": 0.5,
+   "roof": {
+    "found": true,
+    "band": "le_0.5",
+    "alpha_deg": 5.710593137499642,
+    "EF": -0.9426355882499785,
+    "GH": -0.4,
+    "EG": -0.8,
+    "FH": -0.4284237254999857,
+    "cite": "IS 875 (Part 3):2015 Table 6 (7.3.3.2), linear interpolation on roof angle"
+   },
+   "walls_source": "fallback",
+   "wind_axis": "X"
+  },
+  {
+   "name": "WM0-",
+   "direction": "across_ridge",
+   "roof_windward_kNm2": -0.7633427773606177,
+   "roof_leeward_kNm2": 0.1724539999999999,
+   "wall_windward_kNm2": 2.0694479999999995,
+   "wall_leeward_kNm2": 0.5173619999999999,
+   "Cpi": -0.5,
+   "roof": {
+    "found": true,
+    "band": "le_0.5",
+    "alpha_deg": 5.710593137499642,
+    "EF": -0.9426355882499785,
+    "GH": -0.4,
+    "EG": -0.8,
+    "FH": -0.4284237254999857,
+    "cite": "IS 875 (Part 3):2015 Table 6 (7.3.3.2), linear interpolation on roof angle"
+   },
+   "walls_source": "fallback",
+   "wind_axis": "Y"
+  },
+  {
+   "name": "WM90-",
+   "direction": "along_ridge",
+   "roof_windward_kNm2": -0.5173619999999999,
+   "roof_leeward_kNm2": 0.12343614842625464,
+   "wall_windward_kNm2": 2.0694479999999995,
+   "wall_leeward_kNm2": 0.5173619999999999,
+   "Cpi": -0.5,
+   "roof": {
+    "found": true,
+    "band": "le_0.5",
+    "alpha_deg": 5.710593137499642,
+    "EF": -0.9426355882499785,
+    "GH": -0.4,
+    "EG": -0.8,
+    "FH": -0.4284237254999857,
+    "cite": "IS 875 (Part 3):2015 Table 6 (7.3.3.2), linear interpolation on roof angle"
+   },
+   "walls_source": "fallback",
+   "wind_axis": "X"
+  }
+ ],
+ "retrieval": [
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "Chennai",
+   "found": true,
+   "hit_file": "rag/chennai-361961.txt",
+   "quote": "Chennai                      III             0.16",
+   "cite": "IS 1893 (Part 1):2016 Annex E: Chennai Zone III, Z 0.16"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "Table 3 seismic zone factor Z",
+   "found": true,
+   "hit_file": "rag/table-3-seismic-zone-factor-z-31f826.txt",
+   "quote": "| Z | 0.10 | 0.16 | 0.24 | 0.36 |",
+   "cite": "IS 1893 Table 3 Zone III Z = 0.16"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "Table 8 importance factor",
+   "found": true,
+   "hit_file": "rag/table-8-importance-factor-319ead.txt",
+   "quote": "| iii) | All other buildings | 1.0 |",
+   "cite": "IS 1893 Table 8 (iii) all other buildings I = 1.0 (industrial)"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "Table 9 response reduction factor steel buildings",
+   "found": true,
+   "hit_file": "rag/table-9-response-reduction-factor-steel--48b38a.txt",
+   "quote": "Steel buildings with special moment resisting frame (SMRF) | 5.0",
+   "cite": "IS 1893 Table 9 i)(d) steel SMRF R = 5.0; i)(c) OMRF see Note 1 (not permitted in Zone III)"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "design acceleration coefficient Sa/g medium soil",
+   "found": true,
+   "hit_file": "rag/design-acceleration-coefficient-sa-g-med-6676f1.txt",
+   "quote": "Medium stiff soil sites (Type II) | 2.5 | 0 < T < 0.55 s",
+   "cite": "IS 1893 6.4.2 Sa/g Type II 2.5 (T < 0.55 s)"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "7.3.5 imposed load on roof seismic weight",
+   "found": true,
+   "hit_file": "rag/7-3-5-imposed-load-on-roof-seismic-weigh-0b2871.txt",
+   "quote": "imposed load on roof need not be considered",
+   "cite": "IS 1893 7.3.2 roof imposed load not in the seismic weight"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "7.6.2 approximate fundamental natural period steel moment resisting frame",
+   "found": true,
+   "hit_file": "rag/7-6-2-approximate-fundamental-natural-pe-5aa462.txt",
+   "quote": "Ta = 0.085 h^0.75 (for steel MRF building)",
+   "cite": "IS 1893 7.6.2(a) Ta = 0.085 h^0.75"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "7.7.1 response spectrum method required",
+   "found": true,
+   "hit_file": "rag/7-7-1-response-spectrum-method-required-57e52a.txt",
+   "quote": "other than regular buildings lower than 15 m in Seismic Zone II",
+   "cite": "IS 1893 7.7.1 dynamic analysis required (Zone III)"
+  },
+  {
+   "stem": "IS_1893_Part_1_2016",
+   "collection": "engineering_standards_IS1893",
+   "query": "7.7.3 design base shear VB less than V-bar B scaled",
+   "found": true,
+   "hit_file": "rag/7-7-3-design-base-shear-vb-less-than-v-b-479f6e.txt",
+   "quote": "shall be multiplied by V\u0304B/VB",
+   "cite": "IS 1893 7.7.3.1 RSA scaled to V-bar_B"
+  },
+  {
+   "stem": "IS_875_Part_2_1987",
+   "collection": "engineering_standards_IS875_P2",
+   "query": "Table 2 roof imposed load",
+   "found": true,
+   "hit_file": "rag/table-2-roof-imposed-load-81b9f6.txt",
+   "quote": "Access not provided except for maintenance | 0.75 kN/m2",
+   "cite": "IS 875 (Part 2) Table 2 i) slopes up to 10 deg, i)(b) maintenance access 0.75 kN/m2"
+  },
+  {
+   "stem": "IS_875_Part_1_2026",
+   "collection": "engineering_standards_IS875_P1",
+   "query": "41 metal sheeting protected unit weight",
+   "found": true,
+   "hit_file": "rag/41-metal-sheeting-protected-unit-weight-0d6b5c.txt",
+   "quote": "Metal Sheeting, Protected Galvanized Steel Sheets, Plain",
+   "cite": "IS 875 (Part 1) Table 1 Sl 41 galvanized steel sheet 1.00 mm = 0.104 kN/m2 (Class A row)"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "basic wind speed Chennai Annex A",
+   "found": true,
+   "hit_file": "rag/basic-wind-speed-chennai-annex-a-f3659d.txt",
+   "quote": "| Chennai | 50 |",
+   "cite": "IS 875 (Part 3):2015 Annex A Chennai Vb = 50 m/s"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "Table 1 risk coefficient k1 general buildings 50 years",
+   "found": true,
+   "hit_file": "rag/table-1-risk-coefficient-k1-general-buil-29dd71.txt",
+   "quote": "All general buildings and structures",
+   "cite": "IS 875 (Part 3) Table 1 i) k1 = 1.0"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "Table 2 factors to obtain design wind speed variation with height in different terrains",
+   "found": true,
+   "hit_file": "rag/table-2-factors-to-obtain-design-wind-sp-8ef7c1.txt",
+   "quote": "| i)       | 10         | 1.05",
+   "cite": "IS 875 (Part 3) Table 2: z <= 10 m, category 2 -> k2 = 1.00"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "6.3.4 importance factor for cyclonic region k4",
+   "found": true,
+   "hit_file": "rag/6-3-4-importance-factor-for-cyclonic-reg-5445a1.txt",
+   "quote": "| Industrial structures | 1.15 |",
+   "cite": "IS 875 (Part 3) 6.3.4 industrial structures in the 60 km east-coast belt k4 = 1.15"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "7.2.1 wind directionality factor Kd cyclone",
+   "found": true,
+   "hit_file": "rag/7-2-1-wind-directionality-factor-kd-cycl-d0c4a8.txt",
+   "quote": "For the cyclone affected regions also the factor K d shall be taken as 1.0",
+   "cite": "IS 875 (Part 3) 7.2.1 Kd = 1.0 in cyclone regions"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "Table 4 area averaging factor Ka",
+   "found": true,
+   "hit_file": "rag/table-4-area-averaging-factor-ka-e5e5f3.txt",
+   "quote": "| iii) | \u2265 100 | 0.8 |",
+   "cite": "IS 875 (Part 3) Table 4 Ka (frame: column tributary 48 m2 -> 0.869; purlins/girts <= 10 m2 -> 1.0)"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "Table 5 external pressure coefficients walls rectangular clad buildings",
+   "found": true,
+   "hit_file": "rag/table-5-external-pressure-coefficients-w-c66e14.txt",
+   "quote": "| h/w \u2264 1/2 | 1 < l/w \u2264 3/2 | 0 | +0.7 | \u22120.2 | \u22120.5 | \u22120.5 | \u22120.8 |",
+   "cite": "IS 875 (Part 3) Table 5 h/w <= 1/2, 1 < l/w <= 3/2: A +0.7, B -0.2, C/D -0.5, local -0.8"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "Table 6 external pressure coefficients for pitched roofs of rectangular clad buildings",
+   "found": true,
+   "hit_file": "rag/table-6-external-pressure-coefficients-f-fea373.txt",
+   "quote": "| h/w \u2264 1/2 | 5 | \u22120.9 | \u22120.4 | \u22120.8 | \u22120.4 | \u22121.4 | \u22121.2 | \u22121.2 | \u22121.0 |",
+   "cite": "IS 875 (Part 3) Table 6 h/w <= 1/2: 5 deg EF -0.9 GH -0.4 EG -0.8 FH -0.4; 10 deg EF -1.2 GH -0.4 EG -0.8 FH -0.6 (interpolated at 5.71 deg); local gable strip -1.4"
+  },
+  {
+   "stem": "IS_875_Part_3_2015",
+   "collection": "engineering_standards_IS875_P3",
+   "query": "internal pressure coefficient Cpi buildings with medium openings",
+   "found": true,
+   "hit_file": "rag/internal-pressure-coefficient-cpi-buildi-d0de2b.txt",
+   "quote": "Buildings with medium openings between about 5 and 20 percent of wall area",
+   "cite": "IS 875 (Part 3) 7.3.2.2 medium openings 5-20 %: Cpi +0.5 and -0.5"
+  },
+  {
+   "stem": "IS_800_2007",
+   "collection": "engineering_standards_IS800",
+   "query": "deflection limits other buildings lateral elastic cladding brittle cladding storey height",
+   "found": true,
+   "hit_file": "rag/deflection-limits-other-buildings-latera-2c6567.txt",
+   "quote": "| Industrial buildings | Vertical | Live load/Wind load | Rafter supporting | Profiled metal sheeting | Span/180 |",
+   "cite": "IS 800:2007 Table 6 industrial: rafter (profiled sheeting) span/180, purlins/girts span/150, column H/150"
+  },
+  {
+   "stem": "IS_800_2007",
+   "collection": "engineering_standards_IS800",
+   "query": "12.11 special moment frames beam to column connections 1.2 times full plastic moment",
+   "found": true,
+   "hit_file": "rag/12-11-special-moment-frames-beam-to-colu-e1f6af.txt",
+   "quote": "designed to withstand a moment of at least 1.2 times the full plastic moment",
+   "cite": "IS 800:2007 12.11.2.1 / 12.11.2.2"
+  },
+  {
+   "stem": "IS_18168_2023",
+   "collection": "engineering_standards_IS18168",
+   "query": "8.2 strong column weak beam Ry",
+   "found": true,
+   "hit_file": "rag/8-2-strong-column-weak-beam-ry-f1af62.txt",
+   "quote": "The above requirement need not be satisfied at the roof level",
+   "cite": "IS 18168:2023 8.2.1 SCWB not required at the roof"
+  },
+  {
+   "stem": "IS_875_Part_4_1987",
+   "collection": "engineering_standards_IS875_P4",
+   "query": "snow load Chennai",
+   "found": true,
+   "hit_file": "rag/snow-load-chennai-c153adf7.txt",
+   "quote": "Chennai, Pune, Surat, Visakhapatnam, Coimbatore, Mumbai, Lucknow, Ahmedabad, Bengaluru, Hyderabad and Kochi are outside the mapped area: no snow zone and no s0 in IS 875 (Part 4) Annex A",
+   "cite": "IS 875 (Part 4):2021 Annex A / Fig. 1 (corpus transcription): Chennai outside the mapped snow area -> s0 = 0 (brief: no snow)"
+  }
+ ],
+ "combinations": "auto"
+}
