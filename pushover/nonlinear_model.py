@@ -711,7 +711,7 @@ def _tail_recovery(rec, snapshot, roof, dof, dU0, umax, Vmax, strategies, verbos
 
 
 def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, verbose=True, gravity_table=None,
-             tail_strategies=("fine_step", "arclength"), recorder=None, target_estimator=None):
+             tail_strategies=("fine_step", "arclength"), recorder=None, target_estimator=None, stop_at_strength_fraction=None):
     """Gravity (load control) then displacement-controlled push at the roof master in `direction`
     with the first-mode force pattern. Records the capacity curve, story displacements and every
     hinge's plastic rotation at each step. Stops at max_roof_drift*H, at 20% strength loss past the
@@ -796,6 +796,13 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
             print("[pushover %s] step %d u=%.3f in V=%.0f kip dU=%.4f halvings=%d" % (direction, step, rec["u"][-1], rec["V"][-1], dU, halvings), flush=True)
         if rec["V"][-1] < 0.2 * Vmax and rec["u"][-1] > 0.3 * umax:
             stop_reason = "strength dropped below 20%% of Vmax at u=%.2f in" % rec["u"][-1]; break
+        # NL-12 (India): every reported quantity is known once the curve has lost 1 - f of Vmax past the peak and the
+        # push is beyond twice the largest target estimate -- delta_u (0.8 Vmax) is captured; pushing on to 10 % roof
+        # drift only costs hours of failed Newton steps on a braced frame.
+        if (stop_at_strength_fraction and Vmax > 0 and rec["V"][-1] <= stop_at_strength_fraction * Vmax
+                and rec["u"][-1] >= u_fine_until and rec["u"][-1] > rec["u"][rec["V"].index(max(rec["V"]))]):
+            stop_reason = ("descending branch captured: V = %.0f%% of Vmax at u=%.2f in (past 2 x the target estimate)"
+                           % (100 * rec["V"][-1] / Vmax, rec["u"][-1])); break
         if halvings and step % 20 == 0 and dU < dU0:
             dU *= 2.0                                        # try to speed back up
         if u_fine_until and rec["u"][-1] > u_fine_until and dU0 < dU_coarse:

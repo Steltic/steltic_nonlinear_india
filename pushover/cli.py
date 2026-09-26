@@ -211,7 +211,8 @@ def _run_india(args, pkg, t0):
         hinges, stats = NM.build_nonlinear(pkg, prm, PG)
         rec = MR.MemberRecorder(pkg, hinges, stats)
         run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
-                          tail_strategies=strategies, recorder=rec, target_estimator=estimator)
+                          tail_strategies=strategies, recorder=rec, target_estimator=estimator,
+                          stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
         nsp = {lvn: PP.nsp_target(run, pkg.basis, prm, lv) for lvn, lv in levels.items()}
         from snl.india_units import KN_TO_KIP
         vbd = IH.vb_direction_kN(ind, d)                  # NL-4: V-bar_B of THIS direction (per-direction R)
@@ -245,6 +246,8 @@ def main(argv=None):
     r.add_argument("--max-drift", type=float, default=None,
                    help="max roof drift ratio H (default: 0.10 India fibre, else 0.08). Raise to capture descending branch.")
     r.add_argument("--site-class", default="D"); r.add_argument("--params")
+    r.add_argument("--stop-at", type=float, default=0.8, help="India: stop the push once V <= this fraction of Vmax past "
+                   "the peak and beyond 2 x the largest target estimate (default 0.8: delta_u captured); 0 = push to --max-drift")
     r.add_argument("--system")
     r.add_argument("--tail", default="auto", help="descending-branch escalation: auto (fine_step then arclength) | fine_step | arclength | none")
     r.add_argument("--post-cap-ratio", type=float, help="RUNG 3 (modelling change, user consent): fraction of `a` over which hinges descend to residual (default 0.15; try 0.5)")
