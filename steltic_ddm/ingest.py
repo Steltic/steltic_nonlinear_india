@@ -43,6 +43,8 @@ class NeutralModel:
     transf: dict = field(default_factory=dict)       # tag -> (type, vecxz)
     members: list = field(default_factory=list)
     diaphragms: dict = field(default_factory=dict)   # master -> [slaves]
+    springs: list = field(default_factory=list)      # HR zeroLength springs, raw ops args (roof-plane / release springs)
+    uni_materials: dict = field(default_factory=dict)  # uniaxialMaterial tag -> raw args (for the springs)
     cfg: dict = None
     calc_package: dict = None
     levels: list = field(default_factory=list)       # z of each level incl. base
@@ -75,6 +77,8 @@ def _args(s):
 def parse_replay(path):
     """Parse model_opensees.py into dicts. Only the recorded ops.* lines are read."""
     nodes, fixes, masses, transf, elems, diaph = {}, {}, {}, {}, [], {}
+    uni = {}
+    parse_replay.uni_materials = uni                  # NL-15: read back by load_package (the return shape is fixed)
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -105,6 +109,8 @@ def parse_replay(path):
                 elems.append(args)
             elif cmd == "rigidDiaphragm":
                 diaph[args[1]] = list(args[2:])
+            elif cmd == "uniaxialMaterial":
+                uni[args[1]] = list(args)
     return nodes, fixes, masses, transf, elems, diaph
 
 
@@ -175,6 +181,11 @@ def load_package(job_dir, steltic_engine_dir=None):
             m_ = Member(tag, "beam", sec, n1, n2, int(a[12]), 0, 0, float(a[6]), dirn=dirn)
             m_.role = "link"
             nm.members.append(m_)
+        elif et == "zeroLength":
+            # NL-15: HR zeroLength springs (IN_Ex15 roof-plane springs 299xxx -> 2xxxxx). Dropping them left the
+            # roof plane unconnected and every GMNIA gravity analysis failed; they are rebuilt verbatim (N-mm).
+            nm.springs.append(list(a))
+    nm.uni_materials = dict(getattr(parse_replay, "uni_materials", {}) or {})
 
     # levels
     zs = sorted({round(v[2], 6) for v in nodes.values()})

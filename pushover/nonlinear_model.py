@@ -57,7 +57,10 @@ def member_kind(pkg, e):
     k = pkg.schedule.get(e["tag"], {}).get("member")
     if k:
         return k
-    d, _ = _dir_vec(pkg.model.nodes[e["n1"]], pkg.model.nodes[e["n2"]])
+    p1, p2 = pkg.model.nodes[e["n1"]], pkg.model.nodes[e["n2"]]
+    if math.dist(p1, p2) < 1e-9:
+        return "zerolength"        # HR zeroLength springs (roof-plane / release / support springs): passed through raw
+    d, _ = _dir_vec(p1, p2)
     return "col" if abs(d[2]) > 0.9 else "beam"
 
 

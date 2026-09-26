@@ -33,7 +33,46 @@ STATES = {"D": dict(fD=1.0), "L": dict(fL=1.0), "Lr": dict(fLr=1.0), "S": dict(f
           # the imposed FLOOR load alone (no partitions, no cladding): the part of a column's axial force the HR engine
           # reduces by IS 875-2 3.2.1 when cfg['column_imposed_load_reduction'] is set (static_model N_LL)
           "Lfloor": dict(fL=1.0, _cfg=dict(partition_load_kNm2=0.0, clad=0.0))}
-SCHEMA = 2
+SCHEMA = 3
+
+
+def pattern_key(prefix, pattern) -> str:
+    """State name of a patterned load (NL-15): 'S@X,lo' (IS 875-4 4.3 partial snow on one half of the roof) or
+    'C@L,S+' (crane position L/R with surge/transverse sign; 'C@L,-' for vertical wheel loads only)."""
+    return "%s@%s" % (prefix, ",".join("-" if v is None else str(v) for v in (pattern or ())))
+
+
+def factors_for(fD, fL, fLr, meta=None, fS=None) -> dict:
+    """Replay factors of one combination: D/L/Lr from the combo tuple, snow (plain or patterned), crane (always
+    patterned in the HR engine) and vertical earthquake EV (IS 1893 6.4.6 on the seismic weight) from Case.meta."""
+    m = meta or {}
+    f = {"D": fD, "L": fL, "Lr": fLr}
+    fs = float(m.get("fS") or 0.0) if fS is None else float(fS or 0.0)
+    if fs:
+        f[pattern_key("S", m["snow_pattern"]) if m.get("snow_pattern") else "S"] = fs
+    fc = float(m.get("fC") or 0.0)
+    if fc:
+        f[pattern_key("C", m.get("crane_pattern"))] = fc
+    fev = float(m.get("fEv") or 0.0)
+    if fev:
+        f["EV"] = f.get("EV", 0.0) + fev
+    return f
+
+
+def _patterns(cfg):
+    """Distinct snow / crane patterns the HR combinations use (india_loads.cases_from_load_plan meta)."""
+    snow, crane = set(), set()
+    try:
+        import india_loads as IL
+        for c in IL.cases_from_load_plan(cfg) or []:
+            m = getattr(c, "meta", None) or {}
+            if m.get("snow_pattern") and float(m.get("fS") or 0.0):
+                snow.add(tuple(m["snow_pattern"]))
+            if float(m.get("fC") or 0.0):
+                crane.add(tuple(m.get("crane_pattern") or ()))
+    except Exception as ex:                                   # noqa: BLE001
+        print("[hr_gravity] combination patterns unavailable:", ex)
+    return sorted(snow, key=str), sorted(crane, key=str)
 
 
 def _sha(path):
@@ -132,17 +171,22 @@ def record(job) -> dict:
                 acc[i] += v[i]
         ops.eleLoad, ops.load = rec_ele, rec_load
         out = {}
+        states = dict(STATES)
+        snow_p, crane_p = _patterns(cfg)
+        for sp in snow_p:
+            states[pattern_key("S", sp)] = dict(fS=1.0, snow_pattern=sp)
+        for cp in crane_p:
+            states[pattern_key("C", cp)] = dict(fC=1.0, crane_pattern=(cp or None))
         try:
-            for name, f in STATES.items():
+            for name, f in states.items():
                 cur.update(ele=[], node={}, unmapped=[])
                 cfg_s = dict(cfg, **f["_cfg"]) if f.get("_cfg") else cfg
+                kw = {k: f[k] for k in ("snow_pattern", "crane_pattern") if f.get(k)}
                 lev = SM.apply_gravity_state(cfg_s, model, f.get("fD", 0.0), f.get("fL", 0.0), f.get("fLr", 0.0),
-                                             fS=f.get("fS", 0.0), fEv=f.get("fEv", 0.0),
-                                             self_weight=cfg.get("self_weight", True))
-                total = 0.0
-                for parent, x0, x1, typ, vals in cur["ele"]:
-                    pass
-                out[name] = dict(factors={k: v for k, v in f.items() if not k.startswith("_")}, ele=list(cur["ele"]), node=dict(cur["node"]), unmapped=list(cur["unmapped"]),
+                                             fS=f.get("fS", 0.0), fC=f.get("fC", 0.0), fEv=f.get("fEv", 0.0),
+                                             self_weight=cfg.get("self_weight", True), **kw)
+                out[name] = dict(factors={k: (list(v) if isinstance(v, tuple) else v) for k, v in f.items()
+                                          if not k.startswith("_")}, ele=list(cur["ele"]), node=dict(cur["node"]), unmapped=list(cur["unmapped"]),
                                  level_totals_N={str(k): float(v) for k, v in (lev or {}).items()},
                                  total_N=float(sum((lev or {}).values())))
         finally:
@@ -177,14 +221,17 @@ def main(argv=None):
 
 # ------------------------------------------------------------------------------------------------ replay helpers
 def combine(d: dict, factors: dict) -> dict:
-    """{'ele': [[parent, x0, x1, type, vals]], 'node': {node: [6]}} for sum(f x state). factors keys D/L/Lr/S/EV."""
+    """{'ele': [[parent, x0, x1, type, vals]], 'node': {node: [6]}} for sum(f x state). factors keys D/L/Lr/S/EV and
+    the patterned states S@.. / C@.. (NL-15). A non-zero factor on a state that was not recorded raises KeyError:
+    silently dropping it (the pre-NL-15 behaviour for partial snow and crane loads) under-loads the model."""
     ele, node = [], {}
     for name, f in factors.items():
         if not f:
             continue
         st = (d.get("states") or {}).get(name)
         if not st:
-            continue
+            raise KeyError("HR gravity state %r was not recorded for this job (states: %s)"
+                           % (name, sorted((d.get("states") or {}).keys())))
         for parent, x0, x1, typ, vals in st["ele"]:
             ele.append([parent, x0, x1, typ, [f * v for v in vals]])
         for n, v in st["node"].items():

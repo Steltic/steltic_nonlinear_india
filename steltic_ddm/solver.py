@@ -156,7 +156,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     t0 = time.time()
     model.build().prepare()
     ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-    W = model.apply_gravity(fD, fL, fLr, pres, fS=fS)
+    W = model.apply_gravity(fD, fL, fLr, pres, fS=fS, meta=getattr(combo, "meta", None))
     model.apply_lateral(lat)
     _solver_settings()
     ldir, lsgn = lateral_direction(lat)
@@ -173,7 +173,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
         # rewind failed attempt before retrying a smaller step
         model.build().prepare()
         ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-        W = model.apply_gravity(fD, fL, fLr, pres, fS=fS)
+        W = model.apply_gravity(fD, fL, fLr, pres, fS=fS, meta=getattr(combo, "meta", None))
         model.apply_lateral(lat)
         _solver_settings()
         ops.analysis("Static")

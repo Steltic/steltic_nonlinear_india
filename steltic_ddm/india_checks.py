@@ -106,10 +106,11 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
     for c in grav:
         label, fD, fL, fLr, lat, _ = c
         g = GMNIAModel(nm, cfg, nsub=nsub, elastic=True, residual="none", out_of_plumb=(None, 0.0), bow=0.0, brace_bow=0.0,
-                       rigid_end_offset=rigid_end_offset)
+                       rigid_end_offset=rigid_end_offset, transf_type="PDelta")
         g.build().prepare()
         ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-        g.apply_gravity(fD, fL, fLr, pres, fS=float((getattr(c, "meta", None) or {}).get("fS") or 0.0))
+        g.apply_gravity(fD, fL, fLr, pres, fS=float((getattr(c, "meta", None) or {}).get("fS") or 0.0),
+                        meta=getattr(c, "meta", None))
         ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
         ops.test("NormDispIncr", 1e-8, 50, 0); ops.algorithm("Newton")
         ops.integrator("LoadControl", 1.0); ops.analysis("Static")
@@ -119,7 +120,7 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
         NLL = {}
         if llr and fL and hr and (hr.get("states") or {}).get("Lfloor"):
             g2 = GMNIAModel(nm, cfg, nsub=nsub, elastic=True, residual="none", out_of_plumb=(None, 0.0), bow=0.0,
-                            brace_bow=0.0, rigid_end_offset=rigid_end_offset)
+                            brace_bow=0.0, rigid_end_offset=rigid_end_offset, transf_type="PDelta")
             g2.build().prepare()
             ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
             from snl import hr_gravity as HG
@@ -189,7 +190,7 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
         b["n_bad"] += int(not r["ok"])
     return dict(ok=ok, tol=tol, summary=summary, rows=rows[:400], groups=list(by_group.values()), worst=worst,
                 n_compared=len(rows), n_bad=len(bad), imposed_load_reduction=llr_note,
-                basis=("linear-elastic GMNIA topology at lambda = 1 vs the HR engine's member forces for the same combination "
+                basis=("linear-elastic GMNIA topology (P-Delta transformation, as the HR static model) at lambda = 1 vs the HR engine's member forces for the same combination "
                        "(design/member_combo_forces.json; member_schedule.csv when absent), +/-5 %"))
 
 
