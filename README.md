@@ -129,6 +129,17 @@ searches. While it works the step prints one JSON event per line — `reasoning`
 line, its reasoning in the separate box, one line per search. `--focus` puts the engineer's question first;
 `--no-standards` skips the corpus; `--max-searches` caps the tool calls (8 by default).
 
+The search carries the retrieval skill HR Steel's tool has (`snl/rag.py`), so a zero-hit answer is never left
+for the model to interpret. Before the first search the server's `/healthz` says which documents the corpus on
+this PC actually holds; that list goes into the model's instructions (*DOCUMENTS IN THE CORPUS — present … ;
+ABSENT …*) and into the run log, and a search for an absent document is answered at once as a **corpus gap**
+(install / update the IS corpus module, `engineering_rag_india`, or convert the document on its Convert tab under its
+canonical stem — `IS_1893_Part_1_2016`, `IS_800_2007`, `IS_18168_2023` … — then Rebuild index), is not counted
+against the budget, and makes one wide search across the IS documents that are present instead. A miss climbs a ladder before it may be a miss — as asked; without the
+clause / chapter filter; the id as an exact lookup; any IS document — and the result says which rung and which
+document supplied the passages, so the model cites the document the text is from. `review_transcript.json`
+records every rung of every search.
+
 ## Feedback loops back to HR Steel
 
 Once the Chapter 16 run is complete, the **Feedback** tab (hub) or `python -m snl feedback <job>` offers three

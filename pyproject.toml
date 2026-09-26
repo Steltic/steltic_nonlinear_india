@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "steltic-nonlinear-india"
-version = "0.3.0"
+version = "0.3.1"
 description = "steltic_nonlinear_india (SNL-IN): India fork — IS 1893-oriented NLRHA + pushover scaffolding + DDM on a steltic_india HR package; ASCE Ch.16/41 retained as non-authoritative scaffolding behind RAG gates"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
