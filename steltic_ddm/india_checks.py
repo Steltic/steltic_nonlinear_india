@@ -145,7 +145,7 @@ def b11_preconditions(nm, fy_fn) -> dict:
         if key in rows:
             continue
         try:
-            rows[key] = section_class(m.section, fy_fn(m.section, m.kind))
+            rows[key] = section_class(m.section, fy_fn(m.section, m.role or m.kind))
         except Exception as ex:  # noqa: BLE001
             rows[key] = dict(section=key, cls="unknown", note=str(ex))
     ok = all(r["cls"] in ("plastic", "compact") for r in rows.values())
@@ -161,7 +161,7 @@ def b12_check(forces_at_1: dict | None, fy_fn, lam_reached: float | None, label:
                     note="lambda = 1 not reached by the GMNIA sweep -> B-1.2 not satisfied", groups=[], quote=B12_QUOTE)
     groups = {}
     for tag, f in forces_at_1.items():
-        cap = IM.section_capacity(f["section"], fy_fn(f["section"], f["kind"]))
+        cap = IM.section_capacity(f["section"], fy_fn(f["section"], f.get("role") or f["kind"]))
         r = IM.b12_interaction(f["N_abs"], f["M_major"], f["M_minor"], f["V"], cap)
         k = (f["role"], f["section"])
         g = groups.setdefault(k, dict(role=f["role"], section=f["section"], n=0, dc_max=0.0, dc_shear_max=0.0, ele=None))

@@ -35,14 +35,18 @@ def material_ctx(pkg) -> dict:
     ctx = getattr(pkg, "_india_mat", None)
     if ctx is None:
         from . import india_materials as IM
-        ctx = dict(plan=IM.material_plan(load_nl_plan(pkg)), by_section={})
+        ctx = dict(plan=IM.material_plan(load_nl_plan(pkg), IM.package_materials(pkg.root)), by_section={})
         setattr(pkg, "_india_mat", ctx)
     return ctx
 
 
-def fy_section(pkg, section, role=None) -> dict:
+def fy_section(pkg, section, role=None, tag=None) -> dict:
+    """fy for a member (NL-5). With `tag`, the element's schedule role (lateral_col, floor, link, brace, ...) selects
+    the HR package's own material record; `role` may also be given directly or as a kind (col / beam / brace)."""
     from . import india_materials as IM
     ctx = material_ctx(pkg)
+    if tag is not None:
+        role = (pkg.schedule.get(tag) or {}).get("role") or role
     key = (str(section).upper().replace(" ", ""), str(role or ""))
     if key not in ctx["by_section"]:
         ctx["by_section"][key] = IM.fy_for_member(section, role, ctx["plan"])

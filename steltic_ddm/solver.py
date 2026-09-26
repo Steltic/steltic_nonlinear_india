@@ -341,7 +341,7 @@ def classify(res, model):
         by_kind[k] = by_kind.get(k, 0) + 1
     buckled = [t for t, s in snap.get("braces", {}).items() if s.get("buckled")]
     ductile_post = res.get("plateau", False) or (res["lam_at_1p25d"] is not None and res["lam_at_1p25d"] >= 0.9 * res["lambda_u"])
-    nbeam_h = by_kind.get("floor", 0) + by_kind.get("roof", 0)
+    nbeam_h = by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)
     if buckled and not nbeam_h:
         mech = "brace buckling (%d brace%s) governs the peak" % (len(buckled), "s" if len(buckled) > 1 else "")
         cls = "instability"
@@ -349,15 +349,15 @@ def classify(res, model):
         mech = "brace buckling (%d braces) with %d beam member%s at hinge level at the peak (proportional scaling also scales gravity)" % (
             len(buckled), nbeam_h, "s" if nbeam_h > 1 else "")
         cls = "instability"
-    elif by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0) > 0 and (by_kind.get("floor", 0) + by_kind.get("roof", 0)) == 0:
+    elif by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0) > 0 and (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)) == 0:
         mech = "column yielding / inelastic instability (%d column member%s at hinge level)" % (
             by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0), "s" if by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0) > 1 else "")
         cls = "instability"
-    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0)) >= 3 and ductile_post:
-        mech = "beam plastic mechanism (%d beam members at hinge level)" % (by_kind.get("floor", 0) + by_kind.get("roof", 0))
+    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)) >= 3 and ductile_post:
+        mech = "beam plastic mechanism (%d beam members at hinge level)" % (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0))
         cls = "ductile"
-    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0)) >= 1:
-        mech = "beam yielding (%d beam members at hinge level), limited post-peak ductility" % (by_kind.get("floor", 0) + by_kind.get("roof", 0))
+    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)) >= 1:
+        mech = "beam yielding (%d beam members at hinge level), limited post-peak ductility" % (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0))
         cls = "ductile" if ductile_post else "limited-ductility"
     else:
         yr_roles = {}

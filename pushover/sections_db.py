@@ -92,6 +92,10 @@ def props(section: str) -> dict:
     the tabulated h/tw is not in this csv, so the ratio is approximate and flagged as such)."""
     t = _table()
     key = section.strip().upper().replace(" ", "")
+    from . import india_sections as _IS                     # NL-4: HR built-up boxes (design/cfg_snapshot.json)
+    box = _IS.props_in(key) if key.startswith("BOX") or key in _IS.CUSTOM else None
+    if box is not None:
+        return dict(box)
     if key in _CUSTOM:
         cust = _CUSTOM[key]
         prim = cust["alias_primary"].strip().upper().replace(" ", "")
@@ -105,7 +109,7 @@ def props(section: str) -> dict:
         p["custom_note"] = cust.get("note", "")
         # fall through to compactness ratios below
     elif key not in t:
-        raise KeyError(f"section {section!r} not in aisc_shapes.csv / is808_shapes.csv / is1161_tubes.csv")
+        raise KeyError(f"section {section!r} not in aisc_shapes.csv / is808_shapes.csv / is1161_tubes.csv / the package's custom_sections")
     else:
         p = dict(t[key])
     if all(k in p and isinstance(p[k], float) for k in ("d", "tw", "bf", "tf")):

@@ -455,8 +455,51 @@ class FiberSectionBuilder:
         self.log.append((secTag, label, "CHS", nfib, "OD=%.3f t=%.3f units=%s" % (od, t, self.units)))
         return dict(A=A, Ix=I, Iy=I, d=od, bf=od, tf=t, tw=t, nfib=nfib)
 
+    # ---- built-up welded box (HR custom_sections, NL-4) ------------------------------------
+    def box_plates(self, secTag, label, axis="y", n_per_side=10, n_thick=2, residual=None):
+        """Fibre built-up welded box from its four plates (pushover.india_sections registry, mm): flanges B x tf at
+        +/-(D - tf)/2 along the depth axis, webs (D - 2 tf) x tw at +/-(B - tw)/2. axis="y": depth along local y
+        (column, strong axis local z, as w_shape); "z": depth along local z (beam). No residual stress pattern
+        (welded-box residual stresses are not modelled -- disclosed in the section log)."""
+        from pushover import india_sections as IS_
+        p = IS_.get_mm(label)
+        if p is None:
+            raise ValueError("%s is not a declared built-up box" % label)
+        sc = 1.0 if self.units == "N-mm" else 1.0 / MM_PER_IN
+        B, D, tf, tw = p["bf"] * sc, p["d"] * sc, p["tf"] * sc, p["tw"] * sc
+        J = p["J"] * sc ** 4
+        self.ops.section("Fiber", secTag, "-GJ", self.G * J)
+        m = self._mat(0.0)
+        nfib = 0
+
+        def put(yc, zc, a):
+            nonlocal nfib
+            if axis == "y":
+                self.ops.fiber(yc, zc, a, m)
+            else:
+                self.ops.fiber(zc, yc, a, m)
+            nfib += 1
+        for sgn in (+1, -1):                                     # flanges (full width B)
+            for i in range(n_per_side):
+                zc = -B / 2 + (i + 0.5) * B / n_per_side
+                for j in range(n_thick):
+                    yc = sgn * (D / 2 - (j + 0.5) * tf / n_thick)
+                    put(yc, zc, (B / n_per_side) * (tf / n_thick))
+        hw = D - 2 * tf
+        for sgn in (+1, -1):                                     # webs between the flanges
+            for i in range(n_per_side):
+                yc = -hw / 2 + (i + 0.5) * hw / n_per_side
+                for j in range(n_thick):
+                    zc = sgn * (B / 2 - (j + 0.5) * tw / n_thick)
+                    put(yc, zc, (hw / n_per_side) * (tw / n_thick))
+        self.log.append((secTag, label, "BOX", nfib, "built-up box B=%.1f D=%.1f tf=%.1f tw=%.1f (%s) axis=%s units=%s; "
+                         "no residual stress" % (p["bf"], p["d"], p["tf"], p["tw"], "mm", axis, self.units)))
+        return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib)
+
     def build(self, secTag, label, kind, axis=None):
         lab = str(label).upper().replace(" ", "")
+        if lab.startswith("BOX"):
+            return self.box_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
         if lab.startswith("HSS") and hss_dims(lab):
             return self.hss_rect(secTag, lab, residual=("none" if self.residual == "none" else "cf_hss_membrane"))
         # IS 1161 CHS / round HSS (no XxY rect dims)

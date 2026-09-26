@@ -80,12 +80,12 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
                                   elastic=False, mat_tag0=1000, units=units)
     builders = {}           # India: one builder per distinct fye (distinct material tags)
 
-    def _builder_for(sec, kind):
+    def _builder_for(sec, kind, tag=None):
         if not india:
             return builder
         from . import india_model as IMD
         from snl.india_units import MPA_TO_KSI
-        f = IMD.fy_section(pkg, sec, kind)
+        f = IMD.fy_section(pkg, sec, kind, tag=tag)
         fk = round(f["fye_MPa"] * MPA_TO_KSI, 6)
         if fk not in builders:
             builders[fk] = FiberSectionBuilder(ops, Fy=fk, E=None, hardening=0.01, residual=residual, elastic=False,
@@ -106,17 +106,21 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
     nseg = max(1, int(nseg))
     pin_count = 0
 
-    def _fibre_sec(sec, kind):
-        key = (str(sec).upper(), kind)
+    def _fibre_sec(sec, kind, etag=None):
+        role = (pkg.schedule.get(etag) or {}).get("role") if etag is not None else None
+        key = (str(sec).upper(), kind, role or "")
         if key in sec_cache:
             return sec_cache[key]
         tag = FIB_SEC_BASE + len(sec_cache) + 1
         axis = "y" if kind == "col" else "z"
         lab = str(sec)
-        bld = _builder_for(sec, kind)
+        bld = _builder_for(sec, kind, etag)
         from . import india_materials as IMAT
         try:
-            if IMAT.is_tube(lab):
+            from . import india_sections as _ISEC
+            if _ISEC.is_box(lab):
+                bld.box_plates(tag, lab, axis=axis)
+            elif IMAT.is_tube(lab):
                 typ = str((IMAT.section_props_mm(lab) if india else {}).get("type") or "").upper()
                 if typ == "CHS" or lab.upper().startswith("CHS"):
                     bld.hss_round(tag, lab, residual=residual)
@@ -148,7 +152,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
             if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
-                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
                 mat += 1; HM.make_brace_material(mat, spec, prm)
                 ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
                 _cov(e["n1"], (1, 2, 3)); _cov(e["n2"], (1, 2, 3))
@@ -166,7 +170,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
         if kind == "brace" and sec:
-            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
             mat += 1; HM.make_brace_material(mat, spec, prm)
             ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
             _cov(e["n1"], (1, 2, 3)); _cov(e["n2"], (1, 2, 3))
@@ -184,8 +188,15 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         flag = "-releasey" if slot == "Iy" else "-releasez"
         relz = int(rel[rel.index(flag) + 1]) if flag in rel else 0
         # force-controlled columns: still fibre (distributed) but note them
-        if HM.column_hinge(sec, L, PG.get(e["tag"], 0.0), prm).force_controlled if kind == "col" else False:
-            stats["force_controlled"] += 1
+        if kind == "col":
+            prm_c = prm
+            if india:                                   # NL-6: the flag uses the member's own fy, not a file default
+                from . import india_model as IMD
+                from snl.india_units import MPA_TO_KSI
+                prm_c = dict(prm, material=dict(prm.get("material") or {}, Ry_expected=1.0,
+                                                Fy_ksi=IMD.fy_section(pkg, sec, kind, tag=e["tag"])["fye_MPa"] * MPA_TO_KSI))
+            if HM.column_hinge(sec, L, PG.get(e["tag"], 0.0), prm_c).force_controlled:
+                stats["force_controlled"] += 1
         end1, end2 = e["n1"], e["n2"]
         # major-axis releases -> pin (no rotational continuity); unreleased -> continuous fibre
         if relz in (1, 3):
@@ -194,7 +205,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         if relz in (2, 3):
             end2 = FIB_PIN_NODE + e["tag"] * 10 + 2; ops.node(end2, *p2); ops.mass(end2, *([tiny] * 6))
             dof = strong_rot_dof(pkg, e, kind); _pin(e["n2"], end2, {dof}); stats["released_ends"] += 1
-        secTag = _fibre_sec(sec, kind)
+        secTag = _fibre_sec(sec, kind, e["tag"])
         chain = [end1]
         for si in range(1, nseg):
             f = si / float(nseg)

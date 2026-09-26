@@ -340,6 +340,8 @@ def load(path: str | os.PathLike, apply_is_mass: bool = True) -> Package:
              "cfg": root / "cfg.py", "report": root / "report.html",
              "design_report": root / "design" / "design_report.md"}
     model = parse_model_script(files["model"])
+    from . import india_sections as _ISEC
+    _ISEC.register_from_package(root)            # NL-4: the package's built-up boxes before any section lookup
     schedule = read_schedule(files["schedule"]) if files["schedule"].exists() else {}
     calc = json.load(open(files["calc"])) if files["calc"].exists() else {}
     basis = read_basis(root, calc)

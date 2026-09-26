@@ -673,6 +673,7 @@ def schedule_row_to_kip_in(row: dict) -> dict:
         "member": (row.get("member") or "").strip(),
         "section": (row.get("section") or "").strip(),
         "governing_combo": row.get("governing_combo", "") or "",
+        "role": (row.get("role") or "").strip(),          # NL-4: lateral_col / gravity_col / floor / roof / link / brace
     }
     # length
     if row.get("length_in") not in (None, ""):

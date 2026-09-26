@@ -128,16 +128,23 @@ def load_package(job_dir, steltic_engine_dir=None):
         raise FileNotFoundError("model_opensees.py missing in %s -- ask the HR Steel App to re-run "
                                 "pipeline.design_and_report(name, cfg) WITH cfg passed (the export is skipped otherwise)" % job_dir)
     nodes, fixes, masses, transf, elems, diaph = parse_replay(replay)
+    try:                                              # NL-4: the package's built-up boxes before any section lookup
+        from pushover import india_sections as _ISEC
+        _ISEC.register_from_package(job_dir)
+    except Exception as ex:                           # noqa: BLE001
+        print("[ingest] custom sections not registered:", ex)
     nm.nodes, nm.fixes, nm.masses, nm.transf, nm.diaphragms = nodes, fixes, masses, transf, diaph
 
     # section labels from member_schedule.csv
-    secmap = {}
+    secmap, rolemap = {}, {}
     sched = os.path.join(job_dir, "design", "member_schedule.csv")
     if os.path.exists(sched):
         with open(sched, newline="") as f:
             for r in csv.DictReader(f):
                 try:
                     secmap[int(r["ele_tag"])] = (r["member"], r["section"])
+                    if (r.get("role") or "").strip():
+                        rolemap[int(r["ele_tag"])] = r["role"].strip()     # NL-5: the HR role (lateral_col, link, ...)
                 except Exception:
                     pass
 
@@ -169,6 +176,9 @@ def load_package(job_dir, steltic_engine_dir=None):
     if os.path.exists(cp):
         nm.calc_package = json.load(open(cp))
     _assign_roles(nm)
+    for m in nm.members:                              # the HR package's role wins over the geometric inference
+        if m.tag in rolemap:
+            m.role = rolemap[m.tag]
 
     # cfg.py (needs the Steltic engine importable for engine3d/openseespy)
     nm.cfg = load_cfg(job_dir, steltic_engine_dir)

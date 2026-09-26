@@ -175,7 +175,7 @@ class GMNIAModel:
             tag = len(self.secs) + 1
             bld, fy = self.builder, self.Fy
             if self.fy_fn is not None:
-                fy = float(self.fy_fn(m.section, m.kind))
+                fy = float(self.fy_fn(m.section, m.role or m.kind))
                 if abs(fy - self.Fy) > 1e-9:
                     if fy not in self._builders:
                         self._builders[fy] = FiberSectionBuilder(ops, Fy=fy, hardening=self.hardening, residual=self.residual,

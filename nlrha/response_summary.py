@@ -119,7 +119,7 @@ def fc_columns(results, pkg, PG: dict) -> list:
         if not sec or e is None:
             continue
         L_mm = math.dist(pkg.model.nodes[e["n1"]], pkg.model.nodes[e["n2"]]) * 25.4
-        fy = IMD.fy_section(pkg, sec, "col")["fy_MPa"]
+        fy = IMD.fy_section(pkg, sec, "col", tag=c)["fy_MPa"]
         pd = IM.is800_Pd(sec, L_mm, fy, hollow_forming=IMD.material_ctx(pkg)["plan"]["hollow_forming"])
         Pmean = float(np.mean(vals)) * KIP_TO_KN; Pmax = float(np.max(vals)) * KIP_TO_KN
         row = dict(ele=c, section=sec, z_mm=pkg.model.nodes[e["n1"]][2] * 25.4, P_mean_kN=Pmean, P_max_kN=Pmax,

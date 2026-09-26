@@ -63,7 +63,7 @@ class MemberRecorder:
                 continue
             if india:
                 from . import india_model as IMD
-                fy = IMD.fy_section(pkg, sec, kind)["fye_MPa"]
+                fy = IMD.fy_section(pkg, sec, kind, tag=e["tag"])["fye_MPa"]
             else:
                 fy = 50.0 * 6.894757
             eps_y = fy / 200000.0

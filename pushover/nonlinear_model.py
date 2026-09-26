@@ -132,13 +132,17 @@ def fr_joint_plan(pkg):
     return plan
 
 
-def brace_india(pkg, sec):
-    """India brace strength inputs (IS 2062 fy x EOR factor) or None for USA scaffolding."""
+def brace_india(pkg, sec, tag=None):
+    """India brace strength inputs (the HR package's fy -- IS 2062 / IS 1161 -- x EOR factor) or None for USA
+    scaffolding. Tubes: hot-finished seamless (HFS) buckles on Table 10 curve a, other processes on b (NL-5)."""
     if getattr(pkg.basis, "jurisdiction", None) != "india":
         return None
     from . import india_model as IMD
-    f = IMD.fy_section(pkg, sec, "brace")
-    return dict(fye_MPa=f["fye_MPa"], hollow_forming=IMD.material_ctx(pkg)["plan"]["hollow_forming"])
+    f = IMD.fy_section(pkg, sec, "brace", tag=tag)
+    plan = IMD.material_ctx(pkg)["plan"]
+    proc = str(plan.get("brace_process") or "").upper()
+    forming = plan["hollow_forming"] if not proc else ("hot_rolled" if proc == "HFS" else "cold_formed")
+    return dict(fye_MPa=f["fye_MPa"], hollow_forming=forming)
 
 
 def levels(pkg):
@@ -404,7 +408,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
             if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
-                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
                 mat += 1; HM.make_brace_material(mat, spec, prm)
                 ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
                 hinges[e["tag"]] = dict(ele=e["tag"], end=0, kind="brace", section=sec, dof=0, K0=E_KSI_AL(spec), mat=mat,
@@ -418,7 +422,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
         if kind == "brace" and sec:                          # elasticBeamColumn brace (steltic default builder) -> pin-ended nonlinear truss
-            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
             mat += 1; HM.make_brace_material(mat, spec, prm)
             ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
             hinges[e["tag"]] = dict(ele=e["tag"], end=0, kind="brace", section=sec, dof=0, K0=E_KSI_AL(spec), mat=mat,
