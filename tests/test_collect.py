@@ -313,8 +313,8 @@ def _done(R, L, old):
 
 def test_the_model_only_transcribes_and_every_value_is_backed_by_a_cell(monkeypatch):
     """The real converted cells of IS 18168 Table 1, IS 800 12.8.1, IS 1893 Table 3 / 6.4.2 / Table 8 / 7.2.4 and a
-    model that copies them: the IS values in, no searching by the model, reasoning low. (IS 2062 Table 3 is
-    covered once exact lookups are passed on whole -- its E 250 row sits past the 2,500-character cut.)"""
+    model that copies them: the IS values in, no searching by the model, reasoning low. (IS 2062 Table 3: see
+    test_every_is_group_is_transcribed_from_its_whole_table.)"""
     job, R, L, old = _live([GOOD_OVERSTRENGTH, GOOD_DEFORMATION, GOOD_SPECTRUM, GOOD_DAMPING], monkeypatch=monkeypatch)
     try:
         buf = io.StringIO()
@@ -350,7 +350,7 @@ def test_a_remembered_number_is_rejected_and_the_retry_names_it(monkeypatch):
         assert r["ok"]
         assert len(ScriptedLLM.calls) == 5, "overstrength (rejected), overstrength again, deformation, spectrum, damping"
         retry = ScriptedLLM.calls[1]["messages"][-1]["content"]
-        assert "REJECTED LAST TIME" in retry and "Ry: the number 11 is not in the quote" in retry
+        assert "NOT ACCEPTED" in retry and "Ry: the number 11 is not in the quote" in retry
         d = json.load(open(r["path"], encoding="utf-8"))
         assert d["india_spec"]["overstrength"]["Ry"] == 1.4
     finally:
@@ -421,3 +421,44 @@ def test_rows_are_decided_from_the_building_not_by_the_model():
     assert collect.plan_for("deformation_capacity", ebf) == [("IS18168", "exact_section", "12.3.3.1", 0)]
     soft = dict(f, soil="III")
     assert any("Soft soil sites (Type III)" in w for _f, w, _k in collect.fields_for("spectrum", soft))
+
+
+# ---------------------------------------------------------------- exact lookups passed whole (3629a4b)
+E250_A_ROW = _line("IS2062:Table 3", r"^\|\s*ii\)\s*\|\s*E 250\s*\|\s*A\s*\|")
+GOOD_MATERIAL = {"fu_MPa": _q(410, E250_A_ROW), "fy_t16_MPa": _q(250, E250_A_ROW), "fy_t40_MPa": _q(240, E250_A_ROW),
+                 "fy_t100_MPa": _q(230, E250_A_ROW), "fy_tgt100_MPa": _q(210, E250_A_ROW)}
+
+
+def test_every_is_group_is_transcribed_from_its_whole_table(monkeypatch):
+    """IS 2062 Table 3's E 250 row sits 7,500 characters into the passage; exact lookups now arrive whole, so the
+    material group is read like every other, and the gate file is written from five transcribed IS groups."""
+    job, R, L, old = _live([GOOD_MATERIAL, GOOD_OVERSTRENGTH, GOOD_DEFORMATION, GOOD_SPECTRUM, GOOD_DAMPING], needed=ALL, monkeypatch=monkeypatch)
+    try:
+        r = collect.run(job, emit=collect.Emitter(io.StringIO()))
+        assert r["ok"] and r["verified"] and os.path.basename(r["path"]) == collect.OUT_NAME, r
+        d = json.load(open(r["path"], encoding="utf-8"))
+        m = d["india_spec"]["material"]
+        assert (m["fu_MPa"], m["fy_t16_MPa"], m["fy_t40_MPa"], m["fy_t100_MPa"], m["fy_tgt100_MPa"]) == (410, 250, 240, 230, 210)
+        assert m["source"] == "IS 2062 (Part 1):2025 Table 3, p. 9" and m["quotes"]["fu_MPa"] == E250_A_ROW
+        assert d["material"]["Fy_ksi"] == pytest.approx(36.259, abs=1e-3) and d["spec_values_collected"] and d["verified"] is False
+        prompt = ScriptedLLM.calls[0]["messages"][-1]["content"]
+        assert E250_A_ROW in prompt and "E 650" in prompt, "the whole table was handed over"
+    finally:
+        _done(R, L, old)
+
+
+def test_a_row_the_model_reports_absent_is_asked_for_once_more_and_then_let_go(monkeypatch):
+    """A model reading a passage cut short says the row is not there. Absent is asked once more, with the size
+    of what was handed over (the row of a long table sits far below its header), then believed."""
+    absent = {f: {"value": None, "quote": None, "why": "the E 250 row is not in the passage"} for f in GOOD_MATERIAL}
+    job, R, L, old = _live([absent, absent, GOOD_OVERSTRENGTH, GOOD_DEFORMATION, GOOD_SPECTRUM, GOOD_DAMPING], needed=ALL, monkeypatch=monkeypatch)
+    try:
+        r = collect.run(job, emit=collect.Emitter(io.StringIO()))
+        assert not r["ok"] and r["missing"] == ["material"]
+        assert len(ScriptedLLM.calls) == 6, "material absent, material once more, then the other four -- not a third material call"
+        second = ScriptedLLM.calls[1]["messages"][-1]["content"]
+        assert "read to the end before answering that a cell is absent" in second and "IS 2062 Table 3" in second
+        ev = json.load(open(os.path.join(job, collect.EVIDENCE_NAME), encoding="utf-8"))
+        assert any(p.startswith("fu_MPa: not read -- the E 250 row is not in the passage") for p in ev["problems"]["material"])
+    finally:
+        _done(R, L, old)

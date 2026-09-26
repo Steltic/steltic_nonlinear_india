@@ -84,3 +84,36 @@ def _help_for(flag):
     with contextlib.redirect_stdout(buf), contextlib.suppress(SystemExit):
         cli.main(["review", "--help"])
     return buf.getvalue()
+
+
+def test_an_exact_hit_is_passed_on_whole(monkeypatch):
+    """IS 2062 (Part 1):2025 Table 3 as the India corpus converted it: padded Markdown cells, the E 250 row 7,500
+    characters in, the table 57,000 characters in all. The old 2,500-character cap on every hit cut the rows off
+    and Collect would report them absent. An exact lookup is one provision: it goes through whole. Navigation
+    snippets stay short."""
+    import json, re
+    fx = json.load(open(os.path.join(ROOT, "tests", "fixtures", "collect_tables_india.json"), encoding="utf-8"))
+    table = fx["IS2062:Table 3"]
+    row = next(l for l in table.split("\n") if re.match(r"\|\s*ii\)\s*\|\s*E 250\s*\|\s*A\s*\|", l))
+    assert table.index(row) > 2500
+    sent = []
+
+    def fake_post(payload, timeout):
+        sent.append(payload)
+        return {"results": [{"text": table, "doc": "IS_2062_Part_1_2025", "section_id": "Table 3", "printed_label": "9"}]}, None
+
+    monkeypatch.setattr(rag, "_post", fake_post)
+    monkeypatch.setattr(rag, "url", lambda: "http://x/query")
+    monkeypatch.setattr(rag, "status", lambda: {"known": True, "indexed_docs": ["IS_2062_Part_1_2025"]})
+    res = rag.search("Table 3", "IS2062", qtype="exact_table", top_k=8, neighbors=1)
+    assert res["ok"] and res["results"], res
+    text = res["results"][0]["text"]
+    assert row in text and "E 650" in text and "not shown" not in text
+    assert sent[0].get("type") == "exact_table" and sent[0]["collection"] == "engineering_standards_IS2062"
+    # a navigation snippet is capped and says so
+    long_snippet = "x" * (rag.FTS_MAX_CHARS + 500)
+    monkeypatch.setattr(rag, "_post", lambda payload, timeout: ({"results": [{"text": long_snippet, "doc": "IS_2062_Part_1_2025"}]}, None))
+    res = rag.search("tensile strength yield stress", "IS2062", qtype="fts")
+    t = res["results"][0]["text"]
+    assert len(t) < len(long_snippet) and t.endswith("more characters not shown]")
+    assert rag.EXACT_MAX_CHARS >= 57071                     # the whole IS 2062 Table 3 as the corpus returns it
