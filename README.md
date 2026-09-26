@@ -68,7 +68,7 @@ python -m snl run <package.zip | folder> [--out DIR] [--steltic-engine DIR] [--p
                   [--tail auto|fine_step|arclength|none] [--post-cap-ratio 0.5] [--no-block]
 python -m snl report  <job folder>        # four_analyses.html + snl_summary.json + the viewer hub from what exists
 python -m snl inspect <package.zip | folder>
-python -m snl review  <job folder> [--focus "..."] [--no-standards] [--max-searches 8]   # the model's review (below)
+python -m snl review  <job folder> [--focus "..."] [--no-standards] [--max-searches N]   # the model's review (below)
 ```
 
 `run` unpacks the zip next to itself (or into `--out`), then runs the three engines **in sequence, each in its own
@@ -127,7 +127,7 @@ reasoning stream). Model `MOCK` writes the review offline from the evidence alon
 searches. While it works the step prints one JSON event per line — `reasoning`, `token`, `tool`, `tool_result`,
 `milestone`, `status`, `usage` — which the hub shows the way it shows HR Steel and CFS: the model's text on the run
 line, its reasoning in the separate box, one line per search. `--focus` puts the engineer's question first;
-`--no-standards` skips the corpus; `--max-searches` caps the tool calls (8 by default).
+`--no-standards` skips the corpus; `--max-searches N` caps the tool calls (no cap by default: the review looks up every clause it cites).
 
 The search carries the retrieval skill HR Steel's tool has (`snl/rag.py`), so a zero-hit answer is never left
 for the model to interpret. Before the first search the server's `/healthz` says which documents the corpus on

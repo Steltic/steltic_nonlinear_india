@@ -90,12 +90,18 @@ class FakeRAG(BaseHTTPRequestHandler):
         stem = COLL.get(coll, coll)
         hits, note = [], ""
         q = body.get("query") or ""
+        # the real rag_server's own normalisation (the retrieval policy's fields): an exact type carries the
+        # id in `query`, and the server moves it to `clause` before it looks anything up. The fake has to do
+        # the same or it answers a policy-form call with a miss.
+        clause = body.get("clause") or ""
+        if (body.get("type") or "").strip().lower() in ("exact_section", "exact_equation", "exact_table", "id") and q and not clause:
+            clause, q = q, ""
         if stem and stem not in FakeRAG.docs:
             note = "%s is not in the corpus on this PC -- install or update the IS corpus module and rebuild the index" % stem
-        elif (body.get("clause") == "7.11.1.1" or "drift" in q) and (not stem or stem == IS1893) and IS1893 in FakeRAG.docs:
+        elif (clause == "7.11.1.1" or "drift" in q) and (not stem or stem == IS1893) and IS1893 in FakeRAG.docs:
             hits = [{"text": "7.11.1.1 Storey drift in any storey shall not exceed 0.004 times the storey height, under the action of design base of shear VB.",
                      "doc": IS1893, "section_id": "7.11.1.1", "title": "Storey Drift", "printed_label": "22", "score": 12.5, "authoritative": True}]
-        elif "joint rotation" in q and (not stem or stem == IS800) and not body.get("clause"):
+        elif "joint rotation" in q and (not stem or stem == IS800) and not clause:
             hits = [{"text": "12.8.1 ... should be shown to withstand inelastic deformation corresponding to a joint rotation of at least 0.04 radians without degradation ...",
                      "doc": IS800, "section_id": "12.8.1", "title": "Special Concentrically Braced Frames", "printed_label": "95", "score": 9.1, "authoritative": True}]
         elif "drift" in q and not stem and IS1893 not in FakeRAG.docs:
@@ -157,11 +163,14 @@ def test_review_streams_events_grounds_a_clause_and_writes_the_files():
         tool = next(e for e in events if e["type"] == "tool")
         assert tool["name"] == "search_engineering_standards" and "7.11.1.1" in tool["title"] and tool["step"] == 1
         assert next(e for e in events if e["type"] == "tool_result")["summary"].startswith("1 passage")
-        assert FakeRAG.queries[0]["collection"] == "engineering_standards_IS1893" and FakeRAG.queries[0]["clause"] == "7.11.1.1"
+        first = FakeRAG.queries[0]                                        # the retrieval policy's own form:
+        assert first["collection"] == "engineering_standards_IS1893"      # one IS document,
+        assert first["query"] == "7.11.1.1" and first["type"] == "id"     # the id alone, asked for as an id
+        assert "clause" not in first                                      # the server is what moves it to `clause`
         corpus = next(e for e in events if e["type"] == "milestone" and e["text"].startswith("standards corpus"))
         assert "IS 1893 (Part 1):2016 (IS_1893_Part_1_2016)" in corpus["text"] and "ABSENT: IS 1893" not in corpus["text"]
         assert "DOCUMENTS IN THE CORPUS -- present: IS 1893 (Part 1):2016 (IS_1893_Part_1_2016)" in FakeLLM.calls[0]["messages"][0]["content"]
-        assert "How to search" in FakeLLM.calls[0]["messages"][0]["content"]
+        assert "RETRIEVAL POLICY" in FakeLLM.calls[0]["messages"][0]["content"]
         usage = [e for e in events if e["type"] == "usage"]
         assert usage[-1]["cum_in"] == 3100 and usage[-1]["cum_out"] == 100
         # the evidence went to the model, with the focus
@@ -197,10 +206,11 @@ def test_mock_model_writes_the_review_offline_and_still_searches():
         os.environ.pop("STELTIC_LLM_BASE_URL", None)
         buf = io.StringIO()
         r = review.run(job, emit=review.Emitter(buf))
-        # three searches: 7.11.1.1 hits as asked; 7.7.4 climbs the whole ladder (4 rungs) and misses; the IS 800 clause
-        # misses with its clause filter and is answered with the filter dropped
-        assert r["ok"] and len(r["searches"]) == 3 and len(FakeRAG.queries) == 7
-        assert [s["via"].split(" (")[0] for s in r["searches"]] == ["as-asked", "exhausted", "no-filter"] and all(s["counted"] for s in r["searches"])
+        # three searches: 7.11.1.1 is answered by the exact id the policy pulled out of the query; 7.7.4 climbs the
+        # ladder (exact id, words, any document) and misses; the IS 800 clause misses as an id and is answered
+        # by navigating with its words
+        assert r["ok"] and len(r["searches"]) == 3 and len(FakeRAG.queries) == 6
+        assert [s["via"] for s in r["searches"]] == ["exact-id 7.11.1.1", "exhausted", "fts-navigate"] and all(s["counted"] for s in r["searches"])
         md = r["review_md"]
         assert "model MOCK" in md and STATEMENT in md and "0.920%" in md and "0.004 h" in md
         assert "ACCEPTABLE" not in md and "PASS" not in md.upper().replace("PASSAGE", "")   # no verdict (D7)
@@ -285,11 +295,13 @@ def test_a_miss_climbs_the_ladder_before_it_is_a_miss():
     R = _Server(FakeRAG)
     try:
         _rag_env(R)
-        # rung 1 (clause 9.9.9 on IS 800) misses; rung 2 without the filter finds the joint-rotation passage
+        # rung 1 is the policy's exact id (9.9.9 on IS 800) and misses; rung 2 navigates with the words alone --
+        # unfiltered, because the id it would have filtered on has already been tried
         res = rag.search("joint rotation", "IS800", clause="9.9.9")
-        assert res["results"] and res["counted"] and res["via"].startswith("no-filter")
-        assert [(q["collection"], q.get("clause", "")) for q in FakeRAG.queries] == [("engineering_standards_IS800", "9.9.9"), ("engineering_standards_IS800", "")]
-        assert rag.render(res).startswith("(answered by: no-filter")
+        assert res["results"] and res["counted"] and res["via"] == "fts-navigate"
+        assert [(q.get("query"), q.get("type", "")) for q in FakeRAG.queries] == [("9.9.9", "id"), ("joint rotation", "")]
+        assert all(q["collection"] == "engineering_standards_IS800" for q in FakeRAG.queries)
+        assert rag.render(res).startswith("(answered by: fts-navigate")
         # asked of the wrong document: rung 5 answers from the one that holds it, and says so
         FakeRAG.queries.clear()
         res = rag.search("joint rotation", "IS18168")
@@ -298,8 +310,10 @@ def test_a_miss_climbs_the_ladder_before_it_is_a_miss():
         # nothing anywhere: the ladder is reported, the model is told what to do
         FakeRAG.queries.clear()
         res = rag.search("gremlins", "IS800", clause="1.2.3")
-        assert res["results"] == [] and res["via"] == "exhausted" and "NOT FOUND after 4 attempts" in res["note"]
-        assert [a["how"] for a in res["attempts"]] == ["as-asked", "no-filter", "exact-id 1.2.3", "any-document"]
+        assert res["results"] == [] and res["via"] == "exhausted" and "NOT FOUND after 3 attempts" in res["note"]
+        # the id first, then the words, then every IS document -- and the rung that used to repeat an unfiltered
+        # query the policy had already sent is gone
+        assert [a["how"] for a in res["attempts"]] == ["exact-id 1.2.3", "fts-navigate", "any-document"]
         assert rag.render(res).startswith("NO PASSAGES. (tried: exhausted)")
     finally:
         R.close(); os.environ.pop("RAG_API_URL", None); rag._status_cache = None
