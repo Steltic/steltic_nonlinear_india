@@ -100,6 +100,13 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
                  fibre_eles=[], fibre_secs=0, fibre_units=units, fibre_nip=nip)
     sec_cache = {}  # (section, kind) -> secTag
     cover = stats.setdefault("_dof_cover", {})
+    # NL-21: gravity-only members elastic (pushover.elastic_gravity); registry of the model now in OpenSees
+    from . import elastic_gravity as EG
+    EG.reset()
+    eg_set = EG.classify(pkg, prm)
+    stats["elastic_members"] = {int(t): r for t, r in eg_set.items()}
+    stats["elastic_gravity_eles"] = []
+    stats["gravity_elastic"] = EG.enabled(pkg, prm)
 
     def _cov(n, dofs):
         cover.setdefault(n, set()).update(dofs)
@@ -205,6 +212,22 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
                                     node=e["n1"], z=max(p1[2], p2[2]), spec=spec)
             stats["brace"] += 1; stats["brace_nonlinear"] += 1
             continue
+        if e["tag"] in eg_set:
+            # NL-21: two elasticBeamColumn sub-elements with the HR properties and end releases (mid node: mass only)
+            mid = SEG_NODE_BASE + e["tag"] * 100 + 1
+            ops.node(mid, *[(p1[k] + p2[k]) / 2.0 for k in range(3)]); ops.mass(mid, *([tiny] * 6))
+            ra, rb = EG.split_releases(e["release"])
+            base = [e["A"], e["E"], e["G"], e["J"], e["Iy"], e["Iz"], e["transf"]]
+            sub2 = SEG_ELE_BASE + e["tag"] * 100 + 1
+            ops.element("elasticBeamColumn", e["tag"], e["n1"], mid, *(base + ra))
+            ops.element("elasticBeamColumn", sub2, mid, e["n2"], *(base + rb))
+            for n_ in (e["n1"], mid, e["n2"]):
+                _cov(n_, range(1, 7))
+            EG.register(e["tag"], (e["tag"], sub2), kind, sec, EG.capacities(pkg, e, kind, sec), eg_set[e["tag"]])
+            stats["elastic_gravity_eles"] += [e["tag"], sub2]
+            stats["elastic_gravity"] = stats.get("elastic_gravity", 0) + 1
+            stats[kind] += 1
+            continue
         if sec is None or kind not in ("col", "beam"):
             args = [e["A"], e["E"], e["G"], e["J"], e["Iy"], e["Iz"], e["transf"]] + (e["release"] or [])
             ops.element("elasticBeamColumn", e["tag"], e["n1"], e["n2"], *args); stats["brace"] += 1
@@ -266,8 +289,9 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         allb = [builder] + list(builders.values())
         nfib = sum(x[3] for b in allb for x in (b.log or []))
         print("[nonlinear_model] FIBRE plasticity: cols %d beams %d braces %d (nl %d) nseg=%d nip=%d secs=%d fibres~%d released_ends=%d"
+              " elastic gravity members %d"
               % (stats["col"], stats["beam"], stats["brace"], stats["brace_nonlinear"], nseg, nip,
-                 stats["fibre_secs"], nfib, stats["released_ends"]))
+                 stats["fibre_secs"], nfib, stats["released_ends"], stats.get("elastic_gravity", 0)))
     return hinges, stats
 
 

@@ -54,6 +54,8 @@ class MemberRecorder:
             sec = pkg.schedule.get(e["tag"], {}).get("section")
             if kind not in ("col", "beam") or not sec or "etype" in e:
                 continue
+            if e["tag"] in (stats.get("elastic_members") or {}):
+                continue                      # NL-21: elastic gravity member -> elastic_gravity yield check instead
             p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
             L = math.dist(p1, p2)
             x = [(p2[i] - p1[i]) / L for i in range(3)]

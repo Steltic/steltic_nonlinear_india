@@ -813,6 +813,9 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
         rec["col_N"].append([ops.eleResponse(c, "localForce")[0] for c in cols])
         if recorder is not None:
             rec["members"].append(recorder.sample())
+        from . import elastic_gravity as _EG
+        if _EG.CURRENT:                                   # NL-21: elastic gravity members, yield ratio per step
+            rec.setdefault("elastic", []).append(_EG.sample())
     snapshot()
     dU, umax, Vmax, halvings, step = dU0, max_roof_drift * H, 0.0, 0, 0
     stop_reason = "reached max roof drift %.1f%% of H" % (100 * max_roof_drift)

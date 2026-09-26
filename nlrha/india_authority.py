@@ -506,11 +506,33 @@ def nsp_acceptance_tables_status(cfg_or_job=None, job_dir: str | None = None) ->
     }
 
 
+def method_disclosures(job_dir) -> list[dict]:
+    """NL-21 method choices read back from the analysis packages: elastic gravity members (with their yield check) and
+    record trimming. Empty when the job has no packages yet."""
+    rows = []
+    if not job_dir:
+        return rows
+    po = _read_json(os.path.join(job_dir, "pushover", "pushover_package.json")) or {}
+    lv = {x: _read_json(os.path.join(job_dir, "nlrha", x, "nlrha_package.json")) or {} for x in ("DBE", "MCE")}
+    ems = [p.get("elastic_members") for p in [po] + list(lv.values()) if p.get("elastic_members")]
+    if any(e.get("n_elastic") for e in ems):
+        rows.append(dict(id="gravity_members_elastic", found=True, disclosed=True,
+                         n_elastic=max(e.get("n_elastic") or 0 for e in ems),
+                         max_ratio=max(e.get("max_ratio") or 0.0 for e in ems),
+                         flagged_elastic=sorted({t for e in ems for t in (e.get("flagged_elastic") or [])}),
+                         note=ems[0].get("basis") or "gravity-only members elastic with a first-yield check"))
+    trims = [p.get("record_trim") for p in lv.values() if p.get("record_trim")]
+    if trims and trims[0].get("method") not in (None, "none"):
+        rows.append(dict(id="record_trimming", found=True, disclosed=True, method=trims[0].get("method"),
+                         free_vib_s=trims[0].get("free_vib_s"), note=trims[0].get("basis")))
+    return rows
+
+
 def complete_gate_disclosures(cfg_or_job=None, job_dir: str | None = None) -> list[dict]:
     """Status objects the COMPLETE gate must disclose (found:false kept honest)."""
     nsp = nsp_acceptance_tables_status(cfg_or_job, job_dir=job_dir)
     drift = drift_relief_analogue(cfg_or_job, job_dir=job_dir)
-    return [
+    return method_disclosures(job_dir) + [
         nsp,
         {
             "id": "asce_16_1_2_drift_relief_analogue",
@@ -1195,6 +1217,13 @@ def _nl17_package_checks(job_dir, what, pk, reasons, checks):
     checks[key + "_gravity_source"] = gs
     if gs != "hr_engine":
         reasons.append("%s gravity is not the HR engine's load state (gravity_source=%r; set STELTIC_ENGINE_DIR)" % (what, gs))
+    em = pk.get("elastic_members") or {}
+    checks[key + "_elastic_members"] = em.get("n_elastic", 0)
+    if em.get("flagged_elastic"):                       # NL-21: a gravity member past first yield must be fibre
+        reasons.append("%s: %d elastic gravity member(s) exceed first yield (ratio > 1.0: %s) -- promote them to fibre "
+                       "(snl run does this automatically; %s) and re-run" % (
+                           what, len(em["flagged_elastic"]), ", ".join(str(t) for t in em["flagged_elastic"][:10]),
+                           "nl_promote_fibre.json"))
     if _package_has_links(job_dir):
         n = int(pk.get("links") or 0)
         checks[key + "_links"] = n

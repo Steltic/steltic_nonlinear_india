@@ -5,7 +5,7 @@ path the gravity is the IS 1893 seismic weight (HR engine load state), the dampi
 here is an acceptance check (IS 1893 provides no acceptance criteria for nonlinear analysis; results are for information).
 """
 from __future__ import annotations
-import math, time
+import math, os, time
 import numpy as np
 import openseespy.opensees as ops
 from pushover import nonlinear_model as NM
@@ -53,6 +53,40 @@ def arias_window(a1, a2, dt, lo=0.001, hi=0.995):
     return i0 * dt, i1 * dt
 
 
+TRIM_BASIS = ("record trimmed to its significant duration: 5-95 % Arias intensity of the two scaled components "
+              "together, with a 1 s pre-pad from the record start where available, then a zero-acceleration "
+              "free-vibration tail (NL-21)")
+
+
+def residual_drift(acc, n, at_end, converged=True):
+    """Per storey: max over the two edges and X/Y of |mean signed drift| over the last part of the free vibration
+    (acc = summed signed drifts, n samples); the instantaneous end value when nothing was averaged (NL-21)."""
+    if not n or not converged:
+        return np.asarray(at_end, float)
+    return np.max(np.abs(np.asarray(acc, float) / n), axis=1)
+
+
+def trim_mode() -> str:
+    """'arias5-95' (India default, set by the nlrha CLI in $SNL_RECORD_TRIM) or 'none' (the full record head)."""
+    return (os.environ.get("SNL_RECORD_TRIM") or "none").strip().lower()
+
+
+def trim_record(ax, ay, dt, pre_pad=1.0, lo=0.05, hi=0.95):
+    """(ax, ay, info). 'arias5-95': samples from max(0, t5 - pre_pad) to t95, computed from the record itself; the
+    caller adds the free-vibration tail (the Path series is zero past its last value). 'none': the record from its
+    start, the analysed window ending at 99.5 % Arias (the pre-NL-21 behaviour)."""
+    ax = np.asarray(ax, float); ay = np.asarray(ay, float)
+    if trim_mode() != "arias5-95":
+        t0, t1 = arias_window(ax, ay, dt)
+        return ax, ay, dict(method="none", t_sig_window=(t0, t1), t_cut_s=0.0, duration_s=len(ax) * dt)
+    t5, t95 = arias_window(ax, ay, dt, lo, hi)
+    i0 = max(0, int((t5 - pre_pad) / dt)); i1 = min(len(ax), int(math.ceil(t95 / dt)) + 1)
+    out = dict(method="arias5-95", t5_s=t5, t95_s=t95, t_cut_s=i0 * dt, pre_pad_s=t5 - i0 * dt,
+               duration_s=(i1 - i0) * dt, full_duration_s=len(ax) * dt, basis=TRIM_BASIS)
+    out["t_sig_window"] = (t5 - i0 * dt, (i1 - i0) * dt)
+    return ax[i0:i1], ay[i0:i1], out
+
+
 def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02, free_vib_s=5.0, rec_every=5, verbose=True,
                sample_brace=None, integrator="hht"):
     """Build a fresh model and run one scaled pair. Returns peaks/histories for the acceptance module."""
@@ -65,6 +99,8 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
     except Exception as ex:  # noqa: BLE001
         print("[nlrha] member recorder unavailable:", ex)
     member_peaks = {}
+    from pushover import elastic_gravity as EG
+    elastic_peaks = {}
     fixed_nodes = [t for t in pkg.model.fixes]
     peak_V = [0.0, 0.0]
     ok = _apply_gravity(loads)
@@ -76,6 +112,7 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
     # bidirectional excitation, identical factor on both components (16.2.3.2), components per 16.2.4 orientation
     ax = rec["a1"] if rec["x_comp"] == 1 else rec["a2"]; ay = rec["a2"] if rec["x_comp"] == 1 else rec["a1"]
     dt_rec = rec["dt"]; sf = rec["sf"]
+    ax, ay, trim_info = trim_record(ax, ay, dt_rec)               # NL-21: significant duration (India default)
     g_acc = _g_accel(pkg)  # 386.4 in/s² or 9810 mm/s²
     ops.timeSeries("Path", 11, "-dt", dt_rec, "-values", *(ax * g_acc * sf).tolist())
     ops.timeSeries("Path", 12, "-dt", dt_rec, "-values", *(ay * g_acc * sf).tolist())
@@ -93,10 +130,15 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
     # HR08 M051: tighten crawl abort — fallback micro-advances can reset consec_fail forever near ModIMK drops (~0.1 s sim/wall-h).
     dt_cur = dt_max; n_ok_since_cut = 0; consec_fail = 0; crawl_fallback = 0; dt_floor = dt_max / 32.0
     next_rec = rec_every * dt_max; next_hist = 5 * dt_max                 # time-based recording (the step is adaptive)
-    t_start, t_sig = arias_window(ax, ay, dt_rec)
+    t_start, t_sig = trim_info["t_sig_window"]
     t_end = t_sig + free_vib_s
+    # NL-21: residual drift = the drift AVERAGED over the last max(2 T1, 1 s) of the free vibration (capped at the tail),
+    # so the vibration still decaying at the end of the run is not reported as a permanent offset
+    t_resid0 = t_end - min(max(2.0 * max(modal["T1x"], modal["T1y"]), 1.0), max(free_vib_s, 1e-9))
+    resid_n = 0
     t = 0.0
     lv = _edge_nodes(pkg); H = [lv[0][1]] + [lv[i][1] - lv[i - 1][1] for i in range(1, len(lv))]
+    resid_acc = np.zeros((len(lv), 4))
     hz = sorted(hinges); K0 = {t: hinges[t]["K0"] for t in hz}
     cols = [e["tag"] for e in pkg.model.elements if "etype" not in e and NM.member_kind(pkg, e) == "col"]
     peak_drift = np.zeros((len(lv), 2)); peak_roof = np.zeros(2)
@@ -147,11 +189,16 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
         step += 1
         # drifts at both edges, both directions (16.4.1.2)
         prev = np.zeros((2, 2))
+        in_tail = t >= t_resid0 - 1e-9
         for i, (k, z, master, nA, nB) in enumerate(lv):
             uA = np.array([ops.nodeDisp(nA, 1), ops.nodeDisp(nA, 2)]); uB = np.array([ops.nodeDisp(nB, 1), ops.nodeDisp(nB, 2)])
             dA = np.abs(uA - prev[0]) / H[i]; dB = np.abs(uB - prev[1]) / H[i]
             peak_drift[i] = np.maximum(peak_drift[i], np.maximum(dA, dB))
+            if in_tail:                                     # NL-21: signed drifts over the end of the free vibration
+                resid_acc[i] += np.concatenate([(uA - prev[0]) / H[i], (uB - prev[1]) / H[i]])
             prev = np.array([uA, uB])
+        if in_tail:
+            resid_n += 1
         roof = lv[-1][2]; ur = np.array([ops.nodeDisp(roof, 1), ops.nodeDisp(roof, 2)])
         peak_roof = np.maximum(peak_roof, np.abs(ur))
         if t >= next_hist - 1e-9:
@@ -192,23 +239,29 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
             peak_V = [max(peak_V[0], vx), max(peak_V[1], vy)]
             if recorder is not None:
                 MemberRecorder.envelope(member_peaks, recorder.sample())
+            if EG.CURRENT:                                # NL-21: elastic gravity members, first-yield ratio envelope
+                EG.envelope(elastic_peaks, EG.sample())
             if sample_brace and sample_brace in hinges:
                 d = ops.eleResponse(sample_brace, "deformation"); f = ops.eleResponse(sample_brace, "axialForce")
                 brace_hist.append((d[0] if d else 0.0, f[0] if f else 0.0))
     # residual drift (structure at rest after free vibration)
-    prev = np.zeros((2, 2)); resid = np.zeros(len(lv))
+    prev = np.zeros((2, 2)); resid_end = np.zeros(len(lv))
     for i, (k, z, master, nA, nB) in enumerate(lv):
         uA = np.array([ops.nodeDisp(nA, 1), ops.nodeDisp(nA, 2)]); uB = np.array([ops.nodeDisp(nB, 1), ops.nodeDisp(nB, 2)])
-        resid[i] = max(np.max(np.abs(uA - prev[0])), np.max(np.abs(uB - prev[1]))) / H[i]; prev = np.array([uA, uB])
+        resid_end[i] = max(np.max(np.abs(uA - prev[0])), np.max(np.abs(uB - prev[1]))) / H[i]; prev = np.array([uA, uB])
+    resid = residual_drift(resid_acc, resid_n, resid_end, converged)
     out = dict(record=rec["id"], label="%s %s (%s)" % (rec.get("earthquake") or rec["id"], rec.get("station") or "", rec.get("year") or "?"), sf=sf, x_comp=rec["x_comp"],
                converged=converged, reason=reason, steps=step, fails=fails, seconds=time.time() - t0, t_window=(t_start, t_sig), T1x=modal["T1x"], T1y=modal["T1y"],
                damping=damp, peak_story_drift=peak_drift.tolist(), peak_roof_in=peak_roof.tolist(), residual_drift=resid.tolist(),
+               residual_drift_end=resid_end.tolist(), residual_basis=("drift averaged over the last %.2f s of the free vibration"
+                                                                      % (t_end - t_resid0) if resid_n else "instantaneous at the end"),
                peak_def=peak_def, signed_def=signed_def, peak_colN=peak_colN, hist_t=hist_t, hist_roof=hist_roof, brace_hist=brace_hist,
                frames=dict(t=frames_t, story=frames_story, brace_tags=braces, brace=frames_brace, ag=frames_ag,
                            hinge_tags=list(hz), hinge=frames_hinge, masters=masters),
                hinges_meta={t: dict(kind=hinges[t]["kind"], section=hinges[t]["section"], z=hinges[t]["z"], ele=hinges[t]["ele"], end=hinges[t]["end"]) for t in hz},
                specs={t: hinges[t]["spec"] for t in hz}, heights=H, stats=stats,
                peak_base_shear_kip=peak_V, member_peaks=member_peaks,
+               elastic_peaks=elastic_peaks, elastic_meta=EG.meta_now(), trim=trim_info,
                member_meta=(recorder.meta() if recorder is not None else None),
                torsion=getattr(pkg, "_torsion_shift", None))
     if verbose:

@@ -85,7 +85,8 @@ def build(pkg, prm, ch16, PG, member_nseg=None, plasticity=None):
                                        member_nseg=member_nseg, plasticity=plasticity)
     # Fibre: all forceBeamColumn tags for Rayleigh region. IMK: elastic_ele_tags (RBS extras) or pack tags.
     if stats.get("plasticity") == "fibre" and stats.get("fibre_eles"):
-        elastic_eles = list(stats["fibre_eles"])
+        # NL-21: the elastic gravity members get the same stiffness-proportional damping as the fibre members
+        elastic_eles = list(stats["fibre_eles"]) + list(stats.get("elastic_gravity_eles") or [])
     elif stats.get("elastic_ele_tags"):
         elastic_eles = list(stats["elastic_ele_tags"])
     else:

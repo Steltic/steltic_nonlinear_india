@@ -173,6 +173,30 @@ def _copy_params(src, dst):
         print("params: could not re-apply grounding:", ex)
 
 
+def elastic_check(run, nsp) -> dict | None:
+    """NL-21: peak first-yield ratio of every elastic gravity member over the WHOLE analysed curve (every reported
+    quantity -- Vmax, the descending branch -- must rest on a valid model: a member above 1.0 anywhere is flagged and
+    promoted), and up to the largest NSP target for information."""
+    from . import elastic_gravity as EG
+    steps = run["rec"].get("elastic") or []
+    if not steps:
+        return None
+    u = run["rec"]["u"]
+    u_lim = max(n["target_disp_in"] for n in nsp.values())
+    to_t, full = {}, {}
+    past = False
+    for ui, smp in zip(u, steps):
+        EG.envelope(full, smp)
+        if not past:
+            EG.envelope(to_t, smp)
+            past = ui >= u_lim
+    out = EG.summary(full, meta=EG.meta_now())
+    out.update(check_range="whole analysed curve (to the end of the push)", u_end_in=u[-1] if u else None,
+               max_ratio_to_target=round(max(to_t.values()), 4) if to_t else 0.0, u_target_in=u_lim,
+               u_target_basis="largest NSP target (IS-MCE) of this direction")
+    return out
+
+
 def _run_india(args, pkg, t0):
     """India (D6/D7): NSP at IS-DBE and IS-MCE from the IS 1893 elastic spectrum; informative response at delta_t;
     fibre plasticity; IS 2062 steel; mass/gravity = IS seismic weight. No IO/LS/CP/BPON verdict."""
@@ -186,6 +210,9 @@ def _run_india(args, pkg, t0):
         print("[pushover] India: fibre plasticity is used (member strains/rotations are recorded from fibres); "
               "--plasticity %s ignored" % plast)
     os.environ["SNL_PLASTICITY"] = "fibre"; prm.setdefault("numerics", {})["plasticity"] = "fibre"
+    os.environ["SNL_ANALYSIS"] = "pushover"                           # NL-21: per-analysis promotion list
+    if getattr(args, "gravity_elastic", None):                       # NL-21
+        os.environ["SNL_GRAVITY_ELASTIC"] = "1" if args.gravity_elastic == "on" else "0"
     if getattr(args, "member_nseg", None) is not None:
         os.environ["SNL_MEMBER_NSEG"] = str(args.member_nseg); prm["numerics"]["member_nseg"] = int(args.member_nseg)
     strategies = {"auto": ("fine_step", "arclength"), "fine_step": ("fine_step",), "arclength": ("arclength",), "none": ()}[args.tail]
@@ -220,7 +247,8 @@ def _run_india(args, pkg, t0):
         cap = PP.capacity_summary(run, pkg.basis, nsp["IS-DBE"], V_design_kip=vbd_kip)
         resp = {lvn: PP.response_at(run, n["target_disp_in"], lvn, rec.meta(), ref, pkg.basis, V_design_kip=vbd_kip)
                 for lvn, n in nsp.items()}
-        runs[d] = run; results[d] = dict(nsp=nsp, capacity=cap, resp=resp, ref_rot=ref, meta=rec.meta())
+        runs[d] = run; results[d] = dict(nsp=nsp, capacity=cap, resp=resp, ref_rot=ref, meta=rec.meta(),
+                                         elastic=elastic_check(run, nsp))
         for lvn, n in nsp.items():
             a = resp[lvn]
             print("  [%s %s] Te=%.3fs Sa=%.3fg C0=%.2f C1=%.2f C2=%.2f -> dt=%.1f mm (%.3f%% H) | V=%.0f kN (V/VB %.2f) "
@@ -248,6 +276,7 @@ def main(argv=None):
     r.add_argument("--site-class", default="D"); r.add_argument("--params")
     r.add_argument("--stop-at", type=float, default=0.8, help="India: stop the push once V <= this fraction of Vmax past "
                    "the peak and beyond 2 x the largest target estimate (default 0.8: delta_u captured); 0 = push to --max-drift")
+    r.add_argument("--gravity-elastic", default=None, choices=["on", "off"], help="gravity-only members elastic with a yield check (India default on; NL-21)")
     r.add_argument("--system")
     r.add_argument("--tail", default="auto", help="descending-branch escalation: auto (fine_step then arclength) | fine_step | arclength | none")
     r.add_argument("--post-cap-ratio", type=float, help="RUNG 3 (modelling change, user consent): fraction of `a` over which hinges descend to residual (default 0.15; try 0.5)")

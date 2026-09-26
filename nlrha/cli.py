@@ -447,6 +447,11 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
         print("[nlrha] India: fibre plasticity is used (member strains/rotations and IS 2062 steel per section); "
               "--plasticity %s ignored" % plast)
     os.environ["SNL_PLASTICITY"] = "fibre"; prm.setdefault("numerics", {})["plasticity"] = "fibre"
+    # NL-21: record trimming and elastic gravity members (India defaults; inherited by the spawned workers)
+    os.environ["SNL_RECORD_TRIM"] = getattr(args, "trim", None) or "arias5-95"
+    os.environ["SNL_ANALYSIS"] = "nlrha"                              # per-analysis promotion list
+    if getattr(args, "gravity_elastic", None):
+        os.environ["SNL_GRAVITY_ELASTIC"] = "1" if args.gravity_elastic == "on" else "0"
     damp = _damping(args, pkg, ch16, prm)
     loads, gtab, split, PG, modal, lo, hi = _india_prepare(args, pkg, prm, ch16)
     if not modal.get("spurious_ok", True):
@@ -455,7 +460,10 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
     torsion = None if tors_mode == "off" else dict(sx=(1 if tors_mode == "pos" else -1), sy=(1 if tors_mode == "pos" else -1), e_ratio=0.05)
     numerics = dict(plasticity="fibre", member_nseg=int(os.environ.get("SNL_MEMBER_NSEG") or 4), damping=damp,
                     torsion=dict(mode=tors_mode, **(torsion or {}), clause="IS 1893 7.8.2 (0.05 b), default on for India"),
-                    integrator=args.integrator, dt_s=args.dt, gravity=split["basis"], gravity_source=split["gravity_source"])
+                    integrator=args.integrator, dt_s=args.dt, gravity=split["basis"], gravity_source=split["gravity_source"],
+                    record_trim=dict(method=os.environ["SNL_RECORD_TRIM"], free_vib_s=args.free_vib,
+                                     basis=(RN.TRIM_BASIS if os.environ["SNL_RECORD_TRIM"] == "arias5-95" else "full record head")),
+                    gravity_elastic=(os.environ.get("SNL_GRAVITY_ELASTIC", "1") not in ("0", "off", "false")))
     sets, recs = _library(args)
     out = args.out or os.path.join(str(pkg.root), "nlrha"); os.makedirs(out, exist_ok=True)
     pp = _pushover_pkg(args, pkg)
@@ -651,6 +659,8 @@ def main(argv=None):
             p.add_argument("--integrator", default="hht", choices=["hht", "newmark"], help="HHT alpha=0.9 (default; damps spurious high modes) or Newmark average acceleration")
             p.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default: 4 fibre / 1 imk)")
             p.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="India: fibre (always). USA: default imk=ModIMK; fibre=distributed forceBeamColumn")
+            p.add_argument("--trim", default=None, choices=["arias5-95", "none"], help="record trimming (India default arias5-95: 5-95 %% Arias, 1 s pre-pad, then --free-vib s of free vibration; USA default none)")
+            p.add_argument("--gravity-elastic", default=None, choices=["on", "off"], help="gravity-only members elastic with a yield check (India default on; NL-21)")
             p.add_argument("--early-abort-nc", type=int, default=2, help="abandon remaining records once N are NC (0=disable; product default 2)")
     lib = sub.add_parser("library", help="index a folder of PEER .AT2 / CSV record pairs (writes index.json; reads PEER _SearchResults.csv metadata when present)")
     lib.add_argument("folder")

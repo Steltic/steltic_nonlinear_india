@@ -86,13 +86,16 @@ def cmd_run(a):
     site = [] if india else ["--site-class", a.site_class]
     for s in steps:
         if s == "pushover":
-            cmd = [py, "-m", "pushover", "run", job] + site + params + (["--tail", a.tail] if a.tail else []) + (["--post-cap-ratio", str(a.post_cap_ratio)] if a.post_cap_ratio else [])
+            ge = ["--gravity-elastic", a.gravity_elastic] if getattr(a, "gravity_elastic", None) else []
+            cmd = [py, "-m", "pushover", "run", job] + site + params + ge + (["--tail", a.tail] if a.tail else []) + (["--post-cap-ratio", str(a.post_cap_ratio)] if a.post_cap_ratio else [])
             plast = a.plasticity if a.plasticity else "fibre"
             nseg = a.member_nseg if a.member_nseg is not None else (4 if plast == "fibre" else 1)
             cmd += ["--plasticity", plast, "--member-nseg", str(nseg)]
         elif s == "nlrha":
             cmd = [py, "-m", "nlrha", "run", job, "--parallel", str(a.parallel), "--dt", str(a.dt), "--integrator", a.integrator, "--n", str(a.n_records)] + site + params
             if a.records_set: cmd += ["--records-set"] + list(a.records_set)
+            if getattr(a, "gravity_elastic", None): cmd += ["--gravity-elastic", a.gravity_elastic]
+            if getattr(a, "trim", None): cmd += ["--trim", a.trim]
             if a.target: cmd += ["--target", a.target]          # default None: nlrha picks is1893 (elastic, D6) for India
             if getattr(a, "level", None): cmd += ["--level", a.level]
             if a.site_hazard: cmd += ["--site-hazard", os.path.abspath(a.site_hazard)]
@@ -113,6 +116,20 @@ def cmd_run(a):
             if a.risk_category: cmd += ["--risk-category", a.risk_category]
         status["steps"][s] = _run(cmd, log, env=env)
         print("   %s -> rc %s (%s s)" % (s, status["steps"][s]["returncode"], status["steps"][s]["seconds"]), flush=True)
+        # NL-21: an elastic gravity member past first yield is promoted to fibre and the analysis re-run
+        if india and s in ("pushover", "nlrha") and not getattr(a, "no_promote", False):
+            from pushover import elastic_gravity as EG
+            for rnd in range(1, 3):
+                fl = flagged_elastic(job, s)
+                if not fl or status["steps"][s].get("returncode") not in (0, None):
+                    break
+                EG.promote(job, fl, why="%s yield check, round %d" % (s, rnd), analysis=s)
+                print(">> %s: %d elastic gravity member(s) above first yield -> promoted to fibre, re-running (%s)"
+                      % (s, len(fl), ", ".join(str(t) for t in fl[:10])), flush=True)
+                status["steps"][s] = _run(cmd, log, env=env)
+                status["steps"][s]["promotion_round"] = rnd
+                status["steps"][s]["promoted"] = fl
+                print("   %s -> rc %s (%s s)" % (s, status["steps"][s]["returncode"], status["steps"][s]["seconds"]), flush=True)
     # comparison sheet + summary (whatever ran)
     from . import compare
     try:
@@ -134,6 +151,20 @@ def cmd_run(a):
     bad = [s for s, v in status["steps"].items() if v.get("returncode") not in (0, None)]
     print(">> done.", ("FAILED steps: " + ", ".join(bad) + " (see snl_run.log)") if bad else "all steps completed.", "Outputs in", job)
     return 1 if bad else 0
+
+
+def flagged_elastic(job, step) -> list:
+    """Elastic gravity members above first yield in the packages `step` just wrote (NL-21)."""
+    rels = (["pushover/pushover_package.json"] if step == "pushover"
+            else ["nlrha/DBE/nlrha_package.json", "nlrha/MCE/nlrha_package.json"])
+    out = set()
+    for r in rels:
+        try:
+            d = json.load(open(os.path.join(job, r), encoding="utf-8"))
+        except Exception:
+            continue
+        out |= {int(t) for t in ((d.get("elastic_members") or {}).get("flagged_elastic") or [])}
+    return sorted(out)
 
 
 def _hub(job):
@@ -180,6 +211,9 @@ def main(argv=None):
     r.add_argument("--n-records", type=int, default=11); r.add_argument("--site-class", default="D", help="ASCE site class (USA only; the India path uses the IS soil type of the package)"); r.add_argument("--risk-category", choices=["I", "II", "III", "IV"])
     r.add_argument("--tail", choices=["auto", "fine_step", "arclength", "none"]); r.add_argument("--post-cap-ratio", type=float, help="tail-protocol rung 3 (disclosed modelling change)")
     r.add_argument("--no-block", action="store_true", help="DDM: do not write the ddm_analysis block into calc_package.json")
+    r.add_argument("--no-promote", action="store_true", help="India: do not promote elastic gravity members that exceed first yield to fibre and re-run (NL-21)")
+    r.add_argument("--gravity-elastic", choices=["on", "off"], help="India: gravity-only members elastic with a yield check (default on; NL-21)")
+    r.add_argument("--trim", choices=["arias5-95", "none"], help="India NLRHA record trimming (default arias5-95; NL-21)")
     r.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="override plasticity (USA defaults: NSP fibre, NLRHA imk; India: fibre always)")
     r.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default 4 fibre / 1 imk)")
     r.add_argument("--records-set", nargs="*", default=None, help="NLRHA record set folder(s): indexed sets and/or user folders of PEER .AT2 / CSV pairs (default: the shipped P-695 far-field set)")

@@ -52,6 +52,18 @@ def _png_curve(runs, results, basis):
     return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode("ascii")
 
 
+def _elastic_block(results, stats):
+    """NL-21 package block: the gravity members built elastic and their yield check per direction."""
+    st = stats or {}
+    if not st.get("elastic_members"):
+        return dict(enabled=bool(st.get("gravity_elastic")), n_elastic=0, flagged_elastic=[])
+    dirs = {d: r.get("elastic") for d, r in (results or {}).items() if r.get("elastic")}
+    flagged = sorted({t for e in dirs.values() for t in (e.get("flagged_elastic") or [])})
+    from .elastic_gravity import BASIS
+    return dict(enabled=True, n_elastic=len(st["elastic_members"]), flagged_elastic=flagged, directions=dirs,
+                max_ratio=max([e.get("max_ratio") or 0.0 for e in dirs.values()] or [0.0]), basis=BASIS)
+
+
 def gravity_source(gtable) -> str:
     """'hr_engine' when the NL gravity is the HR engine's seismic-weight state (NL-14 table rows carry HR_EV_kN),
     else 'idealised' (level W_i as equal nodal loads -- the fallback when the HR engine is not importable)."""
@@ -106,6 +118,7 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
         restrained_dofs=(stats or {}).get("restrained_zero_stiffness_dofs"),
         gravity=gtable, gravity_source=gravity_source(gtable), reference_rotation=ref, modal=modal_info,
         links=(stats or {}).get("links") or 0,
+        elastic_members=_elastic_block(results, stats),
         params_verified=prm.get("verified"), params_state=_state(prm, out), spec_values_collected=bool(prm.get("spec_values_collected")),
         brace_backbone_note=("post-buckling brace backbone shape: modelling assumption (literature-based; IS 800 / "
                              "IS 18168 give no brace hysteresis) -- information, EOR input"),
@@ -191,6 +204,12 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
             h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%.0f</td><td>%.2f</td></tr>" % (
                 m["section"], m.get("role"), m["grade"], m["t_mm"], m["band"], m["fy_MPa"], m["factor"]))
         h.append("</table>")
+    em = pkgj.get("elastic_members") or {}
+    if em.get("n_elastic"):
+        h.append("<h2>Gravity members modelled elastic (disclosure)</h2><p class='note'>%s. %d members elastic; largest "
+                 "first-yield ratio up to the IS-MCE target %.2f; members above 1.0: %s.</p>"
+                 % (html.escape(em.get("basis") or ""), em["n_elastic"], em.get("max_ratio") or 0.0,
+                    html.escape(", ".join(str(t) for t in em.get("flagged_elastic") or []) or "none")))
     h.append("<p class='note'>Analysis %.0f s. Hinge / brace backbone shapes are modelling assumptions (literature-based; "
              "IS 800, IS 1893 and IS 18168 tabulate none) -- hinge_params verified=%s; IS specification values collected=%s.</p>"
              % (seconds, prm.get("verified"), bool(prm.get("spec_values_collected"))))

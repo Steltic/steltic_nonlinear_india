@@ -53,6 +53,21 @@ def _provenance(prm, where):
         return ""
 
 
+def elastic_block(results) -> dict:
+    """NL-21: the gravity members built elastic -- their first-yield ratio, max over the records of the level."""
+    from pushover import elastic_gravity as EG
+    peaks, meta = {}, {}
+    for r in results or []:
+        EG.envelope(peaks, r.get("elastic_peaks") or {})
+        meta.update(r.get("elastic_meta") or {})
+    if not peaks:
+        st = ((results or [{}])[0].get("stats") or {}) if results else {}
+        return dict(enabled=bool(st.get("gravity_elastic")), n_elastic=0, flagged_elastic=[])
+    out = EG.summary(peaks, meta={int(k): v for k, v in meta.items()})
+    out.update(enabled=True, statistic="max over the records of the level")
+    return out
+
+
 def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=None):
     os.makedirs(outdir, exist_ok=True)
     ts = datetime.datetime.now().isoformat(timespec="seconds")
@@ -66,7 +81,8 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=
               response_summary=summ, elapsed_s=elapsed_s,
               gravity_source=(numerics or {}).get("gravity_source"), links=stats.get("links") or 0,
               spec_values_collected=bool((prm or {}).get("spec_values_collected")),
-              params_verified=(prm or {}).get("verified"))
+              params_verified=(prm or {}).get("verified"),
+              elastic_members=elastic_block(results), record_trim=(numerics or {}).get("record_trim"))
     json.dump(pj, open(os.path.join(outdir, "nlrha_package.json"), "w", encoding="utf-8"), indent=1, default=str)
     H = ["<!doctype html><meta charset='utf-8'><style>%s .stmt{background:#fff4d6;border-left:5px solid #b8860b;padding:9px 13px;"
          "margin:12px 0;font-weight:bold}</style><title>NLRHA %s</title>" % (CSS, summ["level"]),
@@ -124,6 +140,16 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=
                 g["mu_compression_max"], g["n_buckled_max"]))
         H.append("</table>")
     nv = summ["non_vacuous"]
+    em = pj.get("elastic_members") or {}
+    tr = pj.get("record_trim") or {}
+    H.append("<h2>Modelling disclosures (NL-21)</h2><ul>")
+    if em.get("n_elastic"):
+        H.append("<li>%s. %d members elastic; largest first-yield ratio %.2f (%s); above 1.0: %s.</li>" % (
+            html.escape(em.get("basis") or ""), em["n_elastic"], em.get("max_ratio") or 0.0, em.get("statistic"),
+            html.escape(", ".join(str(t) for t in em.get("flagged_elastic") or []) or "none")))
+    if tr:
+        H.append("<li>Records: %s; free vibration %s s.</li>" % (html.escape(str(tr.get("basis") or tr.get("method"))), tr.get("free_vib_s")))
+    H.append("</ul>")
     H.append("<p>Non-vacuous check: %s (rows %d members, %d braces; missing kinds %s)</p>" % (
         "yes" if nv["ok"] else "NO", nv["n_member_rows"], nv["n_brace_rows"], nv["missing_kinds"] or "none"))
     if summ["force_controlled_columns"]:
