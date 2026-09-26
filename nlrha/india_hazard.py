@@ -247,49 +247,81 @@ def inputs_from_cfg(cfg: dict | None) -> dict:
 
 
 def inputs_from_package(root) -> dict:
-    """Structured India inputs from the HR package (seismic_calc.json + load_plan.json seismic_summary).
+    """Structured India inputs from the HR package.
 
-    Returns zone, Z, soil, I, R, Ta_x, Ta_y, W_kN, W_by_floor_kN, VB_kN, h_m (None where absent) and `sources`.
+    Sources, first found wins (NL-4): design/calc_package.json (`seismic_calc`: engine W per floor, Z, I, R, zone;
+    `seismic_analysis.scale`: V-bar_B per direction = max(engine, agent), the base shear the members were designed
+    for), seismic_calc.json (older packages), load_plan.json `seismic_summary` (zone, soil, per-direction R_x / R_y,
+    Ta_x / Ta_y, VB_x / VB_y, W_by_floor).
+
+    Returns zone, Z, soil, I, R, R_x, R_y, Ta_x, Ta_y, Ta, W_kN, W_by_floor_kN, VB_kN, VB_x_kN, VB_y_kN, h_m (None
+    where absent), `sources`, and `W_check` (engine W vs the agent's seismic_summary W).
     """
     import json as _json
     import os as _os
     root = str(root)
-    out = dict(zone=None, Z=None, soil=None, I=None, R=None, Ta_x=None, Ta_y=None, Ta=None, W_kN=None,
-               W_by_floor_kN=None, VB_kN=None, h_m=None, sources={})
-    ss = {}
-    lp = _os.path.join(root, "load_plan.json")
-    if _os.path.exists(lp):
+    out = dict(zone=None, Z=None, soil=None, I=None, R=None, R_x=None, R_y=None, Ta_x=None, Ta_y=None, Ta=None,
+               W_kN=None, W_by_floor_kN=None, VB_kN=None, VB_x_kN=None, VB_y_kN=None, h_m=None, system=None,
+               sources={}, W_check=None)
+
+    def _load(rel):
+        pth = _os.path.join(root, rel)
+        if not _os.path.exists(pth):
+            return {}
         try:
-            ss = (_json.load(open(lp, encoding="utf-8")) or {}).get("seismic_summary") or {}
+            return _json.load(open(pth, encoding="utf-8")) or {}
         except Exception:
-            ss = {}
-    sc = {}
-    scp = _os.path.join(root, "seismic_calc.json")
-    if _os.path.exists(scp):
-        try:
-            sc = _json.load(open(scp, encoding="utf-8")) or {}
-        except Exception:
-            sc = {}
+            return {}
+    ss = (_load("load_plan.json") or {}).get("seismic_summary") or {}
+    sc = _load("seismic_calc.json")
+    cp = _load(_os.path.join("design", "calc_package.json"))
+    csc = cp.get("seismic_calc") if isinstance(cp.get("seismic_calc"), dict) else {}
+    scale = ((cp.get("seismic_analysis") or {}).get("scale") or {}) if isinstance(cp.get("seismic_analysis"), dict) else {}
 
     def put(key, val, src):
-        if val is not None and out.get(key) is None:
+        if val is not None and val != "" and out.get(key) is None:
             out[key] = val
             out["sources"][key] = src
-    put("zone", ss.get("zone"), "load_plan.seismic_summary.zone")
-    put("Z", sc.get("Z"), "seismic_calc.Z"); put("Z", ss.get("Z"), "load_plan.seismic_summary.Z")
+    put("zone", csc.get("zone"), "calc_package.seismic_calc.zone"); put("zone", ss.get("zone"), "load_plan.seismic_summary.zone")
+    put("Z", csc.get("Z"), "calc_package.seismic_calc.Z"); put("Z", sc.get("Z"), "seismic_calc.Z")
+    put("Z", ss.get("Z"), "load_plan.seismic_summary.Z")
     put("soil", ss.get("soil") or sc.get("soil"), "load_plan.seismic_summary.soil")
-    put("I", sc.get("I"), "seismic_calc.I"); put("I", ss.get("I"), "load_plan.seismic_summary.I")
+    put("I", csc.get("I"), "calc_package.seismic_calc.I"); put("I", sc.get("I"), "seismic_calc.I")
+    put("I", ss.get("I"), "load_plan.seismic_summary.I")
     put("R", sc.get("R"), "seismic_calc.R"); put("R", ss.get("R"), "load_plan.seismic_summary.R")
-    put("Ta_x", sc.get("Ta_x_s") or ss.get("Ta_x_s"), "seismic_calc.Ta_x_s")
-    put("Ta_y", sc.get("Ta_y_s") or ss.get("Ta_y_s"), "seismic_calc.Ta_y_s")
-    put("Ta", sc.get("Ta_s") or ss.get("Ta_s"), "seismic_calc.Ta_s")
-    wf = sc.get("W_kN") if isinstance(sc.get("W_kN"), list) else ss.get("W_by_floor_kN")
-    put("W_by_floor_kN", wf, "seismic_calc.W_kN (per floor)")
+    put("R", csc.get("R"), "calc_package.seismic_calc.R")
+    put("R_x", ss.get("R_x"), "load_plan.seismic_summary.R_x"); put("R_y", ss.get("R_y"), "load_plan.seismic_summary.R_y")
+    put("Ta_x", sc.get("Ta_x_s") or ss.get("Ta_x_s"), "seismic_summary.Ta_x_s")
+    put("Ta_y", sc.get("Ta_y_s") or ss.get("Ta_y_s"), "seismic_summary.Ta_y_s")
+    put("Ta", sc.get("Ta_s") or ss.get("Ta_s"), "seismic_summary.Ta_s")
+    put("system", csc.get("system") or ss.get("system"), "calc_package.seismic_calc.system")
+    wf_engine = csc.get("W_by_floor_engine_kN") if isinstance(csc.get("W_by_floor_engine_kN"), list) else None
+    wf_sc = sc.get("W_kN") if isinstance(sc.get("W_kN"), list) else None
+    wf_ss = ss.get("W_by_floor_kN") if isinstance(ss.get("W_by_floor_kN"), list) else None
+    # mass = W (D6) must be the HR ENGINE's IS 1893 7.3 / 7.4 W -- the one its modal mass uses (it includes nodal
+    # masses, crane bridge + crab, envelope cladding, partitions per R1); the agent's table is the fallback
+    put("W_by_floor_kN", wf_engine, "calc_package.seismic_calc.W_by_floor_engine_kN (HR engine W)")
+    put("W_by_floor_kN", wf_sc, "seismic_calc.W_kN (per floor)")
+    put("W_by_floor_kN", wf_ss, "load_plan.seismic_summary.W_by_floor_kN")
+    if out["W_by_floor_kN"]:
+        put("W_kN", float(sum(out["W_by_floor_kN"])), "sum(%s)" % out["sources"]["W_by_floor_kN"].split(" (")[0])
     if isinstance(ss.get("W_kN"), (int, float)):
         put("W_kN", float(ss["W_kN"]), "load_plan.seismic_summary.W_kN")
-    elif wf:
-        put("W_kN", float(sum(wf)), "sum(seismic_calc.W_kN)")
-    put("VB_kN", sc.get("VB_kN") or ss.get("VB_kN"), "seismic_calc.VB_kN")
+    if wf_engine and wf_ss and len(wf_engine) == len(wf_ss):
+        We, Wa = float(sum(wf_engine)), float(sum(wf_ss))
+        out["W_check"] = dict(W_engine_kN=We, W_agent_kN=Wa, rel_diff=(We - Wa) / Wa if Wa else None,
+                              used="engine", note="mass = W uses the HR engine W (calc_package.seismic_calc)")
+    # design base shear per direction: V-bar_B from the RSA scaling record (max(engine, agent) per direction)
+    for d in ("x", "y"):
+        rec = scale.get(d.upper()) or {}
+        put("VB_%s_kN" % d, rec.get("VBbar_kN") or rec.get("VB_scaled_kN"), "calc_package.seismic_analysis.scale.%s.VBbar_kN" % d.upper())
+        put("VB_%s_kN" % d, ss.get("VB_%s_kN" % d), "load_plan.seismic_summary.VB_%s_kN" % d)
+    put("VB_kN", sc.get("VB_kN"), "seismic_calc.VB_kN")
+    if out["VB_x_kN"] is not None or out["VB_y_kN"] is not None:
+        put("VB_kN", max(v for v in (out["VB_x_kN"], out["VB_y_kN"]) if v is not None), "max(VB_x, VB_y)")
+    put("VB_kN", ss.get("VB_kN"), "load_plan.seismic_summary.VB_kN")
+    for d in ("x", "y"):
+        put("R_%s" % d, out["R"], "R (no per-direction value in the package)")
     put("h_m", ss.get("hi_m"), "load_plan.seismic_summary.hi_m")
     if out["zone"] is None and out["Z"] is not None:
         inv = {v: k for k, v in ZONE_FACTOR_Z.items()}
@@ -297,6 +329,13 @@ def inputs_from_package(root) -> dict:
         if out["zone"]:
             out["sources"]["zone"] = "Table 3 inverse of Z"
     return out
+
+
+def vb_direction_kN(ind: dict, direction: str):
+    """Design base shear for a push / response direction ('X' | 'Y'): V-bar_B of that direction, else VB."""
+    d = str(direction or "").lower()[:1]
+    v = (ind or {}).get("VB_%s_kN" % d) if d in ("x", "y") else None
+    return v if v is not None else (ind or {}).get("VB_kN")
 
 
 def build_india_site_hazard(

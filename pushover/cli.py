@@ -214,8 +214,12 @@ def _run_india(args, pkg, t0):
         run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
                           tail_strategies=strategies, recorder=rec, target_estimator=estimator)
         nsp = {lvn: PP.nsp_target(run, pkg.basis, prm, lv) for lvn, lv in levels.items()}
-        cap = PP.capacity_summary(run, pkg.basis, nsp["IS-DBE"])
-        resp = {lvn: PP.response_at(run, n["target_disp_in"], lvn, rec.meta(), ref, pkg.basis) for lvn, n in nsp.items()}
+        from snl.india_units import KN_TO_KIP
+        vbd = IH.vb_direction_kN(ind, d)                  # NL-4: V-bar_B of THIS direction (per-direction R)
+        vbd_kip = vbd * KN_TO_KIP if vbd is not None else None
+        cap = PP.capacity_summary(run, pkg.basis, nsp["IS-DBE"], V_design_kip=vbd_kip)
+        resp = {lvn: PP.response_at(run, n["target_disp_in"], lvn, rec.meta(), ref, pkg.basis, V_design_kip=vbd_kip)
+                for lvn, n in nsp.items()}
         runs[d] = run; results[d] = dict(nsp=nsp, capacity=cap, resp=resp, ref_rot=ref, meta=rec.meta())
         for lvn, n in nsp.items():
             a = resp[lvn]
