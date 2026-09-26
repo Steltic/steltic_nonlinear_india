@@ -35,12 +35,28 @@ def _png_curve(runs, results, basis):
         ax.plot([u * IN_TO_MM for u in run["rec"]["u"]], [v * KIP_TO_KN for v in run["rec"]["V"]], lw=1.8, label="push %s" % d)
         for lv, n in results[d]["nsp"].items():
             ax.axvline(n["target_disp_in"] * IN_TO_MM, ls="--", lw=0.9, color="#b3261e" if "MCE" in lv else "#1a3d7c")
-    if basis.V_design_kip:
-        ax.axhline(basis.V_design_kip * KIP_TO_KN, color="#555", lw=1, ls=":", label="design VB (IS 1893 7.6)")
+    # NL-17: the design base shear of each push direction (V-bar_B of that direction, IS 1893 7.7.3 scaled; NL-6)
+    from nlrha.india_hazard import vb_direction_kN
+    ind = getattr(basis, "india", None) or {}
+    drawn = set()
+    for d in runs:
+        vb = vb_direction_kN(ind, d) if ind else None
+        if vb is None and basis.V_design_kip:
+            vb = basis.V_design_kip * KIP_TO_KN
+        if vb and round(vb, 1) not in drawn:
+            drawn.add(round(vb, 1))
+            ax.axhline(vb, color="#555", lw=1, ls=":" if d == "X" else "-.", label="design V̄B %s (IS 1893 7.7.3)" % d)
     ax.set_xlabel("roof displacement (mm)"); ax.set_ylabel("base shear (kN)"); ax.grid(alpha=.3); ax.legend(fontsize=8)
     ax.set_title("Capacity curves; dashed = delta_t at IS-DBE (blue) / IS-MCE (red)", fontsize=10)
     b = io.BytesIO(); fig.savefig(b, format="png", dpi=120, bbox_inches="tight"); plt.close(fig)
     return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode("ascii")
+
+
+def gravity_source(gtable) -> str:
+    """'hr_engine' when the NL gravity is the HR engine's seismic-weight state (NL-14 table rows carry HR_EV_kN),
+    else 'idealised' (level W_i as equal nodal loads -- the fallback when the HR engine is not importable)."""
+    rows = list(gtable or [])
+    return "hr_engine" if rows and all(r.get("HR_EV_kN") is not None for r in rows) else "idealised"
 
 
 def _sha(path):
@@ -77,7 +93,8 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
         statement=IS_NL_STATEMENT, acceptance_basis=None, verdict=None,
         display_units="kN, mm, kN·m, MPa (analysis kip-in Stage B)",
         basis=dict(zone=ind.get("zone"), Z=ind.get("Z"), soil=ind.get("soil"), I=ind.get("I"), R_design=ind.get("R"),
-                   W_kN=ind.get("W_kN"), VB_kN=ind.get("VB_kN"), Ta_s=ind.get("Ta"), W_kip=b.W_kip,
+                   W_kN=ind.get("W_kN"), VB_kN=ind.get("VB_kN"), VB_x_kN=ind.get("VB_x_kN"), VB_y_kN=ind.get("VB_y_kN"),
+                   R_x=ind.get("R_x"), R_y=ind.get("R_y"), Ta_s=ind.get("Ta"), W_kip=b.W_kip,
                    V_design_kip=b.V_design_kip, system=b.system, sources=b.sources),
         hazard=dict(levels={"IS-DBE": "(Z/2)·I·Sa/g", "IS-MCE": "Z·I·Sa/g"}, R_in_target=False,
                     note="Sa(Te) from nlrha.india_hazard.elastic_sa (same function as the NLRHA target, D6)"),
@@ -87,9 +104,11 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
                                                                   member_nseg=(stats or {}).get("member_nseg")),
         fibre_eles=len((stats or {}).get("fibre_eles") or []), fibre_secs=(stats or {}).get("fibre_secs"),
         restrained_dofs=(stats or {}).get("restrained_zero_stiffness_dofs"),
-        gravity=gtable, reference_rotation=ref, modal=modal_info,
+        gravity=gtable, gravity_source=gravity_source(gtable), reference_rotation=ref, modal=modal_info,
+        links=(stats or {}).get("links") or 0,
         params_verified=prm.get("verified"), params_state=_state(prm, out), spec_values_collected=bool(prm.get("spec_values_collected")),
-        brace_backbone_note="post-buckling backbone shape from literature placeholders",
+        brace_backbone_note=("post-buckling brace backbone shape: modelling assumption (literature-based; IS 800 / "
+                             "IS 18168 give no brace hysteresis) -- information, EOR input"),
         directions={},
     )
     for d, run in runs.items():
@@ -172,7 +191,9 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
             h.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%.0f</td><td>%.2f</td></tr>" % (
                 m["section"], m.get("role"), m["grade"], m["t_mm"], m["band"], m["fy_MPa"], m["factor"]))
         h.append("</table>")
-    h.append("<p class='note'>Analysis %.0f s. Hinge/brace backbone shapes are literature placeholders (hinge_params verified=%s).</p>" % (seconds, prm.get("verified")))
+    h.append("<p class='note'>Analysis %.0f s. Hinge / brace backbone shapes are modelling assumptions (literature-based; "
+             "IS 800, IS 1893 and IS 18168 tabulate none) -- hinge_params verified=%s; IS specification values collected=%s.</p>"
+             % (seconds, prm.get("verified"), bool(prm.get("spec_values_collected"))))
     hp = os.path.join(out, "pushover_report.html")
     open(hp, "w", encoding="utf-8").write("\n".join(h))
     return hp

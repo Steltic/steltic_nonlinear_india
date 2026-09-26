@@ -312,8 +312,13 @@ def _india_prepare(args, pkg, prm, ch16):
     from . import ground_motions as GM
     loads, gtab = IMD.is_gravity_loads(pkg)
     W = sum(r["W_kN"] for r in gtab)
+    from pushover.report_india import gravity_source
+    gsrc = gravity_source(gtab)
     split = dict(sum_D=sum(r["QG_kip"] for r in gtab), sum_Lexp=0.0, ratio=0.0, no_live_case_needed=False,
-                 basis="IS 1893 seismic weight per level (D + Table 10 imposed share); W = %.1f kN" % W)
+                 gravity_source=gsrc,
+                 basis=("IS 1893 seismic weight per level (D + Table 10 imposed share); W = %.1f kN; %s" % (
+                     W, "HR engine seismic-weight load state + top-up to W_i (NL-14)" if gsrc == "hr_engine"
+                     else "IDEALISED: W_i as equal diaphragm nodal loads (HR engine not importable)")))
     print("[gravity IS] sum W = %.1f kN (= mass·g, gate %s)" % (W, (pkg.calc or {}).get("_is_mass_gate", {}).get("ok")))
     PG, modal, lo, hi = _modal_and_range(pkg, prm, ch16, loads)
     return loads, gtab, split, PG, modal, lo, hi
@@ -450,7 +455,7 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
     torsion = None if tors_mode == "off" else dict(sx=(1 if tors_mode == "pos" else -1), sy=(1 if tors_mode == "pos" else -1), e_ratio=0.05)
     numerics = dict(plasticity="fibre", member_nseg=int(os.environ.get("SNL_MEMBER_NSEG") or 4), damping=damp,
                     torsion=dict(mode=tors_mode, **(torsion or {}), clause="IS 1893 7.8.2 (0.05 b), default on for India"),
-                    integrator=args.integrator, dt_s=args.dt, gravity=split["basis"])
+                    integrator=args.integrator, dt_s=args.dt, gravity=split["basis"], gravity_source=split["gravity_source"])
     sets, recs = _library(args)
     out = args.out or os.path.join(str(pkg.root), "nlrha"); os.makedirs(out, exist_ok=True)
     pp = _pushover_pkg(args, pkg)

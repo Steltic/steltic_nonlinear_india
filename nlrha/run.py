@@ -1,5 +1,8 @@
-"""run.py -- one ASCE 7-22 Chapter 16 response history: gravity (16.3.2) -> damping (16.3.5) -> bidirectional
-uniform excitation (16.2.4) -> HHT-alpha (default) or Newmark integration with adaptive time step -> peak/mean bookkeeping for 16.4.
+"""run.py -- one response history: gravity -> damping -> bidirectional uniform excitation -> HHT-alpha (default) or
+Newmark integration with adaptive time step -> peak/mean bookkeeping. The procedure follows the ASCE 7-22 Chapter 16
+sequence as a METHOD (USA path: 16.3.2 gravity, 16.3.5 damping, 16.2.4 excitation, 16.4 bookkeeping); on the India
+path the gravity is the IS 1893 seismic weight (HR engine load state), the damping cap is IS 1893 7.2.4 and nothing
+here is an acceptance check (IS 1893 provides no acceptance criteria for nonlinear analysis; results are for information).
 """
 from __future__ import annotations
 import math, time

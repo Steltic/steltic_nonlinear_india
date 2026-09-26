@@ -345,8 +345,15 @@ def write(job, out=None, project=None, engineer=None, reviewer=None, params_path
     docx = d.save(os.path.join(out, "design_criteria_16_1_4.docx"))
     # html twin for the hub
     from . import report as RP
-    parts = ["<style>%s</style><title>%s -- design criteria 16.1.4</title>" % (RP.CSS, H.escape(g["name"])), "<h1>%s</h1><div class='sub'>%s</div>" % (H.escape(title), H.escape(sub)),
-             "<div class='note'><b>Draft.</b> Generated from the package files; bracketed items are for the engineer of record. Not for construction; the design must be sealed by a licensed professional engineer after the 16.5 review.</div>"]
+    if india:                                          # NL-17: no ASCE 7 16.1.4 / 16.5 wording on the India draft
+        parts = ["<style>%s</style><title>%s -- design criteria (nonlinear, information)</title>" % (RP.CSS, H.escape(g["name"])),
+                 "<h1>%s</h1><div class='sub'>%s</div>" % (H.escape(title), H.escape(sub)),
+                 "<div class='note'><b>Draft.</b> Generated from the package files; bracketed items are for the engineer of record. "
+                 "IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information. "
+                 "The design is the HR (IS 800 / IS 1893) design, signed by the engineer of record.</div>"]
+    else:
+        parts = ["<style>%s</style><title>%s -- design criteria 16.1.4</title>" % (RP.CSS, H.escape(g["name"])), "<h1>%s</h1><div class='sub'>%s</div>" % (H.escape(title), H.escape(sub)),
+                 "<div class='note'><b>Draft.</b> Generated from the package files; bracketed items are for the engineer of record. Not for construction; the design must be sealed by a licensed professional engineer after the 16.5 review.</div>"]
     for s in S:
         parts.append("<h%d>%s</h%d>" % (min(3, s.level + 1), H.escape(s.title), min(3, s.level + 1)))
         ul = False

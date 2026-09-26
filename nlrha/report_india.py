@@ -63,7 +63,10 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=
               modal=modal, numerics=numerics, plasticity=stats.get("plasticity"),
               fibre_eles=len(stats.get("fibre_eles") or []), fibre_secs=stats.get("fibre_secs"),
               materials=stats.get("material_india"), mass_gate=(pkg.calc or {}).get("_is_mass_gate"),
-              response_summary=summ, elapsed_s=elapsed_s)
+              response_summary=summ, elapsed_s=elapsed_s,
+              gravity_source=(numerics or {}).get("gravity_source"), links=stats.get("links") or 0,
+              spec_values_collected=bool((prm or {}).get("spec_values_collected")),
+              params_verified=(prm or {}).get("verified"))
     json.dump(pj, open(os.path.join(outdir, "nlrha_package.json"), "w", encoding="utf-8"), indent=1, default=str)
     H = ["<!doctype html><meta charset='utf-8'><style>%s .stmt{background:#fff4d6;border-left:5px solid #b8860b;padding:9px 13px;"
          "margin:12px 0;font-weight:bold}</style><title>NLRHA %s</title>" % (CSS, summ["level"]),

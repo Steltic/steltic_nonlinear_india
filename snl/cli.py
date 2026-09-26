@@ -168,7 +168,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run"); r.add_argument("package"); r.add_argument("--out", help="folder to unpack a .zip into (default: next to the zip)")
     r.add_argument("--steltic-engine", help="path to steltic/steel_engine (or set STELTIC_ENGINE_DIR); required by the DDM step")
-    r.add_argument("--params", help="job copy of hinge_params.json filled from AISC 342 / ASCE 41 (default: the repository placeholder -> UNVERIFIED banner)")
+    r.add_argument("--params", help="component-parameter file (default: <job>/hinge_params_collected.json written by `snl collect`, else the repository India file pushover/hinge_params.json -> the COMPLETE gate refuses: IS values not collected)")
     r.add_argument("--only", nargs="*", choices=STEPS); r.add_argument("--skip", nargs="*", choices=STEPS)
     r.add_argument("--parallel", type=int, default=2); r.add_argument("--dt", type=float, default=0.01); r.add_argument("--integrator", default="hht", choices=["hht", "newmark"])
     r.add_argument("--n-records", type=int, default=11); r.add_argument("--site-class", default="D"); r.add_argument("--risk-category", choices=["I", "II", "III", "IV"])
