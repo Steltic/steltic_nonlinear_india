@@ -233,17 +233,18 @@ def _rag_env(R):
 
 
 def test_corpus_status_names_what_is_present_and_absent():
-    FakeRAG.docs = [IS1893, IS800, IS18168, "IS_2062_P1_2025", "IS_1161_2014"]
+    FakeRAG.docs = [IS1893, IS800, IS18168, "IS_2062_P1_2025", "IS_1161_2014", "IS_4000_1992"]
     R = _Server(FakeRAG)
     try:
         _rag_env(R)
         st = rag.status(force=True)
         assert st["ok"] and st["known"] and st["spec_index"] is True
         cm = rag.corpus_map(st)
-        assert cm["present"] == {"IS1893": IS1893, "IS800": IS800, "IS18168": IS18168, "IS2062": "IS_2062_P1_2025"}   # a stem variant still counts
-        assert cm["absent"] == ["IS808", "IS875_P1", "IS875_P2"] and cm["other"] == ["IS_1161_2014"]
+        assert cm["present"] == {"IS1893": IS1893, "IS800": IS800, "IS18168": IS18168, "IS2062": "IS_2062_P1_2025",
+                                 "IS1161": "IS_1161_2014"}   # a stem variant still counts; IS 1161 (tube grades, NL-8)
+        assert cm["absent"] == ["IS808", "IS875_P1", "IS875_P2"] and cm["other"] == ["IS_4000_1992"]
         line = rag.describe_corpus(cm)
-        assert "IS 2062 (Part 1):2025 (IS_2062_P1_2025)" in line and "ABSENT: IS 808:2021 (stem IS_808_2021)" in line and "IS_1161_2014" in line
+        assert "IS 2062 (Part 1):2025 (IS_2062_P1_2025)" in line and "ABSENT: IS 808:2021 (stem IS_808_2021)" in line and "IS_4000_1992" in line
         assert "engineering_rag_india" in line
         assert rag.resolve("engineering_standards_IS18168") == "IS18168" and rag.resolve("is-800") == "IS800" and rag.resolve("IS875_P1") == "IS875_P1"
         assert rag.resolve("IS_1893_Part_1_2016") == "IS1893" and rag.resolve("nope") is None

@@ -397,7 +397,29 @@ def b12_interaction(N_N: float, Mz_Nmm: float, My_Nmm: float, V_N: float, cap: d
 
 # ------------------------------------------------------------------ IS 800 §12 / IS 18168 reference deformation capacities
 def reference_rotation(system: str | None) -> dict:
-    """IS 800 §12 joint-rotation capacity for the SFRS (a REFERENCE value, not an acceptance limit — D7)."""
+    """IS 800 §12 joint-rotation capacity for the SFRS (a REFERENCE value, not an acceptance limit — D7).
+
+    A combined system ("SMRF+SCBF", "OMRF+OCBF") gives the refs of every part; `value` is the smallest of them
+    (the conservative reference for a member whose frame is not identified) and `parts` keeps each one (NL-8)."""
+    s = str(system or "").upper()
+    import re as _re
+    parts = [x.strip() for x in _re.split(r"\s*[+/&]\s*|\s+AND\s+", s) if x.strip()]
+    if len(parts) > 1:
+        subs = [_reference_rotation_one(x) for x in parts]
+        refs, seen = [], set()
+        for sub in subs:
+            for r in sub.get("refs") or []:
+                k = (r.get("clause"), r.get("value"))
+                if k not in seen:
+                    seen.add(k); refs.append(r)
+        vals = [x["value"] for x in subs if x.get("value") is not None]
+        return dict(value=(min(vals) if vals else None), system=s, refs=refs,
+                    parts={p_: x.get("value") for p_, x in zip(parts, subs)},
+                    note="combined system: each part's IS 800 Section 12 reference; value = the smallest")
+    return _reference_rotation_one(s)
+
+
+def _reference_rotation_one(system: str | None) -> dict:
     s = str(system or "").upper()
     rows = []
     if "EBF" in s or "ECCENTRIC" in s:

@@ -87,19 +87,64 @@ def _json(path, default=None):
         return default
 
 
-def _grade(job: str, plan: dict, calc: dict) -> tuple[str, str]:
-    """(grade, basis): nl_plan.material.grade, else the IS 2062 grade the package's member checks cite, else E250."""
-    g = ((plan or {}).get("material") or {}).get("grade")
-    if g:
-        return str(g), "nl_plan.material.grade"
-    seen: dict = {}
+def _norm_grade(g):
+    """'E350 B0' -> 'E350'; 'YSt 310' -> 'YST310'; None when not an IS 2062 / IS 1161 grade."""
+    t = str(g or "").upper().replace(" ", "")
+    if not t:
+        return None
+    if re.fullmatch(r"YST\d{3}", t):
+        return t
+    try:
+        from pushover import india_materials as IM
+        return IM.normalize_grade(g)
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
+def _grades(job: str, plan: dict, calc: dict) -> tuple:
+    """(primary grade, basis, [other IS 2062 grades], [IS 1161 tube grades]) -- NL-8: every grade the design uses.
+
+    Primary: nl_plan.material.grade (EOR), else the package's cfg_snapshot.steel_grade, else the most common member
+    grade in design/calc_package.json, else E250 (said so). The others are the remaining grades of the package's
+    member records (IS 2062 grades and IS 1161 YSt tube grades), each collected from its own table."""
+    counts: dict = {}
     for m in (calc or {}).get("members") or []:
-        for mm in re.finditer(r"IS\s*2062\s*(E\s?\d{3})", str(m.get("cited") or "")):
-            k = mm.group(1).replace(" ", "")
-            seen[k] = seen.get(k, 0) + 1
-    if seen:
-        return max(seen, key=seen.get), "design/calc_package.json member citations (IS 2062 grade)"
-    return "E250", "default E250 (neither nl_plan.material.grade nor the package names a grade)"
+        g = _norm_grade((m.get("inputs") or {}).get("grade") or ((m.get("governing_element_result") or {}).get("material") or {}).get("grade"))
+        if g:
+            counts[g] = counts.get(g, 0) + 1
+        else:                                         # older packages: the grade only in the member citations
+            for mm in re.finditer(r"IS\s*2062\s*(E\s?\d{3})", str(m.get("cited") or "")):
+                k = mm.group(1).replace(" ", "")
+                counts[k] = counts.get(k, 0) + 1
+    snap = _json(os.path.join(job, "design", "cfg_snapshot.json"), {}) or {}
+    for k in ("steel_grade", "brace_grade"):
+        g = _norm_grade(snap.get(k))
+        if g:
+            counts.setdefault(g, 0)
+    for v in (snap.get("grade_by_section") or {}).values():
+        g = _norm_grade(v)
+        if g:
+            counts.setdefault(g, 0)
+    g0 = ((plan or {}).get("material") or {}).get("grade")
+    if g0 and _norm_grade(g0):
+        primary, basis = _norm_grade(g0), "nl_plan.material.grade (EOR)"
+    elif _norm_grade(snap.get("steel_grade")) and not str(_norm_grade(snap.get("steel_grade"))).startswith("YST"):
+        primary, basis = _norm_grade(snap["steel_grade"]), "design/cfg_snapshot.json steel_grade (HR package)"
+    else:
+        is2062 = {k: v for k, v in counts.items() if not k.startswith("YST")}
+        if is2062:
+            primary, basis = max(is2062, key=is2062.get), "design/calc_package.json member grades (most common)"
+        else:
+            primary, basis = "E250", "default E250 (neither nl_plan.material.grade nor the package names a grade)"
+    others = sorted(g for g in counts if g != primary and not g.startswith("YST"))
+    tubes = sorted(g for g in counts if g.startswith("YST"))
+    return primary, basis, others, tubes
+
+
+def _grade(job: str, plan: dict, calc: dict) -> tuple[str, str]:
+    """(primary grade, basis) -- kept for callers of the single-grade API."""
+    g, b, _o, _t = _grades(job, plan, calc)
+    return g, b
 
 
 def _soil_roman(soil) -> str:
@@ -109,6 +154,12 @@ def _soil_roman(soil) -> str:
     except Exception:                                            # noqa: BLE001
         s = str(soil or "").upper()
         return "III" if "III" in s or "SOFT" in s else "I" if re.search(r"\bI\b|ROCK|HARD", s) else "II"
+
+
+def _split(gid: str) -> tuple:
+    """'material@E350' -> ('material', 'E350'); 'material' -> ('material', None)."""
+    b, _, q = gid.partition("@")
+    return b, (q or None)
 
 
 def gather(job: str) -> dict:
@@ -124,24 +175,27 @@ def gather(job: str) -> dict:
     except Exception:                                            # noqa: BLE001
         ind = {}
     lp = (_json(os.path.join(job, "load_plan.json"), {}) or {}).get("seismic_summary") or {}
-    system = str(lp.get("system") or calc.get("system") or "")
-    grade, grade_basis = _grade(job, plan, calc)
+    system = str(lp.get("system") or (calc.get("seismic_calc") or {}).get("system") or calc.get("system") or "")
+    grade, grade_basis, other_grades, tube_grades = _grades(job, plan, calc)
     try:
         from pushover import india_materials as IM
-        grade = IM.normalize_grade(grade)
         ref = IM.reference_rotation(system)
     except Exception:                                            # noqa: BLE001
         ref = {"refs": []}
     kinds = sorted({str((m.get("inputs") or {}).get("kind") or "").lower() for m in calc.get("members") or []} - {""})
-    needed = ["material"]
+    needed = ["material"] + ["material@%s" % g for g in other_grades] + ["tube_material@%s" % g for g in tube_grades]
     if grade in IS18168_GRADES:
         needed.append("overstrength")
-    if ref.get("refs"):
-        needed.append("deformation_capacity")
+    needed += ["overstrength@%s" % g for g in other_grades if g in IS18168_GRADES]
+    for i, r in enumerate((ref or {}).get("refs") or []):
+        doc, clause = _ref_doc_clause(r)
+        if clause:
+            needed.append("deformation_capacity" if i == 0 else "deformation_capacity@%s:%s" % (doc, clause))
     needed += ["spectrum", "damping"]
     zone = ind.get("zone") or lp.get("zone")
     return {"job": job, "name": calc.get("building") or os.path.basename(job), "jurisdiction": "india",
-            "system": system, "grade": grade, "grade_basis": grade_basis,
+            "system": system, "grade": grade, "grade_basis": grade_basis, "other_grades": other_grades,
+            "tube_grades": tube_grades,
             "zone": str(zone).upper() if zone else None, "Z": ind.get("Z", lp.get("Z")), "I": ind.get("I", lp.get("I")),
             "R": ind.get("R", lp.get("R")), "soil": _soil_roman(ind.get("soil") or lp.get("soil")),
             "reference_rotation": ref, "member_kinds": kinds,
@@ -153,28 +207,38 @@ def gather(job: str) -> dict:
 # The IS tables / clauses each group is read from. Collect fetches these itself, before any model is involved;
 # the model only transcribes what came back. (document key, lookup type, id, context neighbours)
 PLAN = {
-    "material":     [("IS2062", "exact_table", "Table 3", 1)],
-    "overstrength": [("IS18168", "exact_table", "Table 1", 1)],
-    "spectrum":     [("IS1893", "exact_table", "Table 3", 1), ("IS1893", "exact_section", "6.4.2", 1),
-                     ("IS1893", "exact_table", "Table 8", 1)],
-    "damping":      [("IS1893", "exact_section", "7.2.4", 0)],
+    "material":      [("IS2062", "exact_table", "Table 3", 1)],
+    "tube_material": [("IS1161", "", "Tensile Properties of Steel Tubes for Structural Purposes", 0)],
+    "overstrength":  [("IS18168", "exact_table", "Table 1", 1)],
+    "spectrum":      [("IS1893", "exact_table", "Table 3", 1), ("IS1893", "exact_section", "6.4.2", 1),
+                      ("IS1893", "exact_table", "Table 8", 1)],
+    "damping":       [("IS1893", "exact_section", "7.2.4", 0)],
 }
 
 
-def _ref_row(facts: dict) -> tuple[str, str, dict]:
-    """(document key, clause, row) of the system's joint-rotation reference (IS 800 Section 12; EBF: IS 18168)."""
+def _ref_doc_clause(r: dict) -> tuple:
+    m = re.search(r"(IS\s*18168|IS\s*800)\S*\s+(\d+(?:\.\d+)+)", str((r or {}).get("clause") or ""))
+    if not m:
+        return "", ""
+    return ("IS18168" if "18168" in m.group(1) else "IS800"), m.group(2)
+
+
+def _ref_row(facts: dict, qual: str | None = None) -> tuple[str, str, dict]:
+    """(document key, clause, row) of a joint-rotation reference (IS 800 Section 12; EBF: IS 18168). `qual` =
+    '<doc>:<clause>' picks a later reference of a combined system; None the first."""
     for r in (facts.get("reference_rotation") or {}).get("refs") or []:
-        m = re.search(r"(IS\s*18168|IS\s*800)\S*\s+(\d+(?:\.\d+)+)", str(r.get("clause") or ""))
-        if m:
-            return ("IS18168" if "18168" in m.group(1) else "IS800"), m.group(2), r
+        doc, clause = _ref_doc_clause(r)
+        if clause and (qual is None or qual == "%s:%s" % (doc, clause)):
+            return doc, clause, r
     return "", "", {}
 
 
 def plan_for(gid: str, facts: dict) -> list:
-    if gid == "deformation_capacity":
-        doc, clause, _r = _ref_row(facts)
+    base, qual = _split(gid)
+    if base == "deformation_capacity":
+        doc, clause, _r = _ref_row(facts, qual)
         return [(doc, "exact_section", clause, 0)] if clause else []
-    return PLAN.get(gid, [])
+    return PLAN.get(base, [])
 
 
 def prefetch(facts: dict, search) -> dict:
@@ -196,23 +260,33 @@ def _quality_note(grade: str) -> str:
 
 
 # The fields each group is transcribed into: (field, what to read, kind). kind: number.
+def _gr(gid: str, facts: dict) -> str:
+    return _split(gid)[1] if _split(gid)[1] and _split(gid)[0] in ("material", "tube_material", "overstrength") \
+        else (facts.get("grade") or "E250")
+
+
 def fields_for(gid: str, facts: dict) -> list:
-    g = facts.get("grade") or "E250"
-    gs = g[0] + " " + g[1:]                      # the table prints "E 250"
-    if gid == "material":
+    base, qual = _split(gid)
+    g = _gr(gid, facts)
+    if base == "material":
+        gs = g[0] + " " + g[1:]                      # the table prints "E 250"
         return [("fu_MPa", "Table 3, the row of grade '%s': Tensile Strength Rm, Min, MPa (column 4)" % gs, "number"),
                 ("fy_t16_MPa", "same row: Yield Stress ReH, Min, MPa, thickness <= 16 mm (column 5)", "number"),
                 ("fy_t40_MPa", "same row: ReH, thickness > 16 to 40 mm (column 6)", "number"),
                 ("fy_t100_MPa", "same row: ReH, thickness > 40 to 100 mm (column 7)", "number"),
                 ("fy_tgt100_MPa", "same row: ReH, thickness > 100 mm (column 8); null with quote of the cell if it is '-'", "number")]
-    if gid == "overstrength":
+    if base == "tube_material":
+        gs = "YSt " + g[3:]                          # the table prints "YSt 310"
+        return [("fu_MPa", "Table 2 Tensile Properties of Steel Tubes, the row of grade '%s': Tensile Strength Min MPa (column 3)" % gs, "number"),
+                ("fy_MPa", "same row: Yield Strength Min MPa (column 4)", "number")]
+    if base == "overstrength":
         return [("Ry", "Table 1, the row '%s (B0 or C)': Material Strength Uncertainty Factor Ry (column 3)" % g, "number"),
                 ("Ru", "same row: Material Strength Uncertainty Factor Ru (column 4)", "number")]
-    if gid == "deformation_capacity":
-        _d, clause, r = _ref_row(facts)
+    if base == "deformation_capacity":
+        _d, clause, r = _ref_row(facts, qual)
         return [("rotation_rad", "clause %s: the %s, in radians, the frame should be shown to withstand ('0.04 radians' -> 0.04)"
                  % (clause, r.get("what") or "joint rotation"), "number")]
-    if gid == "spectrum":
+    if base == "spectrum":
         soil = facts.get("soil") or "II"
         name = {"I": "Rocky or hard soil sites (Type I)", "II": "Medium stiff soil sites (Type II)", "III": "Soft soil sites (Type III)"}[soil]
         return [("Z", "Table 3 Seismic Zone Factor: Z in the column of zone %s" % (facts.get("zone") or "?"), "number"),
@@ -223,7 +297,7 @@ def fields_for(gid: str, facts: dict) -> list:
                 ("I_row_i", "Table 8 Importance Factor: I of row i) (important service and community buildings ...)", "number"),
                 ("I_row_ii", "Table 8: I of row ii) (residential or commercial buildings with occupancy more than 200 persons)", "number"),
                 ("I_row_iii", "Table 8: I of row iii) (all other buildings)", "number")]
-    if gid == "damping":
+    if base == "damping":
         return [("damping_percent", "7.2.4 Damping Ratio: the value of damping, in percent of critical damping", "number")]
     return []
 
@@ -233,20 +307,24 @@ OPTIONAL = {"material": {"fy_tgt100_MPa"}}          # a '-' cell in IS 2062 Tabl
 
 def row_for(gid: str, facts: dict) -> tuple[str, str]:
     """(variant, the row the model transcribes), decided from the building -- not by the model."""
-    g = facts.get("grade") or "E250"
-    if gid == "material":
+    base, qual = _split(gid)
+    g = _gr(gid, facts)
+    if base == "material":
+        basis = facts.get("grade_basis") if not qual else "a further grade of the package's members (design/calc_package.json)"
         return "material", "IS 2062 (Part 1):2025 Table 3 'Mechanical Properties', grade %s (%s): Rm and ReH by thickness -- %s" % (
-            g, facts.get("grade_basis") or "", _quality_note(g))
-    if gid == "overstrength":
+            g, basis or "", _quality_note(g))
+    if base == "tube_material":
+        return "tube_material", "IS 1161:2014 Table 2 'Tensile Properties of Steel Tubes for Structural Purposes', grade YSt %s (tube members of the package)" % g[3:]
+    if base == "overstrength":
         return "overstrength", "IS 18168:2023 Table 1 'Material Strength Uncertainty Factors Ry and Ru', the row '%s (B0 or C)'" % g
-    if gid == "deformation_capacity":
-        doc, clause, r = _ref_row(facts)
+    if base == "deformation_capacity":
+        doc, clause, r = _ref_row(facts, qual)
         return "deformation_capacity", "%s %s: %s for the system '%s' (REFERENCE ONLY -- not an acceptance limit)" % (
             rag.TITLES.get(doc, doc), clause, r.get("what") or "joint rotation", facts.get("system") or "")
-    if gid == "spectrum":
+    if base == "spectrum":
         return "spectrum", "IS 1893 (Part 1):2016 Table 3 (zone %s), 6.4.2 b) response spectrum method (soil type %s), Table 8 (importance factor rows)" % (
             facts.get("zone") or "?", facts.get("soil") or "?")
-    if gid == "damping":
+    if base == "damping":
         return "damping", "IS 1893 (Part 1):2016 7.2.4 Damping Ratio"
     return gid, gid
 
@@ -330,7 +408,7 @@ def transcribe(gid: str, facts: dict, passages: list, conn: dict, em, trace) -> 
     """One group. -> (fields {name: value}, problems {name: why}). At most 3 model calls, no tools."""
     variant, row = row_for(gid, facts)
     fields = fields_for(gid, facts)
-    optional = OPTIONAL.get(gid, set())
+    optional = OPTIONAL.get(_split(gid)[0], set())
     if not passages:
         return {}, {f: "no passage was returned for this table / clause (%s)" % ", ".join("%s %s" % (d, q) for d, h, q, n in plan_for(gid, facts))
                     for f, _w, _k in fields if f not in optional}
@@ -395,6 +473,8 @@ def _source(gid: str, facts: dict, passages: list) -> str:
     pages = sorted({str(p["page"]) for p in passages if p.get("page") not in (None, "")}, key=lambda x: (len(x), x))
     ids = []
     for doc, how, q, nb in plan_for(gid, facts):
+        if _split(gid)[0] == "tube_material":
+            q = "Table 2"                                 # fetched by its title; cited by its id
         ids.append("%s %s%s" % (rag.TITLES.get(doc, doc), "" if q.startswith("Table") else "cl. ", q))
     span = "-".join(pages[:1] + pages[-1:]) if len(pages) > 1 else (pages[0] if pages else "?")
     return "%s, p. %s" % ("; ".join(ids), span)
@@ -410,20 +490,24 @@ def assemble(gid: str, facts: dict, got: dict, passages: list) -> dict:
     g["source"] = _source(gid, facts, passages)
     g["quotes"] = quotes
     g["basis"] = row + " -- transcribed by `snl collect` from the converted %s; every value carries the cell it was read from in `quotes`." % ", ".join(docs)
-    if gid == "material":
-        g["grade"] = facts.get("grade")
-        g["grade_basis"] = facts.get("grade_basis")
-    elif gid == "overstrength":
+    base, qual = _split(gid)
+    if base == "material":
+        g["grade"] = _gr(gid, facts)
+        g["grade_basis"] = facts.get("grade_basis") if not qual else "a further grade of the package's members"
+    elif base == "tube_material":
+        g["grade"] = _gr(gid, facts)
+        g["use"] = "fy / fu of the package's tube members (the HR design reads the same IS 1161 Table 2 row)"
+    elif base == "overstrength":
         g["use"] = ("reference: IS 18168 Ry / Ru are capacity-design factors. The NL expected-strength factor is an EOR "
                     "input (nl_plan.material.expected_strength_factor, default 1.0 = nominal), not taken from here.")
-    elif gid == "deformation_capacity":
-        _d, clause, r = _ref_row(facts)
+    elif base == "deformation_capacity":
+        _d, clause, r = _ref_row(facts, qual)
         g.update(clause=clause, what=r.get("what"), system=facts.get("system"),
                  use="REFERENCE ONLY (D7): reported beside the measured chord rotations; not an acceptance limit.")
-    elif gid == "spectrum":
+    elif base == "spectrum":
         g.update(zone=facts.get("zone"), soil=facts.get("soil"), I_package=facts.get("I"),
                  use="NL targets: DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g, never divided by R (D6).")
-    elif gid == "damping":
+    elif base == "damping":
         if isinstance(g.get("damping_percent"), (int, float)):
             g["damping_ratio"] = round(g["damping_percent"] / 100.0, 4)
         g["use"] = ("IS 1893 7.2.4: 5 % for estimating Ah (all methods). The NLRHA's inherent damping is a modelling "
@@ -474,7 +558,9 @@ def validate(groups: dict, needed: list, facts: dict | None = None) -> tuple[boo
             continue
         if not _source_ok(g):
             p.append("source must name a table / clause id AND a printed page")
-        if gid == "material":
+        base, qual = _split(gid)
+        grade = _gr(gid, facts)
+        if base == "material":
             for k in ("fu_MPa", "fy_t16_MPa", "fy_t40_MPa", "fy_t100_MPa"):
                 if not (_num(g.get(k)) and 150 <= g[k] <= 1000):
                     p.append("%s outside 150-1000 MPa" % k)
@@ -482,25 +568,34 @@ def validate(groups: dict, needed: list, facts: dict | None = None) -> tuple[boo
                 p.append("ReH must not rise with thickness")
             if _num(g.get("fu_MPa")) and _num(g.get("fy_t16_MPa")) and g["fu_MPa"] <= g["fy_t16_MPa"]:
                 p.append("fu <= fy")
-            if IM and facts.get("grade") in getattr(IM, "IS2062_TABLE3_REH", {}):
-                rep = IM.IS2062_TABLE3_REH[facts["grade"]]
+            if IM and grade in getattr(IM, "IS2062_TABLE3_REH", {}):
+                rep = IM.IS2062_TABLE3_REH[grade]
                 for k, v in zip(("fy_t16_MPa", "fy_t40_MPa", "fy_t100_MPa", "fy_tgt100_MPa"), rep):
                     if v is not None and _num(g.get(k)) and abs(g[k] - v) > 0.5:
-                        p.append("%s = %s differs from pushover/india_materials.py IS2062_TABLE3_REH %s (%s)" % (k, g[k], facts["grade"], v))
-        elif gid == "overstrength":
+                        p.append("%s = %s differs from pushover/india_materials.py IS2062_TABLE3_REH %s (%s)" % (k, g[k], grade, v))
+        elif base == "tube_material":
+            for k in ("fu_MPa", "fy_MPa"):
+                if not (_num(g.get(k)) and 150 <= g[k] <= 1000):
+                    p.append("%s outside 150-1000 MPa" % k)
+            if _num(g.get("fu_MPa")) and _num(g.get("fy_MPa")) and g["fu_MPa"] <= g["fy_MPa"]:
+                p.append("fu <= fy")
+            refv = (getattr(IM, "IS1161_TABLE2", {}) or {}).get(grade) if IM else None
+            if refv and _num(g.get("fy_MPa")) and _num(g.get("fu_MPa")) and (abs(g["fy_MPa"] - refv[0]) > 0.5 or abs(g["fu_MPa"] - refv[1]) > 0.5):
+                p.append("fy / fu = %s / %s differ from pushover/india_materials.py IS1161_TABLE2 %s %s" % (g["fy_MPa"], g["fu_MPa"], grade, refv))
+        elif base == "overstrength":
             for k in ("Ry", "Ru"):
                 if not (_num(g.get(k)) and 1.0 <= g[k] <= 2.0):
                     p.append("%s outside 1.0-2.0" % k)
-            ref = (getattr(IM, "IS18168_RY", {}) or {}).get(facts.get("grade")) if IM else None
+            ref = (getattr(IM, "IS18168_RY", {}) or {}).get(grade) if IM else None
             if ref is not None and _num(g.get("Ry")) and abs(g["Ry"] - ref) > 1e-6:
-                p.append("Ry = %s differs from pushover/india_materials.py IS18168_RY %s (%s)" % (g["Ry"], facts.get("grade"), ref))
-        elif gid == "deformation_capacity":
+                p.append("Ry = %s differs from pushover/india_materials.py IS18168_RY %s (%s)" % (g["Ry"], grade, ref))
+        elif base == "deformation_capacity":
             if not (_num(g.get("rotation_rad")) and 0 < g["rotation_rad"] <= 0.1):
                 p.append("rotation_rad outside (0, 0.1] rad")
-            ref = ((facts.get("reference_rotation") or {}).get("refs") or [{}])[0].get("value")
+            ref = _ref_row(facts, qual)[2].get("value")
             if ref is not None and _num(g.get("rotation_rad")) and abs(g["rotation_rad"] - ref) > 1e-9:
                 p.append("rotation_rad = %s differs from pushover/india_materials.py reference_rotation (%s)" % (g["rotation_rad"], ref))
-        elif gid == "spectrum":
+        elif base == "spectrum":
             if not (_num(g.get("Z")) and g["Z"] in (0.10, 0.16, 0.24, 0.36)):
                 p.append("Z not one of the Table 3 values 0.10 / 0.16 / 0.24 / 0.36")
             if IH and facts.get("zone") in getattr(IH, "ZONE_FACTOR_Z", {}) and _num(g.get("Z")) and abs(g["Z"] - IH.ZONE_FACTOR_Z[facts["zone"]]) > 1e-9:
@@ -525,7 +620,7 @@ def validate(groups: dict, needed: list, facts: dict | None = None) -> tuple[boo
                 p.append("Table 8 importance factors outside 1.0-2.0")
             elif _num(facts.get("I")) and facts["I"] not in rows and facts["I"] < min(rows):
                 p.append("the package's I = %s is below every Table 8 row %s" % (facts["I"], rows))
-        elif gid == "damping":
+        elif base == "damping":
             if not (_num(g.get("damping_percent")) and 0 < g["damping_percent"] <= 20):
                 p.append("damping_percent outside (0, 20]")
         probs[gid] = p
@@ -552,7 +647,8 @@ def _merge(template: dict, groups: dict, facts: dict, ok: bool) -> dict:
                                      "reads fy per section and thickness band from pushover/india_materials.py). Ry_expected is the "
                                      "EOR expected-strength factor (nl_plan.material.expected_strength_factor, default 1.0 = nominal); "
                                      "IS 18168 Ry is recorded under india_spec.overstrength as reference." % facts.get("grade")))
-    out["india_spec"] = {g: groups[g] for g in GROUP_ORDER if isinstance(groups.get(g), dict)}
+    order = list(facts.get("needed") or []) + [g for g in GROUP_ORDER if g not in (facts.get("needed") or [])]
+    out["india_spec"] = {g: groups[g] for g in order if isinstance(groups.get(g), dict)}
     out["verified"] = False                      # the hinge backbones: modelling assumptions, never read from an IS table
     out["spec_values_collected"] = bool(ok)
     return out
@@ -755,9 +851,10 @@ def mock_collect(facts: dict, fetched: dict | None = None) -> dict:
 
     def src(gid):
         return "MOCK (values from the repository's IS constants, not transcribed) -- " + _source(gid, facts, fetched.get(gid) or [])
-    g = facts.get("grade") or "E250"
     for gid in facts["needed"]:
-        if gid == "material":
+        base, qual = _split(gid)
+        g = _gr(gid, facts)
+        if base == "material":
             rep = IM.IS2062_TABLE3_REH.get(g)
             fu = {"E235": 360, "E250": 410, "E275": 430, "E300": 440, "E350": 490, "E410": 540, "E450": 570,
                   "E500": 580, "E550": 650, "E600": 700, "E650": 750}.get(g)
@@ -766,22 +863,27 @@ def mock_collect(facts: dict, fetched: dict | None = None) -> dict:
             out[gid] = {"fu_MPa": float(fu), "fy_t16_MPa": float(rep[0]), "fy_t40_MPa": float(rep[1]), "fy_t100_MPa": float(rep[2])}
             if rep[3] is not None:
                 out[gid]["fy_tgt100_MPa"] = float(rep[3])
-        elif gid == "overstrength":
+        elif base == "tube_material":
+            v = IM.IS1161_TABLE2.get(g)
+            if not v:
+                continue
+            out[gid] = {"fy_MPa": v[0], "fu_MPa": v[1]}
+        elif base == "overstrength":
             ry = IM.IS18168_RY.get(g)
             if ry is None:
                 continue
             out[gid] = {"Ry": ry, "Ru": {"E250": 1.2, "E275": 1.2, "E300": 1.1, "E350": 1.1}.get(g)}
-        elif gid == "deformation_capacity":
-            v = ((facts.get("reference_rotation") or {}).get("refs") or [{}])[0].get("value")
+        elif base == "deformation_capacity":
+            v = _ref_row(facts, qual)[2].get("value")
             if v is None:
                 continue
             out[gid] = {"rotation_rad": v}
-        elif gid == "spectrum":
+        elif base == "spectrum":
             soil = facts.get("soil") or "II"
             tc, c, floor = {"I": (0.40, 1.00, 0.25), "II": (0.55, 1.36, 0.34), "III": (0.67, 1.67, 0.42)}[soil]
             out[gid] = {"Z": IH.ZONE_FACTOR_Z.get(facts.get("zone") or "", facts.get("Z")), "Sa_plateau": 2.5, "Tc_s": tc,
                         "Sa_c": c, "Sa_floor": floor, "I_row_i": 1.5, "I_row_ii": 1.2, "I_row_iii": 1.0}
-        elif gid == "damping":
+        elif base == "damping":
             out[gid] = {"damping_percent": 5}
         else:
             continue

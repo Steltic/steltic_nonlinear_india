@@ -31,17 +31,18 @@ DOCUMENTS = {
     "IS18168": ("engineering_standards_IS18168", "IS 18168:2023 design and detailing of steel buildings for earthquake resistance (Table 1 Ry / Ru, overstrength, capacity design)"),
     "IS2062": ("engineering_standards_IS2062", "IS 2062 (Part 1):2025 hot rolled structural steel (Table 3 mechanical properties: fy / fu by grade and thickness)"),
     "IS808": ("engineering_standards_IS808", "IS 808:2021 hot rolled steel sections (dimensions and properties)"),
+    "IS1161": ("engineering_standards_IS1161", "IS 1161:2014 steel tubes for structural purposes (Table 2 tensile properties of the YSt grades)"),
     "IS875_P1": ("engineering_standards_IS875_P1", "IS 875 (Part 1) dead loads"),
     "IS875_P2": ("engineering_standards_IS875_P2", "IS 875 (Part 2):1987 imposed loads"),
 }
 # the canonical stem /healthz lists a converted document under, and what else it may have been converted as
 STEMS = {"IS1893": "IS_1893_Part_1_2016", "IS800": "IS_800_2007", "IS18168": "IS_18168_2023", "IS2062": "IS_2062_Part_1_2025",
-         "IS808": "IS_808_2021", "IS875_P1": "IS_875_Part_1_2026", "IS875_P2": "IS_875_Part_2_1987"}
+         "IS808": "IS_808_2021", "IS1161": "IS_1161_2014", "IS875_P1": "IS_875_Part_1_2026", "IS875_P2": "IS_875_Part_2_1987"}
 _STEM_RE = {"IS1893": r"^IS[_\-]?1893", "IS800": r"^IS[_\-]?800(?!\d)", "IS18168": r"^IS[_\-]?18168", "IS2062": r"^IS[_\-]?2062",
-            "IS808": r"^IS[_\-]?808(?!\d)", "IS875_P1": r"^IS[_\-]?875[_\-]?(?:Part[_\-]?|P)1(?!\d)",
+            "IS808": r"^IS[_\-]?808(?!\d)", "IS1161": r"^IS[_\-]?1161(?!\d)", "IS875_P1": r"^IS[_\-]?875[_\-]?(?:Part[_\-]?|P)1(?!\d)",
             "IS875_P2": r"^IS[_\-]?875[_\-]?(?:Part[_\-]?|P)2(?!\d)"}
 TITLES = {"IS1893": "IS 1893 (Part 1):2016", "IS800": "IS 800:2007", "IS18168": "IS 18168:2023", "IS2062": "IS 2062 (Part 1):2025",
-          "IS808": "IS 808:2021", "IS875_P1": "IS 875 (Part 1)", "IS875_P2": "IS 875 (Part 2):1987"}
+          "IS808": "IS 808:2021", "IS1161": "IS 1161:2014", "IS875_P1": "IS 875 (Part 1)", "IS875_P2": "IS 875 (Part 2):1987"}
 STATUS_TTL = 60.0
 _status_cache: tuple | None = None
 
