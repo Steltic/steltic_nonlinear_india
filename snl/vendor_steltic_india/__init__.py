@@ -1,4 +1,4 @@
-"""Shared India modules vendored BYTE-IDENTICALLY from steltic_india (work/hr/steel_engine) -- WP1.14.
+"""Shared India modules vendored BYTE-IDENTICALLY from steltic_india (steltic_india/steel_engine; commit in VENDORED_FROM.md) -- WP1.14.
 
 Do not edit here: fix in steltic_india and re-vendor.  `scripts/check_vendored.py` sha256-compares every file
 against the HR copy and fails on drift.  The modules import each other by bare name (india_loads, india_seismic,
@@ -13,7 +13,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = ("india_loads.py", "india_seismic.py", "india_units.py", "india_wind_tables.py", "india_combos.py",
          "india_is18168.py", "india_seismic_gates.py", "india_omega_is18168.py", "preflight.py")
-HR_SOURCE_COMMIT = "steltic_india (work/hr) -- see scripts/check_vendored.py"
+HR_SOURCE_COMMIT = "3ec586a"   # steltic_india fix/2026-09-review (0.3.0 + O1/O2/O3, GOLD-1..7, AUD-1..4, GOLD-764, GOLD-COLL)
 
 
 def shared(name):

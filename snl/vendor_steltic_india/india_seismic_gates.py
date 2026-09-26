@@ -219,16 +219,49 @@ def parse_systems(text, *, imf_as_smrf=False) -> list:
 
 
 def resolve_system_R(cfg) -> dict:
-    """Table 9 R for the declared system(s); R = min over components unless R_x/R_y given."""
+    """Table 9 R for the declared system(s).
+
+    R_table9 = min over all components (the default design R for both directions).  H06: per-direction R is
+    honoured when declared -- cfg['R_x'] / cfg['R_y'] (or seis / seismic_summary R_x, R_y).  Each declared value
+    is validated against the Table 9 R of that direction's system (cfg['system_x'] / cfg['system_y'] when given,
+    else every declared component): a declared R above that value is refused (errors[], the Table 9 value is
+    used), a lower one is kept (conservative).  R_x / R_y in the result are the values ESM and RSA use."""
     cfg = cfg or {}
     txt = system_text(cfg)
-    comps = parse_systems(txt, imf_as_smrf=bool(cfg.get("imf_as_smrf")))
+    imf = bool(cfg.get("imf_as_smrf"))
+    comps = parse_systems(txt, imf_as_smrf=imf)
     rows = [TABLE9_STEEL[c] for c in comps if c in TABLE9_STEEL]
     nob = [c.split(":", 1)[1] for c in comps if c.startswith("nobasis:")]
     R = min((r["R"] for r in rows), default=None)
-    return {"system_text": txt, "components": comps, "table9_rows": [r["row"] for r in rows],
-            "R_table9": R, "no_basis": nob,
-            "cite": "; ".join("%s R = %.1f" % (r["row"], r["R"]) for r in rows) or None}
+    _, ss = _summary(cfg)
+    out = {"system_text": txt, "components": comps, "table9_rows": [r["row"] for r in rows],
+           "R_table9": R, "no_basis": nob,
+           "cite": "; ".join("%s R = %.1f" % (r["row"], r["R"]) for r in rows) or None,
+           "errors": []}
+    for d in ("x", "y"):
+        dsys = cfg.get("system_" + d)
+        dcomps = parse_systems(dsys, imf_as_smrf=imf) if dsys else comps
+        drows = [TABLE9_STEEL[c] for c in dcomps if c in TABLE9_STEEL]
+        Rt = min((r["R"] for r in drows), default=R)
+        decl = None
+        for src in (cfg, _seis(cfg), ss):
+            v = _f(src.get("R_" + d))
+            if v is not None:
+                decl = v
+                break
+        use, basis = R, "min over components (Table 9)"
+        if decl is not None:
+            if Rt is not None and decl > Rt + 1e-9:
+                out["errors"].append("R_%s = %.2f exceeds the IS 1893 Table 9 value %.2f for the %s-direction system %s"
+                                     % (d, decl, Rt, d.upper(), "/".join(dcomps) or "?"))
+                use, basis = Rt, "declared R_%s refused (> Table 9); Table 9 value of the %s-direction system" % (d, d.upper())
+            else:
+                use, basis = decl, "declared R_%s (<= Table 9 %s for %s)" % (d, Rt, "/".join(dcomps) or "?")
+        out["R_" + d] = use
+        out["R_%s_table9" % d] = Rt
+        out["R_%s_declared" % d] = decl
+        out["R_%s_basis" % d] = basis
+    return out
 
 
 def declared_R(cfg):
@@ -316,6 +349,8 @@ def validate_R(cfg) -> list:
                         (R, Rt, "/".join(info["components"]))))
         elif R < Rt - 1e-9:
             out.append(("WARN", "R = %.2f is below the Table 9 value %.2f (conservative)" % (R, Rt)))
+    for msg in resolve_system_R(cfg).get("errors") or []:          # H06: per-direction R_x / R_y
+        out.append(("ERROR", msg))
     return out
 
 
@@ -695,16 +730,16 @@ def _walk_strings(o, path="", acc=None):
 
 
 def example_label_hits(*objs) -> list:
-    """(path, text) of cite/_label/source strings matching the EXAMPLE regex."""
+    """(path, text) of cite/_label/source/basis strings matching the EXAMPLE regex.  H32: free-text note leaves
+    ('note', 'notes', '*_note', '*_notes') are exempt -- a note may say "EXAMPLE EOR json not used"; only the
+    provenance leaves (cite, label, source, basis) are scanned."""
     hits = []
     for o in objs:
         for p, s in _walk_strings(o):
-            leaf = p.rsplit(".", 1)[-1].lower()
-            if any(t in leaf for t in ("cite", "cited", "_label", "label", "source", "basis", "note")) \
-                    and EXAMPLE_RE.search(s):
-                # "found:false ... example" free notes are allowed only when not a cite/label/source
-                if leaf in ("note",) and "cite" not in p.lower():
-                    continue
+            leaf = re.sub(r"(\[\d+\])+$", "", p.rsplit(".", 1)[-1]).lower()
+            if leaf in ("note", "notes") or leaf.endswith("_note") or leaf.endswith("_notes"):
+                continue
+            if any(t in leaf for t in ("cite", "label", "source", "basis")) and EXAMPLE_RE.search(s):
                 hits.append((p, s[:120]))
     return hits
 
@@ -799,6 +834,25 @@ def irregularity_reasons(cfg, pkg=None) -> list:
     return out
 
 
+FLEX_EOR_KEYS = ("analysis_ref", "results", "source", "cite")
+
+
+def flexible_diaphragm_eor(cfg):
+    """H01: a verified EOR record of the Table 5(ii) flexible-diaphragm 3D dynamic analysis.
+    cfg['flexible_diaphragm_eor'] = {analysis_ref, results, source, cite}, all four non-empty.
+    Returns (record | None, missing keys).  The private cfg key '_flexible_diaphragm_run' is NOT evidence."""
+    rec = (cfg or {}).get("flexible_diaphragm_eor")
+    if not isinstance(rec, dict):
+        return None, list(FLEX_EOR_KEYS) if rec is not None else []
+
+    def _empty(v):
+        return v is None or (isinstance(v, (str, list, tuple, dict)) and not (v.strip() if isinstance(v, str) else v))
+    miss = [k for k in FLEX_EOR_KEYS if _empty(rec.get(k))]
+    if miss:
+        return None, miss
+    return dict(rec, basis="EOR-documented"), []
+
+
 def analysis_findings(cfg, pkg) -> list:
     out = []
     ok_esm, why = esm_permitted(cfg, pkg)
@@ -818,9 +872,29 @@ def analysis_findings(cfg, pkg) -> list:
                            % (d, _f(s["VB_scaled_kN"]), _f(s["VBbar_kN"])))
             if isinstance(s, dict) and _f(s.get("mass_participation")) is not None and _f(s["mass_participation"]) < 0.90:
                 out.append("RSA %s: modal mass %.1f %% < 90 %% (7.7.5.2)" % (d, 100 * _f(s["mass_participation"])))
-    if an.get("reentrant_flexible_required") and not an.get("flexible_diaphragm_run"):
-        out.append("Amd 2 Table 5(ii): re-entrant plan requires a flexible-diaphragm 3D dynamic analysis in "
-                   "addition to the rigid case -- not performed")
+    if an.get("reentrant_flexible_required"):
+        # H01: the flag counts only when an engine flexible-diaphragm run recorded it, or with a complete EOR record
+        basis = an.get("flexible_diaphragm_basis")
+        eor = an.get("flexible_diaphragm_eor") if isinstance(an.get("flexible_diaphragm_eor"), dict) else {}
+        ok_flex = an.get("flexible_diaphragm_run") is True and (
+            basis == "engine" or (basis == "EOR-documented" and all(eor.get(k) for k in FLEX_EOR_KEYS)))
+        if not ok_flex:
+            eng_err = an.get("flexible_diaphragm_engine_error")
+            out.append("Amd 2 Table 5(ii): re-entrant plan requires a flexible-diaphragm 3D dynamic analysis in "
+                       "addition to the rigid case -- not performed (no engine run and no complete "
+                       "cfg['flexible_diaphragm_eor'] {analysis_ref, results, source, cite})"
+                       + ("; engine run: %s" % eng_err if eng_err else ""))
+    fd = an.get("flexible_diaphragm") if isinstance(an.get("flexible_diaphragm"), dict) else {}
+    if an.get("flexible_diaphragm_engine_error") and not an.get("reentrant_flexible_required"):
+        out.append("flexible-diaphragm analysis requested (cfg['flexible_diaphragm_analysis']) but not run: %s"
+                   % an["flexible_diaphragm_engine_error"])
+    if an.get("flexible_diaphragm_basis") == "engine":
+        # X01: the engine run counts only with its own 7.7.5.2 / 7.7.3.1 / drift records evaluated and passing
+        for c in fd.get("checks") or []:
+            if isinstance(c, dict) and c.get("ok") is not True:
+                out.append("Table 5(ii) flexible-diaphragm run: %s %s (%s)" % (
+                    c.get("name"), "fails" if c.get("ok") is False else "not evaluated",
+                    c.get("reason") or "value %s, limit %s" % (c.get("value"), c.get("limit"))))
     return out
 
 
@@ -876,8 +950,26 @@ def occupancy_findings(cfg) -> list:
     if I is None:
         return ["I not declared"]
     if I + 1e-9 < r["I"]:
-        return ["I = %.2f is below the Table 8 value %.2f (%s)" % (I, r["I"], r.get("row"))]
+        # H20: the matched keyword / flag and the ruling label (R2) are part of the message
+        via = (" via %s" % r["matched_keyword"]) if r.get("matched_keyword") else ""
+        return ["I = %.2f is below the %s value %.2f%s" % (
+            I, "Table 8" if str(r.get("row") or "").startswith("Table 8") else "resolved", r["I"],
+            " (%s%s)" % (r.get("row"), via))]
     return []
+
+
+def occupancy_warnings(cfg) -> list:
+    """H20: non-blocking Table 8 notes (storage use without food_storage declared, keyword-only row (i),
+    residential precedence over an institution name)."""
+    try:
+        from india_seismic import importance_factor
+    except Exception:
+        return []
+    occ = (cfg or {}).get("occupancy")
+    if occ is None:
+        _, ss = _summary(cfg or {})
+        occ = ss.get("occupancy")
+    return list(importance_factor(occ).get("warnings") or [])
 
 
 def _R_system_agreement(cfg, pkg) -> list:
@@ -973,6 +1065,116 @@ def _screen_findings(pkg, cfg_hint=None) -> list:
 # ---------------------------------------------------------------------------
 # THE authority
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------------
+# RR-BUG-4: reasons ordered by class and per-check element rows grouped, so a cap never drops a blocking class
+# ---------------------------------------------------------------------------------------------------------------
+REASON_CLASSES = ("analysis", "irregularity", "gates", "evidence", "system", "other", "elements")
+_RC_ELEM_AT = re.compile(r"^(?P<pre>.*?)@(?P<el>(?:base-|conn-)?e\d+)\b(?P<post>.*)$")
+_RC_ELEM_ENTRY = re.compile(r"^(?P<kind>member|connection|anchorage|hold_down|collector|schedule|secondary_member|"
+                            r"gantry girder|7\.11\.2/7\.11\.3) '(?P<id>[^']*)' / (?P<name>.*?): (?P<msg>.*)$")
+_RC_GROUPED = re.compile(r"^check .* on \d+ \S+ \(e\.g\. ")      # a row summarize_reasons already grouped
+_RC_RULES = (
+    ("irregularity", re.compile(r"Table 5|Table 6|irregular|re-?entrant|flexible.diaphragm|7\.6\.4|torsion", re.I)),
+    ("gates", re.compile(r"\bgate\b|capacity_design|FAILS|across.wind|dynamic_wind|ponding|composite_design", re.I)),
+    ("analysis", re.compile(r"analysis|7\.7\.1|\bRSA\b|\bESM\b|modal|drift|calc_package|collector / chord|"
+                            r"crane present|deformation.compatibility|combination|cases absent|reversal", re.I)),
+    ("evidence", re.compile(r"consistency|retrieval|provenance|grounding|EOR|evidence|found:false without|"
+                            r"US-residue|residue|example/placeholder|rag\b", re.I)),
+    ("system", re.compile(r"Table 9|Table 8|system|zone|\bR\b|\bI\b = |occupancy|banned|importance", re.I)),
+)
+
+
+def reason_class(r) -> str:
+    """RR-BUG-4: class of one design_status reason (REASON_CLASSES); per-element rows are 'elements'."""
+    s = str(r)
+    if _RC_ELEM_AT.match(s) or _RC_ELEM_ENTRY.match(s) or _RC_GROUPED.match(s):
+        return "elements"
+    for cls, rx in _RC_RULES:
+        if rx.search(s):
+            return cls
+    return "other"
+
+
+def summarize_reasons(reasons, limit=200) -> dict:
+    """RR-BUG-4: design_status reasons -> {reasons, n_reasons, n_listed, classes, truncated}.
+
+    Order: analysis / irregularity / gates / evidence / system / other first (in their original order within a
+    class), then the per-check element rows grouped as 'check X fails on N elements (e.g. e12, e40, e41, ...)'.
+    n_reasons is the full (ungrouped) count; a cap at ``limit`` never drops a class -- every class keeps at least its
+    first row, and the cut is reported in a closing line."""
+    reasons = [str(r) for r in (reasons or [])]
+    heads = {c: [] for c in REASON_CLASSES}
+    groups, order = {}, []
+    for r in reasons:
+        cls = reason_class(r)
+        if cls != "elements":
+            if r not in heads[cls]:
+                heads[cls].append(r)
+            continue
+        m = _RC_ELEM_AT.match(r)
+        if _RC_GROUPED.match(r):
+            key, el, m = ("grouped", r), None, None
+            groups.setdefault(key, {"first": r, "els": [None], "msg": None})
+            if key not in order:
+                order.append(key)
+            continue
+        if m:
+            key = ("at", m.group("pre"), m.group("post"))
+            el = m.group("el")
+        else:
+            m = _RC_ELEM_ENTRY.match(r)
+            key = ("entry", m.group("kind"), m.group("name"), re.sub(r"-?\d+(\.\d+)?(e[-+]?\d+)?", "#", m.group("msg")))
+            el = m.group("id")
+        if key not in groups:
+            groups[key] = {"first": r, "els": [], "msg": (m.group("msg") if key[0] == "entry" else None)}
+            order.append(key)
+        if el not in groups[key]["els"]:
+            groups[key]["els"].append(el)
+    elem_rows = []
+    for key in order:
+        g = groups[key]
+        n = len(g["els"])
+        if n == 1:
+            elem_rows.append(g["first"])
+            continue
+        eg = ", ".join(g["els"][:3]) + (", ..." if n > 3 else "")
+        if key[0] == "at":
+            elem_rows.append("check %s%s on %d elements (e.g. %s)" % (key[1], key[2], n, eg))
+        else:
+            elem_rows.append("check %s / %s fails on %d %ss (e.g. %s): %s" % (key[1], key[2], n, key[1], eg, g["msg"]))
+    heads["elements"] = elem_rows
+    ordered = [r for c in REASON_CLASSES for r in heads[c]]
+    classes = {c: len(heads[c]) for c in REASON_CLASSES if heads[c]}
+    n_raw = {c: 0 for c in REASON_CLASSES}
+    for r in reasons:
+        n_raw[reason_class(r)] += 1
+    out, truncated = ordered, False
+    if limit is not None and len(ordered) > limit:
+        truncated = True
+        keep = set(id(heads[c][0]) for c in REASON_CLASSES if heads[c])   # the first row of every class survives
+        room = max(limit - len(keep), 0)
+        sel = []
+        for r in ordered:
+            if id(r) in keep:
+                sel.append(r)
+            elif room > 0:
+                sel.append(r)
+                room -= 1
+        out = sel + ["... %d more reason rows not listed here (n_reasons = %d; see STATUS.engine.md)"
+                     % (len(ordered) - len(sel), len(reasons))]
+    return {"reasons": out, "n_reasons": len(reasons), "n_listed": len(out), "truncated": truncated,
+            "classes": classes, "classes_raw": {c: v for c, v in n_raw.items() if v}}
+
+
+def status_record(st, limit=200) -> dict:
+    """RR-BUG-4: the design_status record stored in the package / returned by the pipeline -- ordered and grouped
+    reasons (summarize_reasons), the full count and the reason classes."""
+    sm = summarize_reasons(st.get("reasons") or [], limit=limit)
+    return {"status": st["status"], "n_reasons": sm["n_reasons"], "reasons": sm["reasons"],
+            "reason_classes": sm["classes_raw"], "reasons_truncated": sm["truncated"], "authority": st["authority"],
+            "warnings": list(st.get("warnings") or [])}
+
+
 def design_status(cfg, pkg=None, *, job_dir=None, report_html=None) -> dict:
     """Single COMPLETE authority (spec 0.2).  Returns
     {status: complete|partial|example_only, complete_allowed, reasons, example_hits, ...}."""
@@ -1035,12 +1237,18 @@ def design_status(cfg, pkg=None, *, job_dir=None, report_html=None) -> dict:
         reasons += _grounding_findings(pk, job_dir)
         reasons += provenance_findings(pk, job_dir) if job_dir else [
             "job folder unknown -- provenance hashes not verified"]
-        if job_dir:
-            try:
-                import consistency as _CC
+        # H30: one completion authority -- the consistency rules that are free of false positives also gate
+        try:
+            import consistency as _CC
+            if job_dir:
                 reasons += ["consistency: " + s for s in _CC.script_grep_issues(job_dir)]
-            except Exception:
-                pass
+            reasons += ["consistency: " + s for s in _CC.literal_dc_issues(pk)]
+            plan_ = _CC.plan_of(cfg, pk, job_dir)
+            if job_dir:
+                reasons += ["consistency: " + s for s in _CC.rag_evidence_issues(plan_, job_dir)]
+            reasons += ["consistency: " + s for s in _CC.retrieval_assumption_issues(plan_, cfg)]
+        except Exception as ex:
+            reasons.append("consistency rules unavailable: %s" % ex)
         if report_html is None and job_dir and os.path.exists(os.path.join(job_dir, "report.html")):
             report_html = os.path.join(job_dir, "report.html")
     if report_html:
@@ -1059,7 +1267,12 @@ def design_status(cfg, pkg=None, *, job_dir=None, report_html=None) -> dict:
             seen.add(r)
             uniq.append(r)
     status = "example_only" if ex_hits else ("complete" if not uniq else "partial")
-    return {"status": status, "complete_allowed": status == "complete", "reasons": uniq,
+    try:                                                # AUD-3 / AUD-4: non-blocking findings (never a reason)
+        import consistency as _CCw
+        warns = _CCw.package_warnings(cfg, pk)
+    except Exception as ex:
+        warns = ["package warnings unavailable: %s" % ex]
+    return {"status": status, "complete_allowed": status == "complete", "reasons": uniq, "warnings": warns,
             "example_hits": ex_hits, "zone": zone_of(cfg), "R": resolve_R(cfg),
             "system": resolve_system_R(cfg),
             "authority": "india_seismic_gates.design_status (spec WP0.2)"}

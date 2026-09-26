@@ -116,8 +116,20 @@ def normalize_sfrs(sfrs_type) -> Optional[str]:
 
 
 def corpus_root(root: Optional[str] = None) -> Path:
+    """L-08: explicit root, else $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling checkout
+    ``engineering_rag_india`` next to the repo (this file may sit in steel_engine/ or in a vendored copy
+    one level deeper), else the historical /workspace path."""
     env = os.environ.get("INDIA_CORPUS_ROOT") or os.environ.get("ENGINEERING_RAG_INDIA")
-    return Path(root or env or DEFAULT_CORPUS_ROOT)
+    if root or env:
+        return Path(root or env)
+    here = Path(__file__).resolve()
+    for up in (here.parents[2], here.parents[3] if len(here.parents) > 3 else None):
+        if up is None:
+            continue
+        cand = up / "engineering_rag_india"
+        if (cand / "scripts" / "retrieval.py").is_file():
+            return cand
+    return Path(DEFAULT_CORPUS_ROOT)
 
 
 def corpus_available(root: Optional[str] = None) -> bool:

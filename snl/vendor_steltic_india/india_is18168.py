@@ -91,17 +91,106 @@ def _zone(z):
         return None
 
 
-def applies(system, zone, *, opt_in=False) -> dict:
-    """{applies, mandatory, system, zone, cite}.  Mandatory in Zones III-V for SMRF/SCBF/EBF (1.2/1.3); in Zone II
-    only when the job opts in (cfg['apply_is18168']).  Other systems (OMRF/OCBF/...) are outside its scope (1.3)."""
+import re as _re
+
+# cl. 1.2 (a)-(c) occupancy list (ruling R8): residential / educational / institutional; office and business;
+# community, utility and lifeline buildings required for disaster management.  Word-boundary keyword match on the
+# job's occupancy record (cfg['occupancy'] = {use | uses} as for IS 1893 Table 8, or a list of such records).
+OCCUPANCY_1_2_KEYWORDS = (
+    "residential", "residence", "residences", "apartment", "apartments", "housing", "house", "flats", "hostel",
+    "dormitory", "hotel", "educational", "education", "school", "college", "university", "institutional",
+    "institution", "hospital", "clinic", "nursing home", "healthcare", "office", "offices", "business", "bank",
+    "commercial", "community", "utility", "lifeline", "disaster", "emergency", "fire station", "police",
+    "telephone exchange", "power station", "water supply", "food storage")
+OCCUPANCY_OUTSIDE_1_2_KEYWORDS = (
+    "warehouse", "warehouses", "industrial", "factory", "storage", "shed", "workshop", "godown", "manufacturing",
+    "plant", "hangar", "mill")
+CITE_1_2_OCC = (DOC + " 1.2 (pdf p. 3): 'shall be adopted in the design of the following types of steel buildings "
+                "located in seismic zones III, IV or V ...: a) Residential, educational and institutional buildings; "
+                "b) Office and business buildings; and c) Community, utility and lifeline buildings required for "
+                "disaster management activities' (ruling R8)")
+
+
+def _has_word(text, kw):
+    """Word-boundary match that ignores negated occurrences ('non-residential', 'no food storage'; RR-BUG-1, the
+    same negation rule as the IS 1893 Table 8 importance factor)."""
+    from india_seismic import _negated
+    t = _re.sub(r"\s+", " ", _re.sub(r"[_/()\-]+", " ", text))
+    return any(not _negated(t, m.start()) for m in _re.finditer(r"\b%s\b" % _re.escape(kw), t))
+
+
+def occupancy_in_scope(occupancy) -> dict:
+    """cl. 1.2 occupancy test (ruling R8): {in_scope True | False | None, matched, basis}.  True when any use is in
+    the 1.2 list; False only when every recognised use is outside it (warehouse / industrial / storage ...);
+    None when the occupancy is not declared or not recognised (callers then apply IS 18168 - conservative)."""
+    recs = occupancy if isinstance(occupancy, (list, tuple)) else [occupancy]
+    uses = []
+    for o in recs:
+        if isinstance(o, dict):
+            uses += [str(u) for u in ([o.get("use")] + list(o.get("uses") or [])) if u]
+            if o.get("educational") or o.get("hospital"):
+                uses.append("educational" if o.get("educational") else "hospital")
+        elif o:
+            uses.append(str(o))
+    text = " ; ".join(uses).lower()
+    if not text.strip():
+        return {"in_scope": None, "matched": [], "basis": "occupancy not declared", "cite": CITE_1_2_OCC}
+    hit = [k for k in OCCUPANCY_1_2_KEYWORDS if _has_word(text, k)]
+    if hit:
+        return {"in_scope": True, "matched": hit, "basis": "occupancy %r in the 1.2 list" % text, "cite": CITE_1_2_OCC}
+    out = [k for k in OCCUPANCY_OUTSIDE_1_2_KEYWORDS if _has_word(text, k)]
+    if out:
+        return {"in_scope": False, "matched": out, "basis": "occupancy %r not in the 1.2 list" % text,
+                "cite": CITE_1_2_OCC}
+    return {"in_scope": None, "matched": [], "basis": "occupancy %r not recognised against the 1.2 list" % text,
+            "cite": CITE_1_2_OCC}
+
+
+def applies(system, zone, *, opt_in=False, occupancy=None, override=None) -> dict:
+    """{applies, mandatory, system, zone, cite, occupancy_basis}.  Ruling R8: mandatory in Zones III-V for
+    SMRF/SCBF/EBF (1.3) when the occupancy is in the 1.2 list; an occupancy outside the list (warehouse, industrial
+    ...) makes it optional; an undeclared / unrecognised occupancy is treated as in scope (conservative).
+    override = cfg['apply_is18168']: True applies it in any zone (Zone II opt-in, or an optional occupancy);
+    False is honoured except where 1.2 makes it mandatory (listed occupancy in Zones III-V: ignored with a note).
+    opt_in (legacy) is the same as override True.  Other systems (OMRF/OCBF/...) are outside its scope (1.3)."""
     sysn = normalize_system(system)
     z = _zone(zone)
     if sysn is None:
         return {"applies": False, "mandatory": False, "system": sysn, "zone": z,
                 "reason": "system not covered by IS 18168 (1.3: SMRF, SCBF, EBF only)", "cite": CITE_1_2}
-    mandatory = z in ("III", "IV", "V")
-    return {"applies": bool(mandatory or (opt_in and z == "II")), "mandatory": mandatory, "system": sysn,
-            "zone": z, "cite": CITE_1_2}
+    if opt_in and override is None:
+        override = True
+    occ = occupancy_in_scope(occupancy)
+    seismic = z in ("III", "IV", "V")
+    mandatory = seismic and occ["in_scope"] is not False
+    out = {"mandatory": mandatory, "system": sysn, "zone": z, "cite": CITE_1_2 + "; " + CITE_1_2_OCC,
+           "occupancy_in_scope": occ["in_scope"], "occupancy_basis": occ["basis"], "override": override}
+    if seismic and occ["in_scope"] is None:
+        out["note"] = "%s: IS 18168 applied in Zone %s (conservative; declare cfg['occupancy'] or " \
+                      "cfg['apply_is18168'])" % (occ["basis"], z)
+    if override is True:
+        out["applies"] = True
+        if not mandatory:
+            out["note"] = "applied by cfg['apply_is18168'] = True (%s)" % ("Zone II opt-in" if z == "II" else occ["basis"])
+    elif override is False:
+        if mandatory and occ["in_scope"] is True:
+            out["applies"] = True
+            out["note"] = ("cfg['apply_is18168'] = False ignored: 1.2 makes IS 18168 mandatory for %s in Zone %s"
+                           % (", ".join(occ["matched"]), z))
+        else:
+            out["applies"] = False
+            out["note"] = "not applied: cfg['apply_is18168'] = False (EOR override; %s)" % occ["basis"]
+    else:
+        out["applies"] = bool(mandatory)
+        if seismic and not mandatory:
+            out["note"] = "optional: %s (1.2); set cfg['apply_is18168'] = True to apply it" % occ["basis"]
+    return out
+
+
+def applies_for_cfg(system, zone, cfg) -> dict:
+    """applies() with the job's occupancy record and the cfg['apply_is18168'] override (ruling R8)."""
+    cfg = cfg or {}
+    return applies(system, zone, occupancy=cfg.get("occupancy"), override=cfg.get("apply_is18168"))
 
 
 def gamma_LL(LL_kNm2) -> float:
@@ -183,32 +272,62 @@ def stricter(is800_limit, is18168_limit, *, kind="max"):
     return min(is800_limit, is18168_limit) if kind == "max" else max(is800_limit, is18168_limit)
 
 
+TABLE2_SECTION_TYPES = ("I", "box")
+BOX_ROW_BASIS = ("IS 18168:2023 Table 2 gives closed-box rows only for braces (iii) and links (iv); no explicit row for a "
+                 "box %s -> the closed-box brace row (iii) 21.4/21.4 eps/sqrt(Ry) is applied as the conservative "
+                 "analogue (flagged; EOR to confirm)")
+
+
 def table2_limits(component, fy_MPa, Ry, Ca=None, box=False):
     """Table 2 (5.3) limiting outstanding-flange b/tf and web d/tw for an I-section (or closed box) of the lateral
-    load resisting system: component in beam | column | brace | link; Ca = Pu/(Py/gamma_m0) for columns."""
+    load resisting system: component in beam | column | brace | link; Ca = Pu/(Py/gamma_m0) for columns.
+    Box braces / links use their closed-box rows; a box column or beam (no explicit row) uses the closed-box
+    brace row (iii) and the record carries that basis (H05)."""
     eps = (250.0 / float(fy_MPa)) ** 0.5
     f = eps / float(Ry) ** 0.5
-    key = component + ("_box" if box and component in ("brace", "link") else "")
+    basis = None
+    if box and component in ("brace", "link"):
+        key = component + "_box"
+    elif box:
+        key, basis = "brace_box", BOX_ROW_BASIS % component
+    else:
+        key = component
     cf, cw = TABLE2[key]
-    if component == "column":
+    if component == "column" and not box:
         ca = float(Ca or 0.0)
         cw = 72.7 * (1 - 1.04 * ca) if ca <= 0.118 else max(24.9 * (2.68 - ca), 44.4)
-    return {"flange_b_over_tf": cf * f, "web_d_over_tw": cw * f, "eps": eps, "Ry": Ry, "Ca": Ca,
-            "clause": DOC + " Table 2 / 5.3", "cite": CITE_TABLE2}
+    out = {"flange_b_over_tf": cf * f, "web_d_over_tw": cw * f, "eps": eps, "Ry": Ry, "Ca": Ca,
+           "clause": DOC + " Table 2 / 5.3", "cite": CITE_TABLE2, "row": key}
+    if box:
+        out["cite"] = CITE_TABLE2 + "; closed box: flange width = flange width minus the web thicknesses"
+    if basis:
+        out["basis"] = basis
+    return out
 
 
 def table2_check(component, props, fy_MPa, Ry, Ca=None, member=None):
-    """{id, member, value, limit, dc, ok, clause, cite, flange, web} for a rolled I-section: b = bf/2 outstand,
-    d = clear web depth (d - 2 tf) as IS 800 Table 2 defines them."""
+    """{id, member, value, limit, dc, ok, clause, cite} per Table 2: rolled / built-up I-section b = bf/2 outstand,
+    d = clear web depth (d - 2 tf); closed box (H05) b = B - 2 tw between the webs, d = D - 2 tf between the flanges.
+    Section types without a Table 2 row (CHS, angle, channel, ...) return ok None with the reason."""
     p = props
-    box = p.get("section_type") not in ("I", None)
+    st = p.get("section_type")
+    if st not in TABLE2_SECTION_TYPES:
+        return {"id": "is18168_table2_%s" % component, "member": member, "value": None, "limit": None, "dc": None,
+                "ok": None, "found": False, "clause": DOC + " Table 2 / 5.3", "cite": CITE_TABLE2,
+                "reason": "no Table 2 row for section type %r" % st, "source": "steel_engine/india_is18168.py"}
+    box = st == "box"
     lim = table2_limits(component, fy_MPa, Ry, Ca=Ca, box=box)
     bf, tf, tw, d = float(p["bf"]), float(p["tf"]), float(p["tw"]), float(p["d"])
-    rf = (bf / 2.0) / tf
+    rf = ((bf - 2.0 * tw) / tf) if box else ((bf / 2.0) / tf)
     rw = (d - 2.0 * tf) / tw
     dcf, dcw = rf / lim["flange_b_over_tf"], rw / lim["web_d_over_tw"]
     dc = max(dcf, dcw)
-    return {"id": "is18168_table2_%s" % component, "member": member, "value": {"b/tf": round(rf, 2), "d/tw": round(rw, 2)},
-            "limit": {"b/tf": round(lim["flange_b_over_tf"], 2), "d/tw": round(lim["web_d_over_tw"], 2)},
-            "dc": dc, "ok": dc <= 1.0, "clause": lim["clause"], "cite": lim["cite"], "eps": lim["eps"], "Ry": Ry,
-            "Ca": Ca, "source": "steel_engine/india_is18168.py"}
+    out = {"id": "is18168_table2_%s" % component, "member": member, "value": {"b/tf": round(rf, 2), "d/tw": round(rw, 2)},
+           "limit": {"b/tf": round(lim["flange_b_over_tf"], 2), "d/tw": round(lim["web_d_over_tw"], 2)},
+           "dc": dc, "ok": dc <= 1.0, "clause": lim["clause"], "cite": lim["cite"], "eps": lim["eps"], "Ry": Ry,
+           "Ca": Ca, "section_type": st, "table2_row": lim["row"], "source": "steel_engine/india_is18168.py"}
+    if box:
+        out["flange_basis"] = "b = B - 2 tw (flange width minus the web thicknesses); d = D - 2 tf"
+    if lim.get("basis"):
+        out["basis"] = lim["basis"]
+    return out
