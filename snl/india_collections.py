@@ -1,10 +1,14 @@
 """Map agent RAG collection names → India corpus document stems.
 
-Corpus root: /workspace/engineering_rag_india (stem files under documents/standards/<STEM>/).
+Corpus root (NL-3): $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling engineering_rag_india checkout next
+to this repo, else the historical /workspace/engineering_rag_india -- the same resolution as steltic_india
+(india_omega_is18168.corpus_root, L-08). Stem files live under documents/standards/<STEM>/.
 Hosted rag_server may register collections as engineering_standards_IS*; this map is the
-canonical translation for local aliases, escalation, and docs.
+canonical translation for local aliases, escalation, and docs. IS 18168:2023 (owner ruling D2) is in the map.
 """
 from __future__ import annotations
+
+import os
 
 # collection alias (with or without engineering_standards_ prefix) -> stem
 COLLECTION_TO_STEM: dict[str, str] = {
@@ -44,6 +48,9 @@ COLLECTION_TO_STEM: dict[str, str] = {
     "IS_1893": "IS_1893_Part_1_2016",
     "IS1893_P1": "IS_1893_Part_1_2016",
     "IS1893_PART1": "IS_1893_Part_1_2016",
+    # Earthquake-resistant design and detailing of steel buildings (D2): Table 1 Ry / Ru, link rotation, Omega
+    "IS18168": "IS_18168_2023",
+    "IS_18168": "IS_18168_2023",
 }
 
 # Also accept full engineering_standards_* names
@@ -76,10 +83,38 @@ STEM_TO_COLLECTION: dict[str, str] = {
     "IS_875_Part_4_1987": "engineering_standards_IS875_P4",
     "IS_875_Part_5_1987": "engineering_standards_IS875_P5",
     "IS_1893_Part_1_2016": "engineering_standards_IS1893",
+    "IS_18168_2023": "engineering_standards_IS18168",
 }
 
-INDIA_CORPUS_ROOT = "/workspace/engineering_rag_india"
-INDIA_ALIASES_FILE = f"{INDIA_CORPUS_ROOT}/indexes/aliases.json"
+DEFAULT_CORPUS_ROOT = "/workspace/engineering_rag_india"
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _looks_like_corpus(path: str) -> bool:
+    return os.path.isfile(os.path.join(path, "scripts", "retrieval.py")) or os.path.isdir(os.path.join(path, "indexes"))
+
+
+def corpus_root(root: str | None = None) -> str:
+    """Explicit root, else $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling engineering_rag_india checkout
+    (next to this repo or one level up), else the historical /workspace path (HR L-08 pattern)."""
+    env = root or os.environ.get("INDIA_CORPUS_ROOT") or os.environ.get("ENGINEERING_RAG_INDIA")
+    if env:
+        return env
+    for up in (os.path.dirname(_REPO), os.path.dirname(os.path.dirname(_REPO))):
+        cand = os.path.join(up, "engineering_rag_india")
+        if _looks_like_corpus(cand):
+            return cand
+    return DEFAULT_CORPUS_ROOT
+
+
+def aliases_file(root: str | None = None) -> str:
+    """$RAG_ALIASES_FILE, else <corpus root>/indexes/aliases.json."""
+    return os.environ.get("RAG_ALIASES_FILE") or os.path.join(corpus_root(root), "indexes", "aliases.json")
+
+
+# Resolved at import (kept for callers of the old constants); call corpus_root() for a fresh value.
+INDIA_CORPUS_ROOT = corpus_root()
+INDIA_ALIASES_FILE = aliases_file()
 
 LOAD_COLLECTIONS = [
     "engineering_standards_IS875_P1",
@@ -98,6 +133,16 @@ DESIGN_COLLECTIONS = [
     "engineering_standards_IS4000",
     "engineering_standards_IS1161",
     "engineering_standards_IS2062",
+    "engineering_standards_IS18168",
+]
+
+# The IS documents an India NL job reads (collect / review / revise): IS 1893, IS 800, IS 18168, IS 2062 (+ IS 808).
+NL_COLLECTIONS = [
+    "engineering_standards_IS1893",
+    "engineering_standards_IS800",
+    "engineering_standards_IS18168",
+    "engineering_standards_IS2062",
+    "engineering_standards_IS808",
 ]
 
 
@@ -132,5 +177,5 @@ def is_india_spec_collection(name: str) -> bool:
     if stem_for_collection(name):
         return True
     return "engineering_standard" in c or any(
-        t in c for t in ("is800", "is808", "is875", "is1893", "is816", "is4000", "is1161", "is2062", "is9595")
+        t in c for t in ("is800", "is808", "is875", "is1893", "is816", "is4000", "is1161", "is2062", "is9595", "is18168")
     )

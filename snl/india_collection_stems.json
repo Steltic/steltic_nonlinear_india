@@ -1,5 +1,5 @@
 {
-  "corpus": "/workspace/engineering_rag_india",
+  "corpus": "resolved at run time: $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling engineering_rag_india checkout, else /workspace/engineering_rag_india",
   "collection_to_stem": {
     "IS800": "IS_800_2007",
     "IS_800": "IS_800_2007",
@@ -35,6 +35,8 @@
     "IS_1893": "IS_1893_Part_1_2016",
     "IS1893_P1": "IS_1893_Part_1_2016",
     "IS1893_PART1": "IS_1893_Part_1_2016",
+    "IS18168": "IS_18168_2023",
+    "IS_18168": "IS_18168_2023",
     "engineering_standards_IS800": "IS_800_2007",
     "engineering_standards_IS_800": "IS_800_2007",
     "engineering_standards_IS808": "IS_808_2021",
@@ -68,7 +70,45 @@
     "engineering_standards_IS1893": "IS_1893_Part_1_2016",
     "engineering_standards_IS_1893": "IS_1893_Part_1_2016",
     "engineering_standards_IS1893_P1": "IS_1893_Part_1_2016",
-    "engineering_standards_IS1893_PART1": "IS_1893_Part_1_2016"
+    "engineering_standards_IS1893_PART1": "IS_1893_Part_1_2016",
+    "engineering_standards_IS18168": "IS_18168_2023",
+    "engineering_standards_IS_18168": "IS_18168_2023",
+    "engineering_standard_IS800": "IS_800_2007",
+    "engineering_standard_IS_800": "IS_800_2007",
+    "engineering_standard_IS808": "IS_808_2021",
+    "engineering_standard_IS_808": "IS_808_2021",
+    "engineering_standard_IS816": "IS_816_1969",
+    "engineering_standard_IS_816": "IS_816_1969",
+    "engineering_standard_IS9595": "IS_9595_1996",
+    "engineering_standard_IS_9595": "IS_9595_1996",
+    "engineering_standard_IS4000": "IS_4000_1992",
+    "engineering_standard_IS_4000": "IS_4000_1992",
+    "engineering_standard_IS1161": "IS_1161_2014",
+    "engineering_standard_IS_1161": "IS_1161_2014",
+    "engineering_standard_IS2062": "IS_2062_Part_1_2025",
+    "engineering_standard_IS_2062": "IS_2062_Part_1_2025",
+    "engineering_standard_IS2062_P1": "IS_2062_Part_1_2025",
+    "engineering_standard_IS875_P1": "IS_875_Part_1_2026",
+    "engineering_standard_IS875_PART1": "IS_875_Part_1_2026",
+    "engineering_standard_IS_875_P1": "IS_875_Part_1_2026",
+    "engineering_standard_IS875_P2": "IS_875_Part_2_1987",
+    "engineering_standard_IS875_PART2": "IS_875_Part_2_1987",
+    "engineering_standard_IS_875_P2": "IS_875_Part_2_1987",
+    "engineering_standard_IS875_P3": "IS_875_Part_3_2015",
+    "engineering_standard_IS875_PART3": "IS_875_Part_3_2015",
+    "engineering_standard_IS_875_P3": "IS_875_Part_3_2015",
+    "engineering_standard_IS875_P4": "IS_875_Part_4_1987",
+    "engineering_standard_IS875_PART4": "IS_875_Part_4_1987",
+    "engineering_standard_IS_875_P4": "IS_875_Part_4_1987",
+    "engineering_standard_IS875_P5": "IS_875_Part_5_1987",
+    "engineering_standard_IS875_PART5": "IS_875_Part_5_1987",
+    "engineering_standard_IS_875_P5": "IS_875_Part_5_1987",
+    "engineering_standard_IS1893": "IS_1893_Part_1_2016",
+    "engineering_standard_IS_1893": "IS_1893_Part_1_2016",
+    "engineering_standard_IS1893_P1": "IS_1893_Part_1_2016",
+    "engineering_standard_IS1893_PART1": "IS_1893_Part_1_2016",
+    "engineering_standard_IS18168": "IS_18168_2023",
+    "engineering_standard_IS_18168": "IS_18168_2023"
   },
   "stem_to_collection": {
     "IS_800_2007": "engineering_standards_IS800",
@@ -83,7 +123,8 @@
     "IS_875_Part_3_2015": "engineering_standards_IS875_P3",
     "IS_875_Part_4_1987": "engineering_standards_IS875_P4",
     "IS_875_Part_5_1987": "engineering_standards_IS875_P5",
-    "IS_1893_Part_1_2016": "engineering_standards_IS1893"
+    "IS_1893_Part_1_2016": "engineering_standards_IS1893",
+    "IS_18168_2023": "engineering_standards_IS18168"
   },
   "load_collections": [
     "engineering_standards_IS875_P1",
@@ -100,6 +141,14 @@
     "engineering_standards_IS9595",
     "engineering_standards_IS4000",
     "engineering_standards_IS1161",
-    "engineering_standards_IS2062"
+    "engineering_standards_IS2062",
+    "engineering_standards_IS18168"
+  ],
+  "nl_collections": [
+    "engineering_standards_IS1893",
+    "engineering_standards_IS800",
+    "engineering_standards_IS18168",
+    "engineering_standards_IS2062",
+    "engineering_standards_IS808"
   ]
 }

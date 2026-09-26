@@ -31,7 +31,11 @@ import os
 from typing import Any
 
 JURISDICTION = "india"
-CORPUS_ROOT = "/workspace/engineering_rag_india"
+try:                                             # NL-3: $INDIA_CORPUS_ROOT, sibling checkout, else /workspace
+    from snl.india_collections import corpus_root as _corpus_root
+    CORPUS_ROOT = _corpus_root()
+except Exception:                                # pragma: no cover - snl always importable in this repo
+    CORPUS_ROOT = "/workspace/engineering_rag_india"
 PRIMARY_STEM = "IS_1893_Part_1_2016"
 DESIGN_STEM = "IS_800_2007"
 
