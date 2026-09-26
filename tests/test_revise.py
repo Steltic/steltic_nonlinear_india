@@ -71,8 +71,11 @@ def test_grounding_is_recorded_but_verified_is_never_flipped(tmp_path):
           "groups": {"beam_flexure": {"grounded": False, "status": "modelling assumption", "note": revise.HINGE_NOTE}},
           "clauses": {"7.11.1.1": {"grounded": True, "citation": "[IS 1893 (Part 1):2016 cl. 7.11.1.1, p. 22]"}}}
     out = revise.annotate_params(str(tmp_path), ev, log=lambda *a: None)
-    assert out == str(prm)
     got = json.loads(prm.read_text(encoding="utf-8"))
+    # the record carries a fingerprint of the modelling parameters, so the analysis run copying a plain params
+    # file back over this one does not lose the citation -- and a DIFFERENT parameter set cannot inherit it
+    from snl import grounding as _G
+    assert out["path"] == str(prm) and out["fingerprint"] == _G.fingerprint(got)
     assert got["verified"] is False, "retrieving a clause is not reconciling the numbers"
     assert got["grounding"]["clauses"]["7.11.1.1"] == "[IS 1893 (Part 1):2016 cl. 7.11.1.1, p. 22]"
     assert got["grounding"]["groups"] == {}                                   # nothing grounds a backbone on this fork
@@ -102,3 +105,30 @@ def test_without_a_standards_server_the_groups_are_still_labelled(monkeypatch):
     monkeypatch.delenv("RAG_API_URL", raising=False)
     ev = revise.probe(log=lambda *a: None)
     assert "engineering_rag_india" in ev["note"] and ev["clauses"] == {}
+
+
+def test_revise_patches_the_india_reports_in_place_and_records_the_state(monkeypatch):
+    """The whole step on a finished India job, against a fake IS corpus: the pushover report's banner is
+    replaced by the grounded block, the packages carry the state, no number moves, `verified` stays false."""
+    from test_review import FakeRAG, _Server, _rag_env
+    from snl import grounding as G, rag
+    job = india_nl_job.make()
+    open(os.path.join(job, "review.md"), "w", encoding="utf-8").write("# review\n")
+    before = open(os.path.join(job, "pushover", "pushover_report.html"), encoding="utf-8").read()
+    R = _Server(FakeRAG)
+    try:
+        _rag_env(R)
+        r = revise.run(job, log=lambda *a: None)
+    finally:
+        R.close(); os.environ.pop("RAG_API_URL", None); rag._status_cache = None
+    ev = json.load(open(r["evidence"], encoding="utf-8"))
+    assert ev["clauses"]["7.11.1.1"]["grounded"] and ev["params"]["fingerprint"]
+    assert all(g["status"] == "modelling assumption" for g in ev["groups"].values())
+    html = open(os.path.join(job, "pushover", "pushover_report.html"), encoding="utf-8").read()
+    assert html != before and 'data-provenance="grounded"' in html and "UNVERIFIED" not in html and "7.11.1.1" in html
+    pk = json.load(open(os.path.join(job, "pushover", "pushover_package.json"), encoding="utf-8"))
+    assert pk["params_state"] == G.GROUNDED and "7.11.1.1" in pk["params_clauses"]
+    lv = json.load(open(os.path.join(job, "nlrha", "MCE", "nlrha_package.json"), encoding="utf-8"))
+    assert lv["params_state"] == G.GROUNDED
+    prm = json.load(open(os.path.join(job, "pushover", "hinge_params_used.json"), encoding="utf-8"))
+    assert prm["verified"] is False and prm["beam_flexure"] == json.load(open(os.path.join(ROOT, "pushover", "hinge_params.json"), encoding="utf-8"))["beam_flexure"]

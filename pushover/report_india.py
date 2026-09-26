@@ -50,6 +50,24 @@ def _sha(path):
         return None
 
 
+def _state(prm, out):
+    try:
+        from snl import grounding as G
+        return G.state(prm, out)[0]
+    except Exception:
+        return None
+
+
+def _provenance(prm, out):
+    """The component-parameter provenance block (snl.grounding), marked so `snl revise` can replace it in place."""
+    try:
+        from snl import grounding as G
+        st, ev = G.state(prm, out)
+        return G.block_html(st, ev, prm)
+    except Exception:                                   # never lose a report over a provenance note
+        return ""
+
+
 def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None):
     b = pkg.basis
     ind = b.india or {}
@@ -70,7 +88,8 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
         fibre_eles=len((stats or {}).get("fibre_eles") or []), fibre_secs=(stats or {}).get("fibre_secs"),
         restrained_dofs=(stats or {}).get("restrained_zero_stiffness_dofs"),
         gravity=gtable, reference_rotation=ref, modal=modal_info,
-        params_verified=prm.get("verified"), brace_backbone_note="post-buckling backbone shape from literature placeholders",
+        params_verified=prm.get("verified"), params_state=_state(prm, out), spec_values_collected=bool(prm.get("spec_values_collected")),
+        brace_backbone_note="post-buckling backbone shape from literature placeholders",
         directions={},
     )
     for d, run in runs.items():
@@ -90,6 +109,7 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
          "<h1>Nonlinear static (pushover) analysis — information</h1>",
          "<p>%s · IS 1893 (Part 1):2016 + Amd 1–2 · IS 800:2007 · IS 2062 · generated %s</p>" % (html.escape(pkg.name), pkgj["generated"]),
          "<div class='stmt'>%s</div>" % IS_NL_STATEMENT,
+         _provenance(prm, out),
          "<div class='note'>Target displacement δ<sub>t</sub>: coefficient method (C0·C1·C2·Sa·Te²/4π²·g, ASCE 41 form — "
          "no IS procedure exists) with Sa(Te) from the IS 1893 <b>elastic</b> spectrum: IS-DBE = (Z/2)·I·Sa/g, "
          "IS-MCE = Z·I·Sa/g (R not applied). Z = %s, I = %s, soil %s. Mass and gravity = IS seismic weight W = %s kN "

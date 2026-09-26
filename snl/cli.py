@@ -1,5 +1,6 @@
 """snl -- Steltic_nonlinear orchestrator.
 
+    python -m snl collect <job folder>                      # FIRST: read the IS specification values out of the IS corpus
     python -m snl run <package.zip | folder> [--out DIR] [--steltic-engine DIR] [--params hinge_params.json]
                                             [--only pushover nlrha ddm] [--skip ...] [--parallel 2] [--dt 0.01] ...
     python -m snl report <job folder>            # rebuild four_analyses.html + snl_summary.json from existing outputs
@@ -66,7 +67,18 @@ def cmd_run(a):
     steps = [s for s in STEPS if (not a.only or s in a.only) and s not in (a.skip or [])]
     status = dict(job=job, started=time.strftime("%Y-%m-%dT%H:%M:%S"), steps={})
     log = os.path.join(job, "snl_run.log")
-    params = ["--params", os.path.abspath(a.params)] if a.params else []
+    # The component parameters: the file `snl collect` wrote for THIS project when it exists (the IS
+    # specification values read out of the IS corpus; hinge backbones labelled modelling assumptions), else
+    # what --params names, else the repository placeholder. Collect first is the point: the analyses then
+    # run on cited IS values and the reports need no re-issue.
+    from . import collect as _C
+    collected = os.path.join(job, _C.OUT_NAME)
+    params_path = os.path.abspath(a.params) if a.params else (collected if os.path.exists(collected) else None)
+    if params_path:
+        print(">> component parameters: %s%s" % (params_path, " (collected from the corpus)" if params_path == collected else ""))
+    else:
+        print(">> component parameters: repository placeholder -- run `snl collect` first to read the IS values from the corpus")
+    params = ["--params", params_path] if params_path else []
     site = ["--site-class", a.site_class]
     for s in steps:
         if s == "pushover":
@@ -137,6 +149,12 @@ def cmd_revise(a):
     revise.run(a.job)
 
 
+def cmd_collect(a):
+    from . import collect
+    r = collect.run(a.job, out_name=a.out, emit=collect.Emitter())
+    return 0 if r["ok"] else 2
+
+
 def cmd_inspect(a):
     job = _unpack(a.package, a.out)
     subprocess.run([sys.executable, "-m", "pushover", "inspect", job])
@@ -188,6 +206,11 @@ def main(argv=None):
                                        "from the Review tab, re-asks IS 1893 / IS 800 through RAG_API_URL (engineering_rag_india), "
                                        "records every passage and replaces the placeholder wording with the citation")
     rs.add_argument("job")
+    co = sub.add_parser("collect", help="read the IS specification values the analyses rely on (IS 2062 fy / fu, IS 18168 Ry / Ru, "
+                                        "the IS 800 Section 12 joint-rotation capacity, IS 1893 Z / I / Sa/g / damping) out of the IS "
+                                        "corpus (RAG_API_URL) for this building and write hinge_params_collected.json; the hinge "
+                                        "backbones stay modelling assumptions. Do this BEFORE `run`.")
+    co.add_argument("job"); co.add_argument("--out", default="hinge_params_collected.json", help="file name written into the job folder")
     i = sub.add_parser("inspect"); i.add_argument("package"); i.add_argument("--out")
     rv = sub.add_parser("review", help="the model reads what the run measured, looks the governing clauses up in the standards (RAG_API_URL) and writes review.md / review.html")
     rv.add_argument("job"); rv.add_argument("--focus", default="", help="what the engineer wants the review to concentrate on")
@@ -200,7 +223,7 @@ def main(argv=None):
     if a.cmd == "review":
         from .review import cmd_review
         return cmd_review(a)
-    return {"run": cmd_run, "report": cmd_report, "revise": cmd_revise,
+    return {"run": cmd_run, "report": cmd_report, "revise": cmd_revise, "collect": cmd_collect,
             "inspect": cmd_inspect, "feedback": cmd_feedback}[a.cmd](a)
 
 

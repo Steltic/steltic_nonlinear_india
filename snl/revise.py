@@ -21,7 +21,7 @@ import json
 import os
 import re
 
-from . import rag
+from . import grounding as G, rag
 
 # The component groups of the parameter file. The US module grounds each in an AISC 342 / ASCE 41 modelling-
 # parameter table; India has no such table in any IS document, so `tries` is empty and the group is recorded
@@ -177,8 +177,12 @@ def probe(log=print, extra_clauses=()) -> dict:
     return ev
 
 
-def annotate_params(job: str, ev: dict, log=print) -> str | None:
-    """Write the grounding into the params file the run actually used. -> its path, or None."""
+def annotate_params(job: str, ev: dict, log=print) -> dict | None:
+    """Write the grounding into the params file the run actually used.
+
+    -> {"path", "fingerprint"}, or None. The fingerprint is of the modelling parameters alone, so the
+    record survives the analysis run copying a byte-identical params file over this one -- and stops a
+    grounding recorded for one parameter set being shown against another."""
     path = next((p for p in (os.path.join(job, "pushover", "hinge_params_used.json"),
                              os.path.join(job, "hinge_params_base.json")) if os.path.exists(p)), None)
     if not path:
@@ -197,14 +201,14 @@ def annotate_params(job: str, ev: dict, log=print) -> str | None:
     if grounded:
         cites = "; ".join(r["citation"] for r in grounded.values())
         prm["source"] = ("cited from the corpus on this PC %s -- %s. The numeric backbone values in "
-                         "this file have NOT been reconciled against those tables; `verified` stays "
-                         "false until an engineer does that." % (ev.get("asked") or "", cites))
+                         "this file were NOT read out of those tables; `verified` stays "
+                         "false until they are." % (ev.get("asked") or "", cites))
     assumed = [g for g, r in ev.get("groups", {}).items() if r.get("status") == "modelling assumption"]
     if assumed:
         prm["grounding"]["modelling_assumptions"] = {"groups": assumed, "note": HINGE_NOTE}
     json.dump(prm, open(path, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
     log(">> params annotated: %s (%d of %d groups grounded)" % (path, len(grounded), len(GROUPS)))
-    return path
+    return {"path": path, "fingerprint": G.fingerprint(prm)}
 
 
 def run(job: str, log=print) -> dict:
@@ -221,12 +225,58 @@ def run(job: str, log=print) -> dict:
     log(">> asking the corpus for the clauses the reports lean on")
     ev = probe(log=log, extra_clauses=system_clauses(job))
     ev["review_md"] = {"path": review, "bytes": os.path.getsize(review)}
+    prm_rec = annotate_params(job, ev, log=log)
+    if prm_rec:
+        ev["params"] = prm_rec                     # written into the evidence, which the run never touches
     out = os.path.join(job, "revise_evidence.json")
     json.dump(ev, open(out, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
     log(">> evidence: %s" % out)
-    annotate_params(job, ev, log=log)
 
-    rebuilt, failed = [], []
+    # The supplements are rendered during the analysis run from live OpenSees objects, so they cannot be
+    # re-rendered here -- and re-running the analyses is what ERASES this grounding (pushover/cli.py copies
+    # the input params over hinge_params_used.json). So the provenance block in each report is replaced
+    # where it stands. Only that block moves; not one number is touched. India: the pushover report and
+    # the NLRHA index plus its DBE / MCE level pages.
+    prm = {}
+    if prm_rec:
+        try:
+            prm = json.load(open(prm_rec["path"], encoding="utf-8"))
+        except Exception:
+            prm = {}
+    st, gev = G.state(prm, job)
+    patched = []
+    reports = ["pushover/pushover_report.html", "nlrha/nlrha_report.html"]
+    reports += ["nlrha/%s/nlrha_report.html" % lv for lv in ("DBE", "MCE")]
+    for rel in reports:
+        fp = os.path.join(job, *rel.split("/"))
+        if not os.path.exists(fp):
+            continue
+        res = G.patch(fp, st, gev, prm)
+        if res == G.PATCHED:
+            patched.append(fp)
+        elif res == G.UNCHANGED:
+            log("   already current: %s" % rel)
+        else:
+            log("!! %s carries no provenance block (written by an older build) -- re-run the analyses "
+                "once to pick up the new report, or read the citation in revise_evidence.json" % rel)
+    pk_rels = ["pushover/pushover_package.json", "nlrha/nlrha_package.json"]
+    pk_rels += ["nlrha/%s/nlrha_package.json" % lv for lv in ("DBE", "MCE")]
+    for pk_rel in pk_rels:
+        pk_path = os.path.join(job, *pk_rel.split("/"))
+        if not os.path.exists(pk_path):
+            continue
+        try:                                        # the four-analyses sheet reads provenance from here
+            pk = json.load(open(pk_path, encoding="utf-8"))
+            pk["params_state"] = st
+            pk["params_grounding"] = (gev or {}).get("groups") or {}
+            pk["params_clauses"] = {c: r.get("citation") for c, r in ((gev or {}).get("clauses") or {}).items()
+                                    if isinstance(r, dict) and r.get("grounded")}
+            json.dump(pk, open(pk_path, "w", encoding="utf-8"), indent=1, default=str)
+            patched.append(pk_path)
+        except Exception as e:
+            log("!! could not update %s: %s" % (pk_rel, e))
+
+    rebuilt, failed = list(patched), []
     try:                                   # the design-criteria document reads the params file
         from nlrha import design_criteria as DC
         made = DC.write(job)
@@ -249,6 +299,10 @@ def run(job: str, log=print) -> dict:
         % (c, nc, sum(1 for r in ev.get("groups", {}).values() if r.get("status") == "modelling assumption")))
     if c < nc:
         log("   what the corpus could not answer stays marked in the reports -- that is the point of the mark")
-    log("   the NLRHA and pushover supplements are written by the analysis run; they pick the citation up "
-        "the next time those run. The design-criteria document and the four-analyses sheet are re-issued now.")
+    if st == G.GROUNDED:
+        log("   every document in this project now carries the citation. Do NOT re-run the analyses to "
+            "\"pick it up\" -- a run copies the input parameters over pushover/hinge_params_used.json, and "
+            "the grounding is re-applied from revise_evidence.json on the next run rather than lost.")
+    log("   `verified` stays false: the hinge backbones are modelling assumptions (information / EOR input) -- "
+        "IS 800 / IS 1893 / IS 18168 tabulate none -- and a retrieved clause is not a check of any number.")
     return {"evidence": out, "rebuilt": rebuilt, "failed": failed, "groups_grounded": n, "clauses_grounded": c}

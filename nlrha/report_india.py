@@ -41,7 +41,19 @@ def fig_drift_is(summ):
     return _png(fig)
 
 
-def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s):
+def _provenance(prm, where):
+    """The component-parameter provenance block (snl.grounding), marked so `snl revise` can replace it in place."""
+    if prm is None:
+        return ""
+    try:
+        from snl import grounding as G
+        st, ev = G.state(prm, where)
+        return G.block_html(st, ev, prm)
+    except Exception:                                   # never lose a report over a provenance note
+        return ""
+
+
+def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=None):
     os.makedirs(outdir, exist_ok=True)
     ts = datetime.datetime.now().isoformat(timespec="seconds")
     stats = (results[0].get("stats") if results else {}) or {}
@@ -59,6 +71,7 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s):
          "<div class='sub'>%s · IS 1893 (Part 1):2016 + Amd 1–2 7.7.4 · IS 800:2007 · generated %s · %.0f s</div>" % (
              html.escape(pkg.name), ts, elapsed_s),
          "<div class='stmt'>%s</div>" % IS_NL_STATEMENT,
+         _provenance(prm, os.path.dirname(os.path.abspath(outdir))),
          "<div class='note'>Target: %s. %s</div>" % (html.escape(str(gm.get("target_label"))),
                                                     html.escape(GM_BASIS_INDIA["selection_scaling"])),
          "<h2>1 Ground motions</h2><figure><img src='%s'></figure>" % fig_scaling(gm),

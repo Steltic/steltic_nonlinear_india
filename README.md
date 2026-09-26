@@ -101,6 +101,34 @@ hazard, the selected suite and any results on file: scope, governing documents, 
 acceptance criteria, the linear basis (16.1.2, including any drift relief), the 16.5 review scope, open items, the
 retrieval log. Written as `design_criteria_16_1_4.docx` (for mark-up; no python-docx needed) and `.html`.
 
+## Collect specification values (before Run)
+
+`python -m snl collect <job>` — the **Collect specification values** button on the hub's Run tab — reads the IS
+values the analyses rely on out of the IS corpus (`RAG_API_URL`, `engineering_rag_india`) **before** the run, and
+writes `hinge_params_collected.json`; `snl run` then uses that file as `--params` by default, and the hub keeps
+*Run analyses* closed until it exists. What an India NL run legitimately takes from the standards (D3 / D6 / D7):
+
+| group | read from | used as |
+|---|---|---|
+| `material` | IS 2062 (Part 1):2025 Table 3, the design's grade: fu (Rm), fy (ReH by thickness band) | fy of the hinge path (`material.Fy_ksi`); cross-checked against `pushover/india_materials.py` |
+| `overstrength` | IS 18168:2023 Table 1: Ry / Ru of the grade | reference (capacity design); the NL expected-strength factor stays an EOR input |
+| `deformation_capacity` | IS 800:2007 Section 12 clause of the system (12.7.1 / 12.8.1 / 12.10.1 / 12.11.1; EBF: IS 18168 12.3.3.1) | **reference only** beside the measured chord rotations |
+| `spectrum` | IS 1893 (Part 1):2016 Table 3 Z, 6.4.2 Sa/g for the soil type, Table 8 I | the elastic NL targets DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g (no R); cross-checked against `nlrha/india_hazard.py` and the package |
+| `damping` | IS 1893 (Part 1):2016 7.2.4 | the IS reference (5 %); the NLRHA's inherent damping is a modelling input |
+
+The hinge backbones (`beam_flexure`, `column_flexure`, `brace_axial`) are **not** collected: IS 800 / IS 1893 /
+IS 18168 tabulate none, so they are modelling assumptions — information / EOR inputs, never acceptance criteria —
+and the file says so (`india_status`; `verified` stays false, `spec_values_collected` is the gate).
+
+The machinery is the US one: retrieval is deterministic (Collect fetches each table / clause itself as an exact
+lookup), the row is decided from the building (grade, zone, soil type, system), the model only transcribes — one
+short call per group, reasoning low, no tools — and every value must come with a quote that occurs verbatim in the
+passages and contains its digits; a rejected field is named in up to two retries, then the group is missing and
+the file is written as `hinge_params_collected.partial.json` (the gate stays closed). The same search more than
+three times is refused. `collect_transcript.jsonl` streams every prompt, answer and reasoning;
+`collect_evidence.json` and `retrieval_log.md` keep every search. Model `MOCK` takes the repository's IS constants,
+labelled as such.
+
 ## The review (the model reads the run)
 
 `python -m snl review <job>` — the **Review** tab in the hub — hands the model what the run measured and gets the

@@ -385,7 +385,7 @@ def _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0):
     level_summaries = {}
     for lv, (d, summ) in per_level.items():
         odir = os.path.join(out, lv)
-        rp = RI.write_level(odir, pkg, d["gm"], d["results"], summ, modal, numerics, sum(r.get("seconds", 0) for r in d["results"]))
+        rp = RI.write_level(odir, pkg, d["gm"], d["results"], summ, modal, numerics, sum(r.get("seconds", 0) for r in d["results"]), prm=prm)
         level_summaries[lv] = (summ, os.path.join(odir, "nlrha_package.json"))
         print("[%s] wrote %s | records %d/%d converged | max mean drift %s | mean V/VB %s | non-vacuous %s" % (
             lv, rp, summ["n_converged"], summ["n_records"],
