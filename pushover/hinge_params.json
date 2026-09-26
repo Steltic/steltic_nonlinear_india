@@ -1,115 +1,106 @@
 {
   "_README": [
-    "INDIA FORK (steltic_nonlinear_india): ASCE 41 / AISC 342 hinge + acceptance analogue is",
-    "found:false in /workspace/engineering_rag_india (IS 1893 has no NSP/hinge tables; IS 800 \u00a74.5",
-    "is static plastic analysis only \u2014 not IO/LS/CP). Keep verified=false. See",
-    "nlrha.india_authority.hinge_analogue_status(). Do not invent ASCE\u2192IS hinge maps.",
-    "Nonlinear component modelling parameters + acceptance criteria used by the Pushover Analyst.",
-    "STATUS: the numbers below are PLACEHOLDER DEFAULTS written from memory of ASCE 41-17 Table 9-7.1",
-    "(beams) and the Lignos-based ASCE 41-17 column expressions. They are NOT verified against a licensed",
-    "copy of ASCE/SEI 41-23 or ANSI/AISC 342-22. The Pushover Analyst Grok Bot MUST send a retrieval plan",
-    "to Query file manager (doc AISC_342_22 / ASCE_41_23), copy the printed values into this file, set",
-    "verified=true and fill `source` with the exact table/equation ids and printed page. Until then every",
-    "report produced from this file carries a red UNVERIFIED banner. Never edit `verified` without doing the lookup."
+    "INDIA parameter file (steltic_nonlinear_india, NL-6). Every entry is either an IS value (with its clause) or a labelled",
+    "MODELLING ASSUMPTION. Owner rulings D3/D6/D7: no foreign design basis, no ASCE 41 / AISC 342 acceptance, results informative.",
+    "Steel strength: the analyses take fy per member from the HR package (IS 2062 (Part 1):2025 Table 3 by thickness band; IS 1161",
+    "Table 2 for tubes) -- `material` below is only the fallback for a member the package does not describe. `snl collect` reads",
+    "the IS values out of the corpus and writes the job's hinge_params_collected.json from this template.",
+    "Hinge backbones (beam_flexure, column_flexure, brace_axial) are modelling assumptions: IS 800:2007, IS 1893 (Part 1):2016 and",
+    "IS 18168:2023 tabulate none (nlrha.india_authority.hinge_analogue_status: found:false). The India NSP / NLRHA use FIBRE plasticity",
+    "(forceBeamColumn); the backbone numbers below shape only the corotTruss brace envelope and the force-controlled column flag.",
+    "There are no IO / LS / CP acceptance values in this file: IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear",
+    "analysis; results are for information. IS 800 Section 12 joint rotations (0.02 / 0.04 rad) are shown as REFERENCE only."
   ],
+  "jurisdiction": "india",
   "verified": false,
-  "source": "placeholder -- ASCE 41-17 Table 9-7.1 (from memory); AISC 342-22 Ch. C / ASCE 41-23 Ch. 9 NOT retrieved",
+  "source": "IS values: IS 2062 (Part 1):2025 Table 3 (fy fallback), IS 800:2007 Table 5 / 7.1.2.1 (brace strength curve), IS 1893 (Part 1):2016 7.2.4 (5 % reference). Backbone shapes: modelling assumptions (literature forms), not IS values.",
   "material": {
-    "Fy_ksi": 50.0,
-    "Ry_expected": 1.1,
-    "note": "A992 W-shapes: Fye = Ry*Fy (AISC 341-22 Table A3.2 Ry=1.1 for ASTM A992). Confirm the ASCE 41/AISC 342 lower-bound and expected material factors."
+    "grade": "E250",
+    "Fy_MPa": 250.0,
+    "Fy_ksi": 36.2594,
+    "Ry_expected": 1.0,
+    "source": "IS 2062 (Part 1):2025 Table 3, E 250, ReH t <= 16 mm = 250 MPa (fallback only; per-member fy comes from the HR package)",
+    "Ry_basis": "expected-strength factor 1.0 = nominal. IS 800:2007 has no expected-strength factor; IS 18168:2023 Table 1 Ry is a capacity-design factor, reported as reference, not applied. EOR input: nl_plan.material.expected_strength_factor.",
+    "E_MPa": 200000.0,
+    "E_source": "IS 800:2007 2.2.4.1 (E = 2.0 x 10^5 N/mm2)"
   },
   "beam_flexure": {
-    "basis": "compact W-shape beam, flexure, primary component; theta_y = Z*Fye*L/(6*E*I)",
+    "role": "modelling_assumption",
+    "basis": "MODELLING ASSUMPTION (not an IS value): backbone shape of a concentrated-plasticity beam hinge, used only on the non-India IMK path; India runs fibre plasticity",
     "a_over_thetay": 9.0,
     "b_over_thetay": 11.0,
     "c_residual": 0.6,
     "Mc_over_My": 1.1,
-    "IO_over_thetay": 1.0,
-    "LS_over_thetay": 6.0,
-    "CP_over_thetay": 8.0,
-    "noncompact_reduction": 0.5,
-    "note": "Table values apply to compact flanges/webs (bf/2tf <= 52/sqrt(Fye), h/tw <= 418/sqrt(Fye)); otherwise linear interpolation to the slender limits in the standard -- prototype applies a flat 0.5 factor and flags it."
+    "noncompact_reduction": 0.5
   },
   "column_flexure": {
-    "basis": "wide-flange column, flexure with axial PG/Pye < 0.6 (Lignos-type expressions as adopted in ASCE 41-17 Table 9-7.1); rotations in RADIANS (plastic)",
+    "role": "modelling_assumption",
+    "basis": "MODELLING ASSUMPTION (not an IS value): used on the India fibre path only to FLAG columns whose gravity axial ratio PG/Pye exceeds force_controlled_above_P_over_Pye (information)",
     "a_expr": "0.8*(1-PG/Pye)**2.2*(0.1*L/ry)**-0.8*(h/tw)**-0.6",
     "b_expr": "7.4*(1-PG/Pye)**2.3*(0.1*L/ry)**-0.5*(h/tw)**-0.7",
     "c_expr": "0.9-0.9*PG/Pye",
     "a_min": 0.0,
     "b_max": 0.15,
     "Mc_over_My": 1.1,
-    "IO_frac_of_a": 0.5,
-    "LS_frac_of_b": 0.75,
-    "CP_frac_of_b": 1.0,
     "force_controlled_above_P_over_Pye": 0.6,
-    "Mpce_axial_reduction": "min(1.0, 1.18*(1-PG/Pye))",
-    "note": "PG = gravity axial (QG) in the pushover; Pye = Ag*Fye. Columns with PG/Pye > 0.6 are force-controlled -> report P/PCL, no hinge."
+    "Mpce_axial_reduction": "min(1.0, 1.18*(1-PG/Pye))"
   },
   "brace_axial": {
-    "basis": "HSS brace, concentrically braced frame -- phenomenological axial backbone (ASCE 41-17 Table 9-8 form, PLACEHOLDER from memory); deformations are multiples of delta_c (axial shortening at expected buckling) and delta_T (axial elongation at expected yield)",
-    "Fy_ksi": 50.0,
-    "Ry_expected": 1.3,
+    "role": "modelling_assumption",
+    "basis": "corotTruss brace. STRENGTHS are IS values: tension Pye = A fy, buckling Pcr = A chi fy on the IS 800:2007 7.1.2.1 curve (Table 10 class, Table 7 alpha), fy from the HR package, no partial factor (model strength). The post-buckling / post-yield deformation multiples (a, b, c) are MODELLING ASSUMPTIONS (literature form; IS gives no brace hysteresis model).",
     "K_effective": 1.0,
-    "Pcr_expected_factor": 1.14,
+    "K_basis": "modelling assumption: pin-ended brace, K = 1.0 on the full node-to-node length (the HR design may use per-axis K; the NL keeps the member length)",
     "compression": {
       "slender_limit": "4.2*sqrt(E/Fye)",
       "stocky_limit": "2.1*sqrt(E/Fye)",
       "slender": {
         "a_over_dc": 0.5,
         "b_over_dc": 10.0,
-        "c": 0.3,
-        "IO_over_dc": 0.5,
-        "LS_over_dc": 8.0,
-        "CP_over_dc": 10.0
+        "c": 0.3
       },
       "stocky": {
         "a_over_dc": 1.0,
         "b_over_dc": 8.0,
-        "c": 0.5,
-        "IO_over_dc": 0.5,
-        "LS_over_dc": 7.0,
-        "CP_over_dc": 8.0
+        "c": 0.5
       },
-      "note": "linear interpolation between the stocky and slender limits on KL/r"
+      "note": "modelling assumption: linear interpolation between the stocky and slender limits on KL/r"
     },
     "tension": {
       "a_over_dT": 11.0,
       "b_over_dT": 14.0,
       "c": 0.8,
       "hardening_ratio": 1.1,
-      "IO_over_dT": 0.5,
-      "LS_over_dT": 10.0,
-      "CP_over_dT": 13.0
+      "note": "modelling assumption: 10 % strain hardening over a; residual 0.8 Pye to b"
     },
-    "element": "corotTruss + Hysteretic (no pinching, no cyclic damage) -- monotonic pushover; cyclic deterioration to be added for NLRHA",
-    "note": "UNVERIFIED placeholders. Retrieve AISC 342-22 brace modelling parameters / acceptance and AISC 341-22 Table A3.2 Ry (A500 Gr. C) and F2.3 expected brace strengths (RyFyAg; 1.14 Fcre Ag) through Query file manager before use."
+    "element": "corotTruss + Hysteretic (no pinching, no cyclic damage)"
   },
   "gravity_for_pushover": {
-    "expr": "1.1*(QD + 0.25*QL)",
-    "note": "ASCE 41 Sec. 7.2.2 Eq. 7-1 form; QL = 25% of the unreduced design live load. Prototype distributes each level's weight equally to that level's column nodes. Verify clause and factors."
+    "expr": "IS 1893 (Part 1):2016 7.3 / 7.4 seismic weight W_i per level (full dead load + Table 10 imposed share; 7.3.2 roof imposed load not considered) -- the HR engine's W",
+    "note": "applied as equal shares on the level's diaphragm nodes (pushover.india_model.is_gravity_loads); mass = W_i / g on the diaphragm master (D6). No ASCE 41 1.1(QD + 0.25 QL)."
   },
   "nsp": {
-    "load_pattern": "first mode shape x mass (ASCE 41 Sec. 7.4.3.2.3)",
+    "method": "target displacement by the displacement-coefficient method (ASCE 41 Eq. 7-28 form) -- IS 1893 has no nonlinear static procedure; the method is used as a modelling tool and its output is information (D7)",
+    "load_pattern": "first translational mode of the push direction x mass (the mode the modal pattern selector names)",
     "push_to_fraction_of_target": 1.5,
     "Ke_at_fraction_of_Vy": 0.6,
-    "C1_site_factor_a": {
-      "A": 130,
-      "B": 130,
-      "C": 90,
-      "D": 60,
-      "E": 60,
-      "F": 60
-    },
-    "default_site_class": "D",
+    "C1_a_eor": null,
+    "C1_a_basis": "C1 'a' is keyed to ASCE site classes, which have no IS 1893 soil-type mapping: EOR input nsp.C1_a_eor, else 60 (the most conservative tabulated value), disclosed in the output",
     "Cm_steel_MF_3plus_stories": 0.9,
     "Cm_steel_CBF_3plus_stories": 0.9,
     "Cm_1_2_stories": 1.0,
+    "Cm_basis": "method input (ASCE 41 Table 7-4 form), not an IS value",
     "hazard_levels": {
-      "BSE-1N": 1.0,
-      "BSE-2N": 1.5
+      "IS-DBE": "DBE",
+      "IS-MCE": "MCE"
     },
-    "note": "BSE-1N spectrum = ASCE 7 design spectrum (SDS, SD1); BSE-2N = 1.5x (MCE_R). Performance check: LS at BSE-1N, CP at BSE-2N (BPON). Confirm Table 7-4/7-5 and Eq. 7-28..7-32 numbering in ASCE 41-23."
+    "note": "Sa(Te) from the IS 1893 elastic spectrum: DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g, never divided by R (D6)."
+  },
+  "damping": {
+    "xi_default": 0.025,
+    "role": "modelling_assumption",
+    "basis": "NLRHA inherent viscous damping (Rayleigh at T1 and 0.2 T1, stiffness part on the frame elements only). IS 1893 (Part 1):2016 7.2.4 prescribes 5 % for estimating Ah (the elastic spectrum the records are scaled to is 5 %-damped); with fibre hysteresis modelled explicitly, the model's viscous part is a modelling assumption (default 2.5 %), EOR input nl_plan.damping.xi, never above the 7.2.4 value without an EOR record.",
+    "xi_cap": 0.05,
+    "xi_cap_basis": "IS 1893 (Part 1):2016 7.2.4: 5 % of critical"
   },
   "numerics": {
     "post_cap_ratio": 0.15,
@@ -117,7 +108,7 @@
       "fine_step",
       "arclength"
     ],
-    "note": "post_cap_ratio = fraction of the capping rotation a over which strength descends from Mc to c*My (0.15 ~ ASCE 41 vertical drop). Raising it to capture the descending branch is a modelling change: only with the user's consent, and it is disclosed in the report. tail_strategies is the solver escalation ladder tried automatically when the push stops before 0.8*Vmax. Default plasticity=fibre (forceBeamColumn + Lobatto); member_nseg=4 matches MC4 fibre suite. Use imk for concentrated ModIMK / L2 FBC path. Product NLRHA starts ModIMK (imk) then PZ\u00d71 then fibre+mesh; ConcentratedPlasticity auto-ladder (L1/L2/L3) is NOT a product default. NSP/HR DDM remain fibre. PZ default rigid.",
+    "note": "post_cap_ratio = fraction of the capping rotation a over which strength descends from Mc to c*My (0.15 ~ ASCE 41 vertical drop). Raising it to capture the descending branch is a modelling change: only with the user's consent, and it is disclosed in the report. tail_strategies is the solver escalation ladder tried automatically when the push stops before 0.8*Vmax. Default plasticity=fibre (forceBeamColumn + Lobatto); member_nseg=4 matches MC4 fibre suite. Use imk for concentrated ModIMK / L2 FBC path. Product NLRHA starts ModIMK (imk) then PZ×1 then fibre+mesh; ConcentratedPlasticity auto-ladder (L1/L2/L3) is NOT a product default. NSP/HR DDM remain fibre. PZ default rigid.",
     "plasticity": "fibre",
     "member_nseg": 4,
     "fibre_nip": 5,
@@ -131,32 +122,12 @@
     ],
     "fibre_residual": "none"
   },
-  "fema_p695": {
-    "delta_u_at_strength_fraction": 0.8,
-    "note": "Omega = Vmax/V ; mu_T = delta_u / delta_y,eff with delta_y,eff = C0*(Vmax/W)*(g/4pi^2)*max(T,T1)^2 (FEMA P-695 Sec. 6.3)."
-  },
   "panel_zones": {
     "mode": "rigid",
     "material": "elastic",
     "doubler_t_in": 0.0,
     "K_theta": null,
-    "theta_p_over_thy": 4.0,
-    "theta_r_over_thy": 100.0,
-    "c_residual": 0.9,
-    "hysteretic": {},
-    "topology": "joint_centerline_scissors",
-    "note": [
-      "Opt-in flexible panel-zone modelling for ATC-114 / weak-PZ studies.",
-      "mode: 'rigid' (default, no behaviour change) | 'scissors' (zeroLength rotational spring at FR joint centerline).",
-      "scissors topology: column stack stays on the joint node; FR (unreleased) beam ends attach to a coincident beam-side node;",
-      "one 6-DOF zeroLength: rigid on translations/torsion/unused flexure + PZ spring on strong-axis rot DOF(s) 4/5.",
-      "Do NOT equalDOF beam-side to an RD slave (breaks Transformation). Beam-side nodes stay out of rigidDiaphragm slaves.",
-      "material: 'elastic' (K_theta = G*tp*dc*db, kip-in/rad) or 'hysteretic' (Gupta\u2013Krawinkler trilinear).",
-      "Optional K_theta override (kip-in/rad) or hysteretic.{s1p,e1p,s2p,e2p,s3p,e3p} absolute envelope.",
-      "IMK end hinges remain at member ends (centerline). Do NOT also apply AISC 342 C5.4a.1.a.1(b) PZ ductility",
-      "modifier when mode=scissors (double-counting). Not a full 8-bar Krawinkler rectangle (no geometric rigid offsets).",
-      "Pin-released gravity framing is excluded. Units: kip-in-sec."
-    ]
+    "note": "rigid panel zones (fibre path); scissors springs are a USA-scaffolding option"
   },
   "india_hinge_analogue": {
     "found": false,

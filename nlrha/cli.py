@@ -13,7 +13,7 @@ def _load(args):
     from pushover import package_reader as PR, hinge_models as HM, nonlinear_model as NM
     from . import model as MD
     pkg = PR.load(args.package); print(PR.summary(pkg))
-    prm = HM.load_params(args.params)
+    prm = HM.load_params(args.params, jurisdiction=(pkg.basis.jurisdiction or "usa"))
     from . import india_authority as IA
     ch16 = IA.load_ch16_params()
     print(IA.authority_banner().splitlines()[0])
@@ -279,21 +279,31 @@ def _modal_and_range(pkg, prm, ch16, loads):
     return PG, modal, lo, hi
 
 
-def _damping(args, pkg, ch16):
+def _damping(args, pkg, ch16, prm=None):
     """Viscous damping as a parameter (WP4.11): nl_plan.damping.xi / --xi; above the cap -> WARNING, never exit."""
     from pushover import india_model as IMD
     plan = IMD.load_nl_plan(pkg) if _is_india(pkg) else {}
     dp = (plan.get("damping") or {}) if isinstance(plan, dict) else {}
-    xi = float(args.xi if getattr(args, "xi", None) is not None else (dp.get("xi") or 0.025))
-    cap = float(dp.get("xi_cap") or ch16["damping"]["xi_max"])
-    basis = dp.get("basis") or ("Rayleigh at T1 and 0.2 T1; cap %.3f is ASCE-derived (EOR-adopted); IS 1893 7.2.4 uses 5 %% "
-                                "for the design spectrum" % cap)
+    pdmp = (prm.get("damping") or {}) if isinstance(prm, dict) else {}          # NL-6: India parameter-file block
+    src = ("--xi" if getattr(args, "xi", None) is not None else
+           ("nl_plan.damping.xi (EOR)" if dp.get("xi") else "hinge_params damping.xi_default (modelling assumption)"))
+    xi = float(args.xi if getattr(args, "xi", None) is not None else (dp.get("xi") or pdmp.get("xi_default") or 0.025))
+    # the reference is IS 1893 (Part 1):2016 7.2.4 (5 %: the damping of the elastic spectrum the records are scaled to);
+    # no ASCE 16.3.5 cap on the India path
+    cap = float(dp.get("xi_cap") or pdmp.get("xi_cap") or 0.05)
+    basis = dp.get("basis") or (
+        "Rayleigh %.1f %% at T1 and 0.2 T1 (%s); mass-proportional on all nodes, stiffness-proportional on the frame "
+        "elements only. IS 1893 (Part 1):2016 7.2.4: 5 %% for estimating Ah -- the target spectrum is 5 %%-damped; the "
+        "hysteretic energy is modelled by the fibres, so the viscous part is a modelling assumption below the 7.2.4 "
+        "value" % (100 * xi, src))
     warn = None
     if xi > cap:
-        warn = "xi %.3f exceeds the adopted cap %.3f -- continuing (EOR parameter, WP4.11)" % (xi, cap)
+        warn = ("xi %.3f exceeds %.3f (IS 1893 7.2.4 reference) -- continuing; viscous damping above the code value "
+                "double-counts the hysteretic dissipation (EOR parameter)" % (xi, cap))
         print("[damping] WARNING:", warn)
     ch16["damping"]["xi_used"] = xi
-    return dict(xi=xi, cap=cap, basis=basis, warning=warn)
+    return dict(xi=xi, cap=cap, basis=basis, warning=warn, source=src,
+                reference=dict(value=0.05, clause="IS 1893 (Part 1):2016 7.2.4", role="reference (Ah); not the model's viscous damping"))
 
 
 def _india_prepare(args, pkg, prm, ch16):
@@ -427,7 +437,7 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
         print("[nlrha] India: fibre plasticity is used (member strains/rotations and IS 2062 steel per section); "
               "--plasticity %s ignored" % plast)
     os.environ["SNL_PLASTICITY"] = "fibre"; prm.setdefault("numerics", {})["plasticity"] = "fibre"
-    damp = _damping(args, pkg, ch16)
+    damp = _damping(args, pkg, ch16, prm)
     loads, gtab, split, PG, modal, lo, hi = _india_prepare(args, pkg, prm, ch16)
     if not modal.get("spurious_ok", True):
         print("[modal] WARNING spurious modes %s (T > 5 T1, < 1 %% mass)" % modal.get("spurious_modes"))

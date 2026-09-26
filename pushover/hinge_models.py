@@ -25,9 +25,30 @@ def hinge_unit_system_note(units: str | None = None) -> dict:
 
 
 
-def load_params(path: str | None = None) -> dict:
-    with open(path or os.path.join(_HERE, "hinge_params.json"), encoding="utf-8") as f:
+INDIA_PARAMS = os.path.join(_HERE, "hinge_params.json")
+USA_PARAMS = os.path.join(os.path.dirname(_HERE), "usa_reference", "hinge_params_usa.json")
+
+
+def default_params_path(jurisdiction: str | None = "india") -> str:
+    """NL-6: pushover/hinge_params.json is the INDIA file (IS values + labelled modelling assumptions, no acceptance
+    values); the ASCE 41 / AISC 342 placeholders live in usa_reference/hinge_params_usa.json and are loaded only for
+    a non-India (USA regression) package."""
+    j = str(jurisdiction or "india").lower()
+    return INDIA_PARAMS if j in ("india", "is", "in", "bis", "is_bis") else USA_PARAMS
+
+
+def load_params(path: str | None = None, jurisdiction: str | None = "india") -> dict:
+    with open(path or default_params_path(jurisdiction), encoding="utf-8") as f:
         return json.load(f)
+
+
+_NAN = float("nan")
+
+
+def _g(d: dict, k: str, default=_NAN) -> float:
+    """A backbone / acceptance number, NaN when the parameter file does not carry it (the India file has no IO/LS/CP)."""
+    v = (d or {}).get(k, default)
+    return float(v) if v is not None else _NAN
 
 
 @dataclass
@@ -115,8 +136,8 @@ def beam_hinge(section: str, L_in: float, prm: dict) -> HingeSpec:
     ty = _theta_y(p["Zx"], Fye, L_in, p["Ix"])
     a, b = bp["a_over_thetay"] * ty * red, bp["b_over_thetay"] * ty * red
     return HingeSpec("beam", section, L_in, Fye, p["Zx"] * Fye, ty, a, b, bp["c_residual"], bp["Mc_over_My"],
-                     IO=bp["IO_over_thetay"] * ty * red, LS=bp["LS_over_thetay"] * ty * red,
-                     CP=bp["CP_over_thetay"] * ty * red, compact=compact, flags=tuple(flags))
+                     IO=_g(bp, "IO_over_thetay") * ty * red, LS=_g(bp, "LS_over_thetay") * ty * red,
+                     CP=_g(bp, "CP_over_thetay") * ty * red, compact=compact, flags=tuple(flags))
 
 
 def column_hinge(section: str, L_in: float, PG_kip: float, prm: dict) -> HingeSpec:
@@ -127,7 +148,7 @@ def column_hinge(section: str, L_in: float, PG_kip: float, prm: dict) -> HingeSp
     flags = []
     env = dict(PG=max(0.0, PG_kip), Pye=Pye, L=L_in, ry=p["ry"], h=p["d"] - 2 * p["tf"], tw=p["tw"], math=math)
     if r >= cp["force_controlled_above_P_over_Pye"]:
-        flags.append("PG/Pye=%.2f >= %.2f -> FORCE-CONTROLLED column (no hinge; check P vs PCL)" % (r, cp["force_controlled_above_P_over_Pye"]))
+        flags.append("PG/Pye=%.2f >= %.2f -> FORCE-CONTROLLED column (information)" % (r, cp["force_controlled_above_P_over_Pye"]))
         return HingeSpec("column", section, L_in, Fye, p["Zx"] * Fye, _theta_y(p["Zx"], Fye, L_in, p["Ix"], 1 - r),
                          0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, True, r, True, tuple(flags))
     duct, _, _ = _ductility_class(p, Fye, prm, Ca=r)
@@ -145,7 +166,7 @@ def column_hinge(section: str, L_in: float, PG_kip: float, prm: dict) -> HingeSp
     if p.get("h_tw_approx"):
         flags.append("h/tw approximated as (d-2tf)/tw")
     return HingeSpec("column", section, L_in, Fye, Mpe, ty, a, b, c, cp["Mc_over_My"],
-                     IO=cp["IO_frac_of_a"] * a, LS=cp["LS_frac_of_b"] * b, CP=cp["CP_frac_of_b"] * b,
+                     IO=_g(cp, "IO_frac_of_a") * a, LS=_g(cp, "LS_frac_of_b") * b, CP=_g(cp, "CP_frac_of_b") * b,
                      force_controlled=False, PG_over_Pye=r, compact=True, flags=tuple(flags))
 
 
@@ -301,7 +322,7 @@ def brace_spec(section: str, L_in: float, prm: dict, india: dict | None = None) 
     if KLr >= sl: w, cls = 1.0, "slender"
     elif KLr <= st: w, cls = 0.0, "stocky"
     else: w, cls = (KLr - st) / (sl - st), "intermediate"
-    def mix(key): return cK[key] + w * (cS[key] - cK[key])
+    def mix(key): return _g(cK, key) + w * (_g(cS, key) - _g(cK, key))
     tp = bp["tension"]
     flags = ["brace post-buckling backbone SHAPE is a literature placeholder (deformation multiples); strengths: %s"
              % ("IS 2062 fy / IS 800 7.1.2.1 curve" if india else "AISC placeholder"),
@@ -310,7 +331,7 @@ def brace_spec(section: str, L_in: float, prm: dict, india: dict | None = None) 
                      a_c=mix("a_over_dc") * dc, b_c=mix("b_over_dc") * dc, c_c=mix("c"),
                      a_t=tp["a_over_dT"] * dT, b_t=tp["b_over_dT"] * dT, c_t=tp["c"],
                      IO=mix("IO_over_dc") * dc, LS=mix("LS_over_dc") * dc, CP=mix("CP_over_dc") * dc,
-                     IO_t=tp["IO_over_dT"] * dT, LS_t=tp["LS_over_dT"] * dT, CP_t=tp["CP_over_dT"] * dT,
+                     IO_t=_g(tp, "IO_over_dT") * dT, LS_t=_g(tp, "LS_over_dT") * dT, CP_t=_g(tp, "CP_over_dT") * dT,
                      slenderness_class=cls, flags=tuple(flags))
 
 

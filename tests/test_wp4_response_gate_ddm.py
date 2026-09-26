@@ -112,12 +112,18 @@ def test_nlrha_cli_refuses_code_target_for_india():
 
 
 def test_damping_above_cap_warns_not_exits(capsys):
+    """NL-6: the India reference is IS 1893 7.2.4 (5 %), not the ASCE 16.3.5 2.5 % cap; above it -> warning."""
     from nlrha import cli, india_authority as IA
+    from pushover import hinge_models as HM
     pkg = _pkg()
     ch16 = IA.load_ch16_params()
-    d = cli._damping(types.SimpleNamespace(xi=0.05), pkg, ch16)
-    assert d["xi"] == 0.05 and d["warning"]
+    prm = HM.load_params()
+    d = cli._damping(types.SimpleNamespace(xi=0.06), pkg, ch16, prm)
+    assert d["xi"] == 0.06 and d["warning"] and d["cap"] == 0.05
     assert "WARNING" in capsys.readouterr().out
+    d = cli._damping(types.SimpleNamespace(xi=None), pkg, ch16, prm)
+    assert d["xi"] == 0.025 and d["warning"] is None and "7.2.4" in d["basis"] and "ASCE" not in d["basis"]
+    assert d["reference"]["value"] == 0.05
 
 
 def test_sf_bounds_warning():

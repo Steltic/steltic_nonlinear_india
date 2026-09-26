@@ -245,7 +245,7 @@ def run_record_worker(args):
     integrator = args[10] if len(args) > 10 else "hht"
     torsion = args[11] if len(args) > 11 else None
     from pushover import package_reader as PR, hinge_models as HM
-    pkg = PR.load(package_path); prm = HM.load_params(params_path)
+    pkg = PR.load(package_path); prm = HM.load_params(params_path, jurisdiction=(pkg.basis.jurisdiction or "usa"))
     if torsion:
         shift_masses(pkg, torsion)
     out = run_record(pkg, prm, ch16, PG, loads, rec, xi, None, dt_max=dt, free_vib_s=free_vib, sample_brace=sample_brace, integrator=integrator)

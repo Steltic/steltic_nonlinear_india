@@ -48,7 +48,7 @@ def _run(args):
     missing = [k for k in ("SDS", "SD1", "W_kip") if getattr(pkg.basis, k) is None]
     if missing:
         sys.exit("design basis incomplete (%s) -- add cfg.py to the package or pass --sds/--sd1" % missing)
-    prm = HM.load_params(args.params)
+    prm = HM.load_params(args.params, jurisdiction="usa")          # USA scaffolding path only (NL-6)
     if getattr(args, "plasticity", None):
         os.environ["SNL_PLASTICITY"] = str(args.plasticity)
         prm.setdefault("numerics", {})["plasticity"] = args.plasticity
@@ -131,8 +131,7 @@ def _run(args):
         print("viewer", V3.write(out, pkg, prm, runs, results, stats))
     except Exception as ex:
         print("viewer failed:", ex)
-    _copy_params(args.params or os.path.join(os.path.dirname(__file__), "hinge_params.json"),
-                 os.path.join(out, "hinge_params_used.json"))
+    _copy_params(args.params or HM.default_params_path("usa"), os.path.join(out, "hinge_params_used.json"))
     print("wrote", html, "(%.0f s)" % (time.time() - t0))
 
 
@@ -181,7 +180,7 @@ def _run_india(args, pkg, t0):
     from . import nonlinear_model as NM, hinge_models as HM, postprocess as PP, report_india as RI, member_response as MR
     from . import india_materials as IM
     from nlrha import india_hazard as IH
-    prm = HM.load_params(args.params)
+    prm = HM.load_params(args.params, jurisdiction="india")
     plast = str(getattr(args, "plasticity", None) or "fibre").lower()
     if plast not in ("fibre", "fiber"):
         print("[pushover] India: fibre plasticity is used (member strains/rotations are recorded from fibres); "
@@ -234,8 +233,7 @@ def _run_india(args, pkg, t0):
             f.write("roof_disp_mm,base_shear_kN\n")
             for u, v in zip(run["rec"]["u"], run["rec"]["V"]):
                 f.write("%.3f,%.2f\n" % (u * 25.4, v * 4.4482216152605))
-    _copy_params(args.params or os.path.join(os.path.dirname(__file__), "hinge_params.json"),
-                 os.path.join(out, "hinge_params_used.json"))
+    _copy_params(args.params or HM.default_params_path("india"), os.path.join(out, "hinge_params_used.json"))
     print("wrote", html_path, "(%.0f s)" % (time.time() - t0))
     return results
 

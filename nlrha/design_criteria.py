@@ -100,7 +100,7 @@ def gather(job, params_path=None, risk_category=None):
     from . import india_authority as IA
     ch16 = IA.load_ch16_params()
     prm_path = params_path or next((p for p in (os.path.join(job, "pushover", "hinge_params_used.json"), os.path.join(job, "hinge_params_base.json")) if os.path.exists(p)), None)
-    prm = HM.load_params(prm_path) if prm_path else HM.load_params(None)
+    prm = HM.load_params(prm_path) if prm_path else HM.load_params(None, jurisdiction=(pkg.basis.jurisdiction or "usa"))
     cfg_text = open(os.path.join(job, "cfg.py"), encoding="utf-8", errors="replace").read() if os.path.exists(os.path.join(job, "cfg.py")) else ""
     rc = _rc(pkg, pkg.calc, cfg_text, risk_category)
     relief = None
