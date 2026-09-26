@@ -147,6 +147,9 @@ def _is_india_job(job):
         d = _load_json(os.path.join(job, rel), {}) or {}
         if d.get("jurisdiction") == "india":
             return True
+    lp = _load_json(os.path.join(job, "load_plan.json"), {}) or {}        # NL-19: a fresh HR package (no NL outputs yet)
+    if str(lp.get("jurisdiction") or "").lower() == "india":
+        return True
     return os.path.exists(os.path.join(job, "seismic_calc.json"))
 
 

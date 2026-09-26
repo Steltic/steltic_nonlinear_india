@@ -79,7 +79,11 @@ def cmd_run(a):
     else:
         print(">> component parameters: repository placeholder -- run `snl collect` first to read the IS values from the corpus")
     params = ["--params", params_path] if params_path else []
-    site = ["--site-class", a.site_class]
+    from .compare import _is_india_job
+    india = _is_india_job(job)
+    # NL-19: the India path uses no ASCE site class (IS soil type from the package) and always fibre plasticity in
+    # both analyses -- pass neither the USA site class nor the USA NLRHA default (imk), which the India CLIs ignored.
+    site = [] if india else ["--site-class", a.site_class]
     for s in steps:
         if s == "pushover":
             cmd = [py, "-m", "pushover", "run", job] + site + params + (["--tail", a.tail] if a.tail else []) + (["--post-cap-ratio", str(a.post_cap_ratio)] if a.post_cap_ratio else [])
@@ -95,7 +99,9 @@ def cmd_run(a):
             if a.pulse_fraction is not None: cmd += ["--pulse-fraction", str(a.pulse_fraction)]
             if a.sf_bounds: cmd += ["--sf-bounds", a.sf_bounds]
             # Product rule 1: NLRHA starts ModIMK; fibre via mesh-converge ladder
-            plast = a.plasticity if a.plasticity else "imk"
+            plast = a.plasticity if a.plasticity else ("fibre" if india else "imk")
+            if india and plast not in ("fibre", "fiber"):
+                print("!! India: NLRHA plasticity is always fibre (--plasticity %s ignored)" % plast); plast = "fibre"
             nseg = a.member_nseg if a.member_nseg is not None else (4 if plast in ("fibre", "fiber") else 1)
             cmd += ["--plasticity", plast, "--member-nseg", str(nseg)]
             if a.risk_category: cmd += ["--risk-category", a.risk_category]
@@ -171,10 +177,10 @@ def main(argv=None):
     r.add_argument("--params", help="component-parameter file (default: <job>/hinge_params_collected.json written by `snl collect`, else the repository India file pushover/hinge_params.json -> the COMPLETE gate refuses: IS values not collected)")
     r.add_argument("--only", nargs="*", choices=STEPS); r.add_argument("--skip", nargs="*", choices=STEPS)
     r.add_argument("--parallel", type=int, default=2); r.add_argument("--dt", type=float, default=0.01); r.add_argument("--integrator", default="hht", choices=["hht", "newmark"])
-    r.add_argument("--n-records", type=int, default=11); r.add_argument("--site-class", default="D"); r.add_argument("--risk-category", choices=["I", "II", "III", "IV"])
+    r.add_argument("--n-records", type=int, default=11); r.add_argument("--site-class", default="D", help="ASCE site class (USA only; the India path uses the IS soil type of the package)"); r.add_argument("--risk-category", choices=["I", "II", "III", "IV"])
     r.add_argument("--tail", choices=["auto", "fine_step", "arclength", "none"]); r.add_argument("--post-cap-ratio", type=float, help="tail-protocol rung 3 (disclosed modelling change)")
     r.add_argument("--no-block", action="store_true", help="DDM: do not write the ddm_analysis block into calc_package.json")
-    r.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="override plasticity (defaults: NSP fibre, NLRHA imk)")
+    r.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="override plasticity (USA defaults: NSP fibre, NLRHA imk; India: fibre always)")
     r.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default 4 fibre / 1 imk)")
     r.add_argument("--records-set", nargs="*", default=None, help="NLRHA record set folder(s): indexed sets and/or user folders of PEER .AT2 / CSV pairs (default: the shipped P-695 far-field set)")
     r.add_argument("--target", default=None, choices=["is1893", "code", "mcer", "cs"], help="NLRHA scaling target (default: is1893 elastic DBE/MCE for India; code for USA scaffolding)")
