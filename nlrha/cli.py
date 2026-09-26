@@ -404,6 +404,11 @@ def _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0):
             summ["non_vacuous"]["ok"]))
     idx = RI.write_index(out, pkg, level_summaries, modal, numerics, hz)
     print("wrote", idx, "(%.0f s)" % (time.time() - t0))
+    try:                                                   # NL-11: the India viewer (no IO/LS/CP, no verdict)
+        from . import viewer3d_india as V3I
+        print("wrote", V3I.write(out, pkg, per_level, modal, numerics, prm))
+    except Exception as ex:                                # noqa: BLE001 -- never let the viewer hide the report
+        print("[viewer] skipped:", ex)
     try:
         st = IA.write_complete_gate(str(pkg.root))
         print("[gate] design_status=%s reasons=%s" % (st["status"], "; ".join(st["reasons"])[:300]))
