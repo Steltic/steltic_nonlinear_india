@@ -125,3 +125,5 @@ findings, section 3) are on `review-fix-2026-09`.
 - NL-25: IS 800 B-1.2 member forces interpolated to lambda = 1 exactly
 - NL-26: DDM fibre I-sections with root-fillet fibres -- A, Ix, Zp = IS 808 catalogue (IN_Ex5 transfer gate)
 - NL-27: gold batch re-runs DDM results that predate DDM_CODE (NL-26), refresh pass at the end, STOP_BATCH file
+- NL-28: gold batch honours $GOLD_NL/SKIP_JOBS (jobs offloaded to another machine are never started or DDM-refreshed); NLRHA index package paths use '/' separators (Windows)
+- NL-29: NLRHA India runs the records of BOTH levels in one worker pool (22 tasks; --parallel above 11 is used, no idle workers behind a level's longest record; per-record results unchanged) and logs "[nlrha] record done k/22"; gold batch: STEPS (step subset), NL_REV (marker stamp without .git), set-but-empty RAG_API_URL / INDIA_CORPUS_ROOT stay empty -- for the owner's PC package

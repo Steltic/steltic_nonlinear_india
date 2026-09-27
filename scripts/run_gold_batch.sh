@@ -20,6 +20,9 @@
 # NL-28: $GOLD_NL/SKIP_JOBS lists job folders (one per line, as in JOBS_DEFAULT; '#' comments) that this batch must not
 # run -- e.g. jobs offloaded to another machine. Read before every job and in the DDM refresh pass (edits take effect
 # at the next job without a restart).
+# NL-29: STEPS (default "pushover nlrha ddm") restricts the analysis steps (e.g. STEPS=pushover for a trial slice);
+# a job is only marked done when all three step markers exist. NL_REV (if set) stamps the markers instead of
+# `git rev-parse` -- the owner's PC package is a plain copy without .git.
 set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOLD_NL="${GOLD_NL:-/home/claude/nl/gold_nl}"
@@ -27,10 +30,12 @@ ANSWERS="${ANSWERS:-$GOLD_NL/answers}"
 LOG="${LOG:-$GOLD_NL/batch_progress.log}"
 PARALLEL="${PARALLEL:-2}"
 export STELTIC_ENGINE_DIR="${STELTIC_ENGINE_DIR:-/home/claude/work/steltic_india/steel_engine}"
-export RAG_API_URL="${RAG_API_URL:-http://127.0.0.1:8765/query}"
-export INDIA_CORPUS_ROOT="${INDIA_CORPUS_ROOT:-/home/claude/corpus_srv}"
+export RAG_API_URL="${RAG_API_URL-http://127.0.0.1:8765/query}"      # NL-29: set-but-empty stays empty (no corpus server)
+export INDIA_CORPUS_ROOT="${INDIA_CORPUS_ROOT-/home/claude/corpus_srv}"
 export MPLBACKEND=Agg
 PY="${PY:-python3}"
+STEPS="${STEPS:-pushover nlrha ddm}"
+REV="${NL_REV:-$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || true)}"; REV="${REV:-unknown}"
 DDM_CODE="NL-26"            # bump when a commit changes DDM results; stale DDM markers are re-run
 STOP="$GOLD_NL/STOP_BATCH"
 SKIPF="$GOLD_NL/SKIP_JOBS"
@@ -62,11 +67,11 @@ skipped() { [ -f "$SKIPF" ] && sed 's/#.*//; s/[[:space:]]*$//; s/^[[:space:]]*/
 stop_check() { if [ -f "$STOP" ]; then log "STOP_BATCH found -- batch stopped cleanly before: $*"; exit 0; fi; }
 ddm_current() { [ -f "$1/.batch_step_ddm" ] && grep -q "\"ddm_code\": \"$DDM_CODE\"" "$1/.batch_step_ddm"; }
 mark() {   # mark <job> <step> <seconds>
-  echo "{\"seconds\": $3, \"finished\": \"$(date -Iseconds)\", \"rev\": \"$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)\", \"ddm_code\": \"$DDM_CODE\"}" > "$1/.batch_step_$2"
+  echo "{\"seconds\": $3, \"finished\": \"$(date -Iseconds)\", \"rev\": \"$REV\", \"ddm_code\": \"$DDM_CODE\"}" > "$1/.batch_step_$2"
 }
 
 cd "$REPO" || exit 1
-log "batch start: repo $REPO @ $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null) | jobs $(echo $JOBS | wc -w) | parallel $PARALLEL"
+log "batch start: repo $REPO @ $REV | jobs $(echo $JOBS | wc -w) | parallel $PARALLEL | steps $STEPS"
 
 for rel in $JOBS; do
   J="$GOLD_NL/$rel"
@@ -86,7 +91,7 @@ for rel in $JOBS; do
     log "JOB $rel collect ok"
   fi
   # 2-4 the analyses, one step at a time (resumable)
-  for step in pushover nlrha ddm; do
+  for step in $STEPS; do
     if [ -f "$J/.batch_step_$step" ]; then
       if [ "$step" != ddm ] || ddm_current "$J"; then log "JOB $rel $step already done"; continue; fi
       log "JOB $rel ddm marker predates $DDM_CODE -- DDM re-run"

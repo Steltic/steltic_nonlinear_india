@@ -81,3 +81,17 @@ def test_skip_jobs_file_is_never_started(tmp_path):
     runs = [c for c in calls if " run " in c]
     assert runs and all(c.split()[3].endswith("R_here") for c in runs)
     assert log.count("listed in") == 2
+
+
+def test_steps_subset_and_rev_stamp(tmp_path, monkeypatch):
+    """NL-29: STEPS limits the analysis steps (a trial slice never writes batch_done.json); NL_REV stamps the markers
+    (the PC package is a plain copy without .git)."""
+    g = tmp_path / "gold"
+    j = _job(g, "S", [])
+    monkeypatch.setenv("STEPS", "pushover")
+    monkeypatch.setenv("NL_REV", "abc1234")
+    calls, log = _run(tmp_path, ["S"])
+    runs = [c for c in calls if " run " in c]
+    assert len(runs) == 1 and "--only pushover" in runs[0]
+    assert json.load(open(j / ".batch_step_pushover"))["rev"] == "abc1234"
+    assert not (j / "batch_done.json").exists() and "steps pushover" in log

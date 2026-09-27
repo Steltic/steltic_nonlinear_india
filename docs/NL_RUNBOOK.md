@@ -165,3 +165,31 @@ was killed at start), and restarted from `/home/claude/nl/run_repo2` @ aa3009b w
 
 ETA at the switch: remaining jobs by the table above 51.9 h (-> 2026-09-29 ~13:40 +07); the jobs so far ran at ~0.7x
 their estimates -> about 2026-09-28 23:00 (+07). DDM sweeps are faster with NL-24 (Ex11 575 s at 2 workers -> 285 s at 1).
+
+## Jobs offloaded to the owner's PC (NL-28, NL-29)
+
+9 runs go to the owner's PC (Windows, 14 cores, 16 GB; WSL2 Ubuntu): IN_Ex9, IN_Ex10, IN_Ex6, IN_Ex7, IN_Ex9 units/stem,
+IN_Ex4, IN_Ex1, IN_Ex12, IN_Ex2. They are listed in `/home/claude/nl/gold_nl/SKIP_JOBS` (NL-28), so the container batch
+never starts or DDM-refreshes them. The file is re-read before every job, so no restart is needed after editing it.
+The container keeps Ex15, Ex8 and the DDM refresh pass.
+
+- Package: `/home/claude/nl/nl_pc_package.zip` (top folder `nlpc/`). It is built by `/home/claude/nl/build_pc_package.sh`
+  from this repo at the commit in `nlpc/NL_REV` and steltic_india 9402e03, both as plain copies. The job folders are
+  the batch's own `gold_nl/<job>` copies, collected here with the package code; the answers are in `nlpc/answers/`.
+  The owner follows `nlpc/README_PC.md`.
+- Runner `nlpc/run_pc.sh` calls this repo's `scripts/run_gold_batch.sh`, so the settings, markers and resume logic are
+  the batch's own, with `GOLD_NL=nlpc/jobs`, `LOG=nlpc/pc_progress.log`, largest first (`jobs/ORDER`) and
+  `--parallel 12`. The environment (`nlpc/pc_env.sh`) sets or clears every variable read: `RAG_API_URL=""`,
+  `INDIA_CORPUS_ROOT=<empty folder>`, `STELTIC_ENGINE_DIR=<package engine>`, `SNL_*` unset, `OMP_NUM_THREADS=1`.
+- Corpus independence: after collect, `snl run` / `snl report` read no corpus and open no socket. An audit hook
+  (open / socket events in every process) on IN_Ex3 (pushover, DDM, report) and IN_Ex9 (DDM gate + sweeps) found 0
+  corpus reads and 0 connects, with the corpus server up and INDIA_CORPUS_ROOT set.
+- Memory, measured on IN_Ex9 (1308 elements): NLRHA worker 474 MB (parent 488 MB), DDM worker 501 MB (parent 307 MB).
+  The budget is 600 MB per worker and 1 GB for the parent, so 12 workers use about 8.2 GB of the 12 GB WSL gets.
+  NL-29 pools the 22 DBE + MCE records, so all 12 workers stay busy.
+- PC estimate: about 8-10 h (14 h worst case), against about 34 h for these runs on the 2-core container.
+- Back here: `/home/claude/nl/merge_pc_results.sh <nl_pc_results_*.zip>`. It checks the sha256 of every file,
+  backs up any existing outputs to `<job>/_before_pc_merge_<stamp>/`, and copies the files into `gold_nl/<job>/`.
+  It then runs `snl report` for each run from the worktree `/home/claude/nl/merge_repo` at the package commit, and
+  logs a MERGE line per run in `batch_progress.log`. The PC's step markers come along (rev = the package commit,
+  ddm_code NL-26).

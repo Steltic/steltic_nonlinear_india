@@ -438,7 +438,15 @@ def _report_india(args, pkg, prm, out):
     _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0)
 
 
+def _indexed_record_worker(kj):
+    """NL-29 pool entry: (k, job) -> (k, run_record_worker(job)) so results can arrive in any order."""
+    from . import run as RN
+    k, job = kj
+    return k, RN.run_record_worker(job)
+
+
 def _run_india(args, pkg, prm, ch16, TL, t0):
+    import copy
     import pickle
     from . import run as RN
     _target_kind(args, pkg)
@@ -468,8 +476,12 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
     out = args.out or os.path.join(str(pkg.root), "nlrha"); os.makedirs(out, exist_ok=True)
     pp = _pushover_pkg(args, pkg)
     per_level, hz = {}, None
+    plan = []
     for lv in _levels(args, pkg):
         gm, chosen, hz = _gm_select(args, pkg, recs, sets, TL, lo, hi, lv, modal)
+        # NL-29: the selection scales the SHARED library record dicts in place (rec["sf"], ...); the next level's
+        # selection would overwrite them before this level's records are dispatched -> snapshot this level now
+        gm, chosen, hz = copy.deepcopy(gm), copy.deepcopy(chosen), copy.deepcopy(hz)
         sel = list(range(1, len(chosen) + 1))
         only = getattr(args, "only_records", None)
         if only:
@@ -481,15 +493,34 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
                  args.integrator, torsion) for i in sel]
         print("[nlrha %s] %d records (suite of %d), scale factors %.3f-%.3f" % (lv, len(jobs), len(chosen),
               min(r["sf"] for r in chosen), max(r["sf"] for r in chosen)), flush=True)
-        if args.parallel > 1:
-            import multiprocessing as mp
-            with mp.get_context("spawn").Pool(args.parallel) as pool:
-                results = pool.map(RN.run_record_worker, jobs)
-        else:
-            results = [RN.run_record_worker(j) for j in jobs]
+        plan.append((lv, gm, chosen, hz, sel, jobs))
+    # NL-29: one worker pool for the records of ALL levels (DBE + MCE = 22 tasks), so --parallel above 11 is used and a
+    # level's longest record no longer idles the other workers; the stronger (later) level is dispatched first. Each
+    # record is the same pure worker call as before (results identical); a line per finished record shows progress.
+    order = [(li, ji) for li in reversed(range(len(plan))) for ji in range(len(plan[li][5]))]
+    tasks = [(k, plan[li][5][ji]) for k, (li, ji) in enumerate(order)]
+    flat, t_pool = [None] * len(tasks), time.time()
+
+    def _done(k, res):
+        flat[k] = res; li, ji = order[k]; n = sum(r is not None for r in flat)
+        print("[nlrha] record done %d/%d: %s #%d %s -- %s (%.0f s elapsed)" % (
+            n, len(tasks), plan[li][0], plan[li][4][ji], (res or {}).get("record"),
+            "converged" if (res or {}).get("converged") else "NOT converged: %s" % (res or {}).get("reason"),
+            time.time() - t_pool), flush=True)
+    if args.parallel > 1 and tasks:
+        import multiprocessing as mp
+        with mp.get_context("spawn").Pool(min(args.parallel, len(tasks))) as pool:
+            for k, res in pool.imap_unordered(_indexed_record_worker, tasks, chunksize=1):
+                _done(k, res)
+    else:
+        for k, j in tasks:
+            _done(k, RN.run_record_worker(j))
+    by = dict(zip(order, flat))
+    for li, (lv, gm, chosen, hz_lv, sel, jobs) in enumerate(plan):
+        results = [by[(li, ji)] for ji in range(len(jobs))]
         odir = os.path.join(out, lv); os.makedirs(odir, exist_ok=True)
         d = dict(results=results, gm=gm, modal=modal, gtab=gtab, split=split, PG=PG, ch16=ch16, numerics=numerics,
-                 hazard=hz, level=lv, selected_indices=sel)
+                 hazard=hz_lv, level=lv, selected_indices=sel)
         with open(os.path.join(odir, "raw_results.pkl"), "wb") as f:
             pickle.dump(d, f)
         json.dump(dict(modal=modal, gm=gm), open(os.path.join(odir, "gm_scaling.json"), "w"), indent=1, default=str)
