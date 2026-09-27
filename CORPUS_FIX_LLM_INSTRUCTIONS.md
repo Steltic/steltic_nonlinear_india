@@ -28,20 +28,27 @@ Contents:
 
 ### 1.1 Inputs
 
-- `corpus.zip`: the first-pass corpus. Unzip it into a work folder; call it `<corpus>` below. Its root should hold `documents/`, `indexes/` and `search/`. It may also hold `scripts/` (the hub's bundled corpus scripts), `cache/`, `queue/` and `INDIA_MANIFEST.json`.
+- `corpus.zip`: the first-pass corpus. It is a zip of the hub's corpus folder, holding `documents/`, `indexes/`, `search/`, `scripts/` and `INDIA_MANIFEST.json`, either at the root or under one folder. Unzip it into a work folder; call it `<corpus>` below.
+  - `scripts/` is the hub's bundled corpus tooling: the `*.py` code, plus any data files (`*.json`, see 4.12) that are already present.
+  - The zip may also hold `cache/`, `queue/` or `pdfs/`. Ignore them.
 - The PDF folder. File names are arbitrary. Identify each PDF by its title page (step 1).
 - This file.
 
 Work in three folders: `<corpus>`, `<pdfs>` (copies or symlinks of the PDFs, renamed `<STEM>.pdf`) and `<scratch>` (page renders, crops, OCR output, traces). **Nothing from `<pdfs>` or `<scratch>` goes into the output.**
 
-If the zip has no `scripts/` folder, ask the user for the hub workspace's `scripts/` folder. It is the corpus module's code: `build_index.py`, `validate.py`, `retrieval.py`, `corpus_fixes.py` and so on. If you cannot get it, do every content fix in section 4, skip steps 10 and 11, check the probes in 6.11 by hand, and tell the user in FIX_REPORT.md to run **Rebuild index** and then **Validate corpus** in the hub.
+If the zip has no `scripts/*.py`, ask the user to re-zip the hub's corpus folder with its `scripts/` folder. The Corpus tab of the hub's IS corpus module prints where that folder is. If you cannot get the scripts:
+
+- do every content fix in section 4;
+- skip steps 10 and 11;
+- run the checks of 6.11 by reading the files;
+- tell the user in FIX_REPORT.md that the import (1.3) rebuilds and validates.
 
 ### 1.2 Output: `corpus_fixed.zip`
 
-The zip must have exactly this layout at its root. Paths are relative; there is no enclosing folder.
+The hub's **Import fixed corpus** tab (`scripts/import_corpus_zip.py`) takes exactly these entries, at the root of the zip (or under one folder):
 
 ```
-documents/standards/<STEM>/                    one folder per stem (section 2)
+documents/standards/<STEM>/                    one folder per stem (section 2); REQUIRED
     markdown/<STEM>.search.md                  the SERVED text, all pages, with page markers (4.1)
     markdown/pages_search/page_NNN.md          one file per page, same text as the matching segment
     markdown/<STEM>.md, pages/, pages_recovered/, chunks/, furniture/, <STEM>.furniture.md
@@ -53,28 +60,43 @@ documents/standards/<STEM>/                    one folder per stem (section 2)
     structured/sections.csv, sections_check.json   IS 808 / IS 811 / IS 1161 only (4.5)
     structured/table1_unit_weights.csv         IS 875-1 only (4.6)
     structured/{<STEM>.json, blocks.jsonl, page_map.json, furniture_by_page.json, chunks/}  conversion output
-    indexes/{documents,sections,equations,tables}.json   per-document indexes (rebuilt)
+    indexes/{documents,sections,equations,tables}.json   per-document indexes (rebuilt WITH the PDFs, 5.2)
     equations/, convert_meta.json, postprocess_meta.json, validate_report.json   (keep)
 indexes/{documents,sections,equations,tables,aliases,us_terms_not_in_IS,master_toc,build_stats,validate_corpus}.json
 indexes/master_toc.md
-search/spec_fts.sqlite                         FTS5 index, rebuilt by build_index.py
+search/spec_fts.sqlite                         FTS5 index from your final build
 INDIA_MANIFEST.json                            rebuilt by the build
-scripts/quality.json, scripts/bis_manual_sections.json, scripts/is811_manual.json
-                                               ONLY the ones you changed; data files, never .py (4.10)
-FIX_REPORT.md                                  section 9
+FIX_REPORT.md                                  section 9 (the import keeps it in the corpus folder)
+scripts/*.json                                 EVERY corpus data file (4.12), never *.py
 ```
 
-Leave out of the zip:
+**What the import does with anything else:**
 
-- PDFs, page images, crops and overlays;
-- `cache/` (the query cache is rebuilt, and a stale one is discarded anyway) and `queue/`;
+- Every other entry is ignored: `cache/`, `queue/`, `pdfs/`, PDFs anywhere, other top-level files.
+- `scripts/*.py` in the zip is **not** applied; it is set aside for review.
+- The zip is refused if it has no `documents/standards/<STEM>/`, holds more than one corpus folder, or contains absolute paths, `..` or symbolic links.
+
+Also leave out:
+
+- page images, crops and overlays;
 - `__pycache__/`;
-- backup files (`*.bak*`, for example `*.search.md.bak_ocr_*`);
-- any modified `.py` file.
+- backup files (`*.bak*`, for example `*.search.md.bak_ocr_*`).
 
-If a code change is needed (for example a new alias group or a new retrieval rule), describe it in FIX_REPORT.md under "Proposed code changes" and do not ship it. The hub copies its own `scripts/*.py` over the workspace's, so shipped code would be lost anyway.
+**Ship every data file in `scripts/*.json`.** The import moves **all** of the workspace's current `scripts/*.json` into a backup, then applies only the zip's. Any data file you leave out is therefore gone from the user's corpus. That includes `quality.json`, `bis_manual_sections.json`, `is811_manual.json` and `is808_fixes.json`: ship each one that exists or that you created (4.12). `aliases.json` is regenerated by every build, and shipping it is harmless.
 
----
+If a code change is needed (for example a new alias group or a new retrieval rule), describe it in FIX_REPORT.md under "Proposed code changes" and do not ship it.
+
+### 1.3 What the user does with it
+
+In the hub: **IS corpus → Import fixed corpus**, pick `corpus_fixed.zip`, and keep *Rebuild index (no repair) and Validate corpus afterwards* ticked. The import:
+
+1. checks the zip and stops the grounding server;
+2. moves the current `documents/`, `indexes/`, `search/`, `cache/`, `INDIA_MANIFEST.json`, `FIX_REPORT.md` and `scripts/*.json` into a timestamped backup;
+3. moves the zip's content into their place;
+4. runs `build_index.py --no-repair` and then `validate.py --corpus`;
+5. restarts the server.
+
+The hub **does not repair** the per-document indexes after an import. The indexes, the structured records and `search/spec_fts.sqlite` you ship are the ones it serves, so they must come from your final with-PDF build (5.2), followed by a `--no-repair` build (6.10). Before you hand the zip over, run the same import yourself on a copy of the first-pass corpus (6.12).
 
 ## 2. Documents, stems, editions, collections
 
@@ -111,7 +133,7 @@ The stems are fixed. The engines, the hub's server and every index key on them. 
 **When the user lacks a PDF:**
 
 - Stem in the zip but no PDF: do only the fixes that need no PDF, namely the watermark, metadata, the file format and the build. Change no standard text. Set its quality in `scripts/quality.json` and `documents.json` to what you can vouch for (at most `UNREVIEWED`), and list it in FIX_REPORT.md.
-- Stem absent from the zip: do not create it. The engines will receive "`<stem>` is not in the corpus" (`not_found_kind: document_not_in_corpus`), which is honest. The validate probes for that stem will fail: list them as "expected failures: document not supplied".
+- Stem absent from the zip: do not create it. The engines will receive "`<stem>` is not in the corpus" (`not_found_kind: document_not_in_corpus`), which is honest. The validator reports that stem's probes as `SKIP`. List the stem in FIX_REPORT.md as not supplied.
 - Never add a stem for a document the user did not supply, such as IS 456, IS 1367 or IS 11384. Never copy text from another source into a stem.
 
 **Page numbers.** Every page number in this file is the **pdf page of the reference licensed copies** ("ref p."). Your copy may be offset, for example by a store cover page. Find each item by its caption or clause id. Record the offset for each stem in FIX_REPORT.md.
@@ -263,13 +285,25 @@ The rules:
 - `repairs` records every cell changed by a documented rule.
 - `sections_check.json`: `{stem, rows, pass, fail, repaired_rows, unresolved:[{designation, pdf_page, check}], quarantined:[…], source, plate_area_check}`.
 - **Generation.**
-  - Generate with `python scripts/build_section_tables.py --pdf-dir <pdfs>`. It needs `pdftotext`/`pdfinfo` and, for IS 811, `pdftoppm` + `tesseract`, and it runs `apply_section_checks`. Then correct single rows by hand (step 6.6).
+  - Generate with `python scripts/build_section_tables.py --pdf-dir <pdfs>` (add `--only <STEM>` to redo one standard). It needs `pdftotext`/`pdfinfo` and, for IS 811, `pdftoppm` + `tesseract`, and it runs `apply_section_checks`.
+  - Then correct rows through the data files below, re-run the script, and hand-edit single rows only as step 6.6 describes. A hand edit that no data file records is lost the next time the script runs.
   - **The structured records reach the index only through a with-PDF build** (5.2). `refresh_structured_rows` in a `--no-repair` build only refreshes records that already exist.
 - `scripts/is811_manual.json` holds IS 811 cells that you read from the page image because both OCR sources failed:
   `{"_note": "...", "rename": {"<table>|<designation as OCR read it>": {"designation": "<true>", ...}}, "cells": {"<table>|<designation>": {"<col>": value, ...}}}`.
   - Values are in the **printed** units (cm, cm², cm⁴, cm⁶, kg/m).
   - `"_misprint": true` marks a printed value that is inconsistent with the rest of its row: it is kept as printed and flagged.
-  - If the hub did not ship this file, create it.
+  - The hub ships none: create it for the cells you read. `is811_sections.apply_manual` applies it on every run of `build_section_tables.py`.
+- `scripts/is808_fixes.json` holds IS 808 rows whose text-layer line is broken (values missing, shifted or glyph-damaged), with the values read from **your** page image. `build_section_tables.parse_is808` applies it:
+  ```json
+  {"text_fixes":  [{"page": 10, "designation": "<designation as printed>",
+                    "splice": {"start": -3, "end": null, "with": ["<value>", "..."]}, "note": "why, pdf p. N"}],
+   "token_fixes": [{"page": 29, "designation": "<designation>", "map": {"<token as the text layer has it>": "<token as printed>"},
+                    "note": "why, pdf p. N"}]}
+  ```
+  - `page` is the pdf page and `designation` is the parsed designation of the row.
+  - `splice` replaces the row's value list `values[start:end]` with `with`, using Python slice semantics; `start: null` appends.
+  - `token_fixes` rewrites single tokens before parsing.
+  - The hub ships none. Without the file, every row is taken exactly as the text layer prints it, and the consistency checks flag the rows that do not add up.
 
 ### 4.6 IS 875 (Part 1) Table 1 rows (`structured/table1_unit_weights.csv`)
 
@@ -360,7 +394,7 @@ What to do about it:
   - `REPAIRED`: defects fixed, some prose OCR remains.
   - `DEGRADED`: values may be wrong outside the listed repairs.
   - `UNREVIEWED`: not checked.
-- **`source_pdf`.** Point it at your local `<pdfs>/<STEM>.pdf` while you work. **Before packaging, set it to `null`**: a local path is useless to the user and may reveal your environment.
+- **`source_pdf`.** Do not point it at your own paths. The scripts find a PDF by `source_pdf`, then as `<STEM>.pdf` in `$INDIA_PDF_DIRS`, then as `<STEM>.pdf` in `<corpus>/pdfs/`. Set `INDIA_PDF_DIRS=<pdfs>` (5.2) and leave `source_pdf` as the first pass wrote it: that is the user's own path. If you changed it, restore it before packaging.
 
 ### 4.11 Watermark (owner decision D11)
 
@@ -370,6 +404,21 @@ What to do about it:
 - Tools: `python scripts/strip_watermark.py --apply --paths documents indexes` rewrites files (JSON stays valid), and `--check` exits 1 if anything remains. Validate greps with `bis_text.has_watermark`, which fails on **any** non-BIS e-mail, so never write any e-mail address, including the user's, into the corpus.
 - The FTS index is rebuilt from clean text by the build.
 - **Also grep yourself** for the licensee's name and user id (read them from the PDF's watermark line) and for the IP. The regexes do not know the name.
+
+### 4.12 Data files in `scripts/` (optional; the corpus-fix step supplies them)
+
+The hub bundles the code and `aliases.json` only; no data about the standards ships with it. On install or update, the hub copies a bundled `*.json` into the corpus folder only when the file is missing there. On import (1.3), the zip's `scripts/*.json` replace **all** of the workspace's. The scripts read these files when they exist and work without them:
+
+| file | read by | effect | ship it |
+|---|---|---|---|
+| `quality.json` | `build_index.py` (every build, `--no-repair` too), `update_metadata.py` | per-stem `quality` and `known_defects` in `documents.json` (4.10) | always: update it for every supplied stem |
+| `bis_manual_sections.json` | `postprocess.repair_bis_doc_indexes` (with-PDF build only) | clause headings the text layer garbles (4.9) | if you created or kept one |
+| `is811_manual.json` | `build_section_tables.py` → `is811_sections.apply_manual` | IS 811 cells read from the page image (4.5) | if you created or kept one |
+| `is808_fixes.json` | `build_section_tables.py` → `parse_is808` | IS 808 text-layer row fixes (4.5) | if you created or kept one |
+| `aliases.json` | `retrieval.py` (fallback) | regenerated by every build (4.8) | harmless either way |
+
+- Carry every `scripts/*.json` of the input zip into the output, updated, even the ones you did not change. A file left out of the zip is removed from the user's corpus by the import.
+- Each data file holds only ids, page numbers, short printed tokens and the values you read. Give every entry a `note` or `source` naming the pdf page.
 
 ---
 
@@ -390,7 +439,7 @@ Install what is missing (`pip install pdfplumber pymupdf pillow numpy`; `apt-get
 Your PDFs are available, so use it. It re-derives clause headings, table captions, equations and structured rows from the PDF text layer and the served text.
 
 ```bash
-# 0. each stem's documents.json: set "source_pdf" to "<pdfs>/<STEM>.pdf"
+export INDIA_PDF_DIRS=<pdfs>                                 # holds <STEM>.pdf for every supplied stem
 python scripts/strip_watermark.py --apply --paths documents indexes
 python scripts/strip_watermark.py --check
 python scripts/build_section_tables.py --pdf-dir <pdfs>     # IS 808 / IS 811 / IS 1161 -> structured/sections.csv
@@ -398,9 +447,10 @@ python scripts/build_is875_1_table1.py                      # after the served T
 python scripts/serve_figure_transcriptions.py               # every line OK
 python scripts/build_index.py                               # update_docs + per-doc repair + unified build + manifest
 python scripts/strip_watermark.py --check
-python scripts/validate.py --corpus                         # prints CORPUS: PASS (n/n); writes indexes/validate_corpus.json
-python -m pytest -q tests                                   # only if tests/ exists
+python scripts/validate.py --corpus --strict                # section 6.11; writes indexes/validate_corpus.json
 ```
+
+The per-document repair runs only for a stem whose PDF is found. For any other stem, `build_index.py` prints `repair skipped for <STEM>: source PDF not found …` and uses its indexes as they are. That line must not appear for a stem whose PDF you have.
 
 ### 5.3 PDF-less build
 
@@ -417,9 +467,9 @@ python scripts/validate.py --corpus
 
 ### 5.4 After a with-PDF build
 
-Compare `indexes/build_stats.json` (`sections_spec`, `tables_spec_with_id`, `fts_rows`) with the first-pass values. If many clause records disappeared (the reference build lost about 190 when the PDFs were not found), `source_pdf` is wrong: fix it and rebuild.
+Compare `indexes/build_stats.json` (`sections_spec`, `tables_spec_with_id`, `fts_rows`) with the first-pass values. If clause records disappeared, or `repair skipped` was printed, a PDF was not found: fix `INDIA_PDF_DIRS` or the file name, and rebuild.
 
-The reference build, for scale: 17 stems, about 2 200 sections, about 2 000 table records (1 000+ of them structured rows) and 118 probes.
+For scale: a fixed corpus of all 17 stems has about 2 200 sections and about 2 000 table records, of which 1 000+ are structured rows.
 
 ### 5.5 Querying (for checks)
 
@@ -566,7 +616,7 @@ For every clause below, compare the served formula with the page image. If any s
    - **IS 1161 CHS:** A = π·t·(D − t); I = π·[D⁴ − (D − 2t)⁴]/64; Z = 2I/D; r = √(I/A).
    - **IS 811 thin-walled model:** centre-line geometry with the inside corner radius relation printed in the standard. Compute A, I, the centroid, J, x0 and Cw. Table 11 (90° corner) uses the thin-wall arc: A, I and the centroid of a quarter annulus.
 3. For each failing or unresolved row, read the row on the 300–600 dpi page image.
-   - **If the first pass misread it:** correct the cells, set `check` to `PASS (corrected from PDF p.P, <date>)`, remove the row from `unresolved`, and (IS 811) record the reads in `is811_manual.json`.
+   - **If the first pass misread it:** record the reads in `is808_fixes.json` (IS 808) or `is811_manual.json` (IS 811), and re-run `build_section_tables.py`. For IS 1161, or for a single cell no data file can express, correct the CSV row and set `check` to `PASS (corrected from PDF p.P, <date>)`. Then remove the row from `unresolved`.
    - **If the print itself is inconsistent:** keep the printed values, set `check` to `FLAG: misprint in the standard — <which relation fails>`, and list the row in `unresolved` with the reason.
 4. **Quarantine rule.**
    - A row that fails the plate-area check is `QUARANTINED` automatically by `apply_section_checks`. Its values stay as printed, and its record title says "do not use".
@@ -588,96 +638,85 @@ After the build, run the checks of 4.8 and these queries: `fts "Bengaluru"` (top
 
 ### 6.10 Rebuild
 
-Run the full with-PDF build (5.2) and check `build_stats.json` against the baseline. Then remove the `source_pdf` paths (4.10) and rebuild with `--no-repair`, so the indexes carry no local paths.
+Run the full with-PDF build (5.2) and check `build_stats.json` against the baseline. Then run a `--no-repair` build exactly as the import will (`python scripts/build_index.py --no-repair`), and confirm that the counts do not change.
 
-### 6.11 Validate
+### 6.11 Validate, then your own checks
 
-Run `python scripts/validate.py --corpus`. It must end `CORPUS: PASS (n/n probes)`.
+**A. The bundled validator.** Run `python scripts/validate.py --corpus --strict`. It checks ids and short phrases only; no values are bundled. There are 85 probes:
 
-- For each probe that fails, fix the corpus, not the probe.
-- There are four legitimate exceptions. List each in FIX_REPORT.md under "Probe exceptions", with its evidence:
-  - the document was not supplied;
-  - the user's edition differs;
-  - pagination differs (a page-number probe that fails by exactly the offset you recorded);
-  - a figure value probe whose expected string differs from your careful reading within the stated uncertainty.
-- **Never write text that is not true in order to pass a probe.** For example, do not write "Public.Resource.Org" into a provenance line if you did not use that copy.
+- **Required.** A stem you were not given is `SKIP`, never a failure.
+  - `exact_section` must hit, with `section_id` equal to the id, for:
+    - IS_1893_Part_1_2016: 6.4.2, 7.2.1, 7.2.6, 7.3.6, 7.6.2, 7.6.2.1, 7.7.1, 7.7.3, 7.8.2, 7.11.1.1;
+    - IS_800_2007: 5.3.3, 7.1.2.1, 8.2.2, 12.2.3, 12.7.2.1, 12.8.3.1, 12.11.3.2, D-1, D-2, Annex D, E-1.1;
+    - IS_875_Part_4_1987: 5.2.4;
+    - IS_875_Part_5_1987: 8.1;
+    - IS_811_1987_Amd1_2011: 8.5;
+    - IS_875_Part_3_2015: 6.3.1, 6.3.2, 6.3.3, 6.3.4, 7.2;
+    - IS_875_Part_2_1987: 3.1.2;
+    - IS_801_1975: 5.2.1.1, 6.1, 6.6.1.1;
+    - IS_18168_2023: 1, 5.5, 11.3, 12.3.3.1.
+  - Key phrases in those hits (case-insensitive): IS 18168 5.5 "Overstrength", 1 "SCOPE"; IS 1893 7.2.6 "Table 9"; IS 800 D-1 "effective length", Annex D "EFFECTIVE LENGTH"; IS 811 Amd 1 8.5 "IS 1852".
+  - `exact_table` must hit with the table's `table_id`, and the hit text must contain "Table N", for:
+    - IS 1893: 3, 7, 8, 9, 10;
+    - IS 800: 4, 5, 6, 10;
+    - IS 875-3: 1, 2, 4, 5, 6;
+    - IS 875-2: 1, 2.
+  - Retrieval behaviour:
+    - `fts k4`: IS 875-3 is the top hit;
+    - `auto "Annex D" --doc IS_800_2007`: the annex (`Annex D` or `D-…`), not a contents page;
+    - `--doc IS_456_2000`: note "IS_456_2000 is not in the corpus";
+    - `auto "Ω0"`: `found:false` with the US-term note;
+    - `fts "Bengaluru"`: the top two are IS 875-3 and IS 1893;
+    - `fts "Noida zone"`: `not_tabulated`;
+    - `fts "response reduction factor"`: IS 1893 first;
+    - `--doc IS_875_Part_4_2021`: hit edition "2021".
+  - Editions: IS_800_2007 "2007", IS_2062_Part_1_2025 "2025", IS_811_1987_Amd1_2011 "2011", IS_1893_Part_1_2016 "2016+A1+A2", IS_875_Part_4_1987 "2021", IS_18168_2023 "2023".
+  - The corpus is non-empty; `indexes/aliases.json` is present with no US groups; no watermark or non-BIS e-mail in `documents/` or `indexes/*.json`.
+- **Advisory** (`WARN`; a failure under `--strict`): the corpus-fix records exist.
+  - `exact_table` for IS 875-3 `Fig. 1`, `Fig. 2`, `Fig. 4`, `Fig. 10`, `Fig. 11`, `Fig. 14`, `Fig. 15`;
+  - IS 875-4 `Fig. 1`, `5.2.1-shape`, `5.2.2-shape`, `5.2.3-shape`;
+  - the section rows `HB 300` (IS 808), `CLR100X50X15X2` (IS 811) and `168.3x6.3` (IS 1161);
+  - IS 875-1 Table 1 row records.
 
-**The full probe list** (validate.py `--corpus`, reference build: 118 probes). Use it to verify by hand if validate.py is missing.
+The last line must read `CORPUS: PASS (n/n probes; skipped k …; corpus-fix advisories 0)`. For each failure or advisory, fix the corpus, never the probe. Legitimate exceptions go in FIX_REPORT.md under "Probe exceptions", with evidence: the document was not supplied; the user's edition differs (edition probe); a figure you could not transcribe because its page is illegible (advisory).
 
-- "Key" means that text must be in the hit.
-- `<…>` means: read the value from your PDF and check that it is present.
-- Collections: prefix `engineering_standards_` to the short name.
+**B. Your own checks: they carry the values.** The validator does not check a single value. For **every** item you changed (each transcribed table, figure record, canonical line, corrected section row and restored clause), run a query and compare the answer with the PDF page, value by value. Record each check in FIX_REPORT.md under "Value checks" as a row: `query | doc | pdf p. | what was compared (ids, cells, n values) | result`. Write no standard text into the report beyond ids and quotes of 15 words or fewer (rule 8.2). Include at least these behavioural checks:
 
-| # | probe (type, query / id, doc) | collection | expected key |
-|---|---|---|---|
-| 1–10 | `exact_section` 6.4.2, 7.2.1, 7.2.6, 7.3.6, 7.6.2, 7.6.2.1, 7.7.1, 7.7.3, 7.8.2, 7.11.1.1 — IS_1893_Part_1_2016 | IS1893 | found; hit section_id equals the id; 7.2.6 contains "Table 9"; 7.3.6 contains `<the minimum partition load value>` |
-| 11–21 | `exact_section` 5.3.3, 7.1.2.1, 8.2.2, 12.2.3, 12.7.2.1, 12.8.3.1, 12.11.3.2, D-1, D-2, Annex D, E-1.1 — IS_800_2007 | IS800 | found; D-1 contains "effective length"; Annex D contains "EFFECTIVE LENGTH" |
-| 22 | `exact_section` 5.2.4 — IS_875_Part_4_1987 | IS875_P4 | the canonical angle condition, the μw bounds and the l3 bounds, in the canonical-line notation |
-| 23 | `exact_section` 8.1 — IS_875_Part_5_1987 | IS875_P5 | "h) DL+IL+TL", "j) DL+WL+TL", and the Notes' dead-load factor phrase |
-| 24 | `exact_section` 8.5 — IS_811_1987_Amd1_2011 | IS811_Amd1 | "IS 1852" |
-| 25–29 | `exact_section` 6.3.1, 6.3.2, 6.3.3, 6.3.4, 7.2 — IS_875_Part_3_2015 | IS875_P3 | found; 6.3.4 contains `<the two k4 values>` |
-| 30 | `exact_section` 3.1.2 — IS_875_Part_2_1987 | IS875_P2 | found |
-| 31–33 | `exact_section` 5.2.1.1, 6.1, 6.6.1.1 — IS_801_1975 | IS801 | found |
-| 34–37 | `exact_section` 1, 5.5, 11.3, 12.3.3.1 — IS_18168_2023 | IS18168 | 1 contains "SCOPE"; 5.5 contains "Overstrength" and `<both Ω values>`; 11.3 and 12.3.3.1 each contain `<the value printed in the clause>` |
-| 38–42 | `exact_table` 3, 7, 8, 9, 10 — IS_1893_Part_1_2016 | IS1893 | hit table_id equals the id and its text contains "Table N" |
-| 43–46 | `exact_table` 4, 5, 6, 10 — IS_800_2007 | IS800 | same |
-| 47–51 | `exact_table` 1, 2, 4, 5, 6 — IS_875_Part_3_2015 | IS875_P3 | same |
-| 52–53 | `exact_table` 1, 2 — IS_875_Part_2_1987 | IS875_P2 | same |
-| 54 | `exact_table` 7 — IS 1893 | IS1893 | first hit is the caption page (ref p. 21), not the p. 22 mention |
-| 55 | `fts` k4 (no doc) | — | top hit IS_875_Part_3_2015, the 6.3.4 page (ref p. 10–11) |
-| 56 | `exact_table` 2 — IS_801_1975 | IS801 | `<two basic design stress values>` served; OCR garbage "M1NoIuu" / "YIBLD" absent from the hit and the title |
-| 57 | `exact_table` 4 — IS_800_2007 | IS800 | "γf" + `<one load factor>`; "y~," absent |
-| 58 | `exact_table` 10 — IS_800_2007 | IS800 | "Buckling Class"; "(3am" absent |
-| 59 | `exact_table` 2 — IS_875_Part_3_2015 | IS875_P3 | column header "Terrain Category 3, k2 (5)" + `<two k2 values>`; the converted title "Terrain and Height Multiplier ( k 2 )" absent |
-| 60 | `exact_table` 2 — IS_18168_2023 | IS18168 | fraction forms "…ε/√Ry" restored `<with printed coefficients>`; the split math-italic form ("𝜀 √𝑅 y") absent |
-| 61 | `exact_table` 11 — IS_811_1987 | IS811 | `<a Ri value>`; "UNVERIFIED" gone once you fill the three cells (the reference probe still expects it: note the change); "I.87" OCR form absent |
-| 62 | `fts` "Table 2 basic design stress yield" — IS_801_1975 | IS801 | top hit has the transcription; not "M1NoIuu" |
-| 63 | `fts` "Table 4 partial safety factors for loads" — IS_800_2007 | IS800 | top hit has "γf"; not "y~," |
-| 64 | `fts` "plain cement concrete sand and gravel" — IS_875_Part_1_2026 | IS875_P1 | top hit has `<the printed unit-weight range>` |
-| 65 | `fts` "steel sections density" — IS_875_Part_1_2026 | IS875_P1 | top hit has the steel density with the [sic] unit note |
-| 66 | `fts` "reinforced cement concrete 2 percent steel" — IS_875_Part_1_2026 | IS875_P1 | top hit has `<the printed range>` |
-| 67 | `exact_table` "Fig. 10" — IS 875-3 | IS875_P3 | peak line "`<value>` at x ≈ `<x>`" per curve; the corrected x-tick sequence; provenance with "confirm against the licensed copy" |
-| 68 | `exact_table` "Fig. 11" — IS 875-3 | IS875_P3 | curve label "6:1:2"; peak lines; provenance |
-| 69 | `exact_table` "Fig. 4" — IS 875-3 | IS875_P3 | curve labels "h/b = ∞" and "h/b = 1/4"; a table row "`| a/b | … |`"; provenance |
-| 70 | `exact_table` "Fig. 2" — IS 875-3 | IS875_P3 | the printed Cpi values with sign (Unicode minus "−"); provenance |
-| 71 | `exact_table` "Fig. 1" — IS 875-3 | IS875_P3 | "Kochi (Cochin)", "Noida", a Vb cell `| <value> |`; provenance |
-| 72 | `exact_table` "Fig. 14" — IS 875-3 | IS875_P3 | "Cliff and Escarpment" + intercept rows; provenance |
-| 73 | `exact_table` "Fig. 15" — IS 875-3 | IS875_P3 | "Ridge and Hill" + intercept rows; provenance |
-| 74 | `exact_table` "Fig. 1" — IS_875_Part_4_1987 | IS875_P4 | "`| Srinagar |`", "boundary: EOR confirm", the A-3 s0 expression, the georeferencing equations; provenance |
-| 75–77 | `exact_table` "5.2.1-shape", "5.2.2-shape", "5.2.3-shape" — IS 875-4 | IS875_P4 | the μ expressions of each case; provenance |
-| 78–89 | `auto` queries → figure record in the top k: "across wind force spectrum coefficient" → Fig. 10 (k 2); "across wind force spectrum coefficient Cfs values (Fig. 10 / Fig. 11)" → Fig. 11 (k 2); "Fig. 2 large openings in buildings values of internal pressure coefficients" → Fig. 2 (k 2); "force coefficients for clad buildings of uniform section Figure 4", "7.4.2.1 force coefficients rectangular clad buildings a/b h/b Fig. 4", "Fig. 4 force coefficient rectangular clad building (figure values)" → Fig. 4 (k 1); "Himachal Pradesh zone map snow" → IS 875-4 Fig. 1 (k 2); "Fig. 1 snow zone map Srinagar zone number", "snow load Chandigarh" → IS 875-4 Fig. 1 (k 1); "5.2.1 pitched roof shape coefficient", "Monopitched and Simple Pitched Roofs" → 5.2.1-shape (k 1); "Annex C topography factor s ridge hill figure" → IS 875-3 Fig. 15 (k 1) | IS875_P3 / P4 | found, and the id is in the top k |
-| 90–92 | `exact_table` "Figure 10", "FIG. 11", "fig 4" — IS 875-3 | IS875_P3 | ids returned are exactly ["Fig. 10"], ["Fig. 11"], ["Fig. 4"] |
-| 93 | `exact_section` "Figure 10" — IS 875-3 | IS875_P3 | returns only the Fig. 10 record |
-| 94 | `exact_table` "Fig. 1" — IS 875-3 | IS875_P3 | returns only "Fig. 1" (not Fig. 10 or 11) |
-| 95 | `exact_section` 5.2.1 — IS 875-4 | IS875_P4 | serves the 5.2.1 shape-coefficient expression |
-| 96 | `fts` "snow load Srinagar" | — | top hit table_id "Fig. 1", snippet has "`| Srinagar |`" and its zone cell |
-| 97 | `fts` "Kochi basic wind speed Annex A" — IS 875-3 | IS875_P3 | found false, not_tabulated true, note contains "Vb = `<reading>` m/s" |
-| 98 | documents.json of IS_875_Part_4_1987 | — | title has 2021 and not 1987; standard = "IS 875 (Part 4):2021" |
-| 99 | `exact_table` "CLR100X50X15X2" — IS_811_1987 | IS811 | exactly one hit; title has "Table 6" and "100 x 50 x 15 x 2.00" |
-| 100 | IS 808 sections.csv | — | every I/channel row within ±5 % plate area or QUARANTINED; WPB 280 X 280 X 284.13 still QUARANTINED, or, if you corrected it from the PDF, PASS (note the probe change) |
-| 101–102 | "Annex D" (auto) and `fts` "effective length Annex D" — IS_800_2007 | IS800 | top hit is the annex text (ref p. 128–129), never a contents page |
-| 103 | `fts` "development length" — doc IS_456_2000 | — | found false, note exactly "IS_456_2000 is not in the corpus" |
-| 104 | `exact_table` "HB 300" — IS_808_2021 | IS808 | table_id "HB 300", `<its printed mass>` |
-| 105 | `exact_table` "168.3x6.3" — IS_1161_2014 | IS1161 | `<its I in mm⁴>` |
-| 106 | `fts` "Bengaluru" | — | top two docs = IS 875-3 (Annex A) and IS 1893 (Annex E) |
-| 107 | `fts` "Noida zone" | — | found false, not_tabulated true |
-| 108 | `auto` "Ω0" | — | found false, us_term set |
-| 109 | `fts` "response reduction factor" | — | top hit IS_1893_Part_1_2016 |
-| 110 | `fts` "characteristic ground snow load" — doc IS_875_Part_4_2021 | IS875_P4 | resolves; hit edition "2021" |
-| 111–116 | editions | — | IS_800_2007 "2007", IS_2062_Part_1_2025 "2025", IS_811_1987_Amd1_2011 "2011", IS_1893_Part_1_2016 "2016+A1+A2", IS_875_Part_4_1987 "2021", IS_18168_2023 "2023" |
-| 117 | indexes/aliases.json | — | no "SDS", "S_DS", "Cd", "Steel02", "forceBeamColumn" groups |
-| 118 | every .md/.json/.jsonl/.txt/.csv under documents/ and indexes/*.json | — | no watermark, no non-BIS e-mail |
+- `exact_table` on a transcribed table returns the transcription on the exact path **and** as the top full-text hit for its caption words. The garbled grid strings of the first pass are absent from both, and from the record's title.
+- `exact_table "Table 7" --doc IS_1893_Part_1_2016` returns the caption page, not a page that mentions it.
+- `exact_table "Fig. 1" --doc IS_875_Part_3_2015` returns only `Fig. 1`, never `Fig. 10` or `Fig. 11`. The spellings `Figure 10`, `FIG. 11` and `fig 4` return exactly that figure, and so does `exact_section "Figure 10"`.
+- Natural queries find the figure records in the top 1–2 hits:
+  - "across wind force spectrum coefficient" (IS 875-3 Fig. 10 / 11);
+  - "Fig. 2 large openings in buildings values of internal pressure coefficients";
+  - "force coefficients for clad buildings of uniform section Figure 4";
+  - "Himachal Pradesh zone map snow" and "snow load Chandigarh" (IS 875-4 Fig. 1);
+  - "Monopitched and Simple Pitched Roofs" (5.2.1-shape);
+  - "Annex C topography factor s ridge hill figure" (Fig. 15).
+- `fts "snow load Srinagar"`: the top hit is IS 875-4 `Fig. 1`, with the Srinagar row as the snippet.
+- `fts "Kochi basic wind speed Annex A" --doc IS_875_Part_3_2015` stays `not_tabulated`, and its note quotes the Fig. 1 reading. `fts "Noida zone"` stays `not_tabulated`.
+- `exact_section 5.2.1 --doc IS_875_Part_4_1987` serves the shape coefficients.
+- `exact_table "CLR100X50X15X2" --doc IS_811_1987` returns exactly one record, whose title names Table 6.
+- Every IS 808 I or channel row passes the plate-area check or is `QUARANTINED`.
+- `fts` "Table 2 basic design stress yield" (IS 801) and "Table 4 partial safety factors for loads" (IS 800) return the transcriptions as their top hits.
+- The IS 875-1 row records answer "plain cement concrete sand and gravel", "reinforced cement concrete 2 percent steel" and "steel sections density" with the printed entries.
+- IS 875-4 `documents.json`: the title contains 2021 and not 1987, and `standard` is `IS 875 (Part 4):2021`.
 
-**Add a probe for every new item** in FIX_REPORT.md (a query and a short key), and for every figure and table you transcribe, so the user can extend validate.py.
+**Never write text that is not true in order to pass a check.**
 
-### 6.12 Package
+### 6.12 Package and test the import
 
-1. Delete `cache/`, `queue/`, `__pycache__/`, `*.bak*` and every page image or PDF under `<corpus>`.
-2. Set `source_pdf` to `null`.
-3. Run `strip_watermark.py --check` a final time, and the validator a final time.
-4. Zip the layout of 1.2: `cd <corpus> && zip -r ../corpus_fixed.zip documents indexes search INDIA_MANIFEST.json FIX_REPORT.md [scripts/<changed data files>]`.
-5. List the zip contents, and check that it holds no `.pdf`, `.png` or `.jpg`, and no `.py`.
-6. Give the user the zip and FIX_REPORT.md.
+1. Delete `cache/`, `queue/`, `pdfs/`, `__pycache__/`, `*.bak*` and every page image or PDF under `<corpus>`.
+2. Restore any `source_pdf` you changed (4.10).
+3. Run `strip_watermark.py --check` a final time, then `build_index.py --no-repair` and `validate.py --corpus --strict` a final time.
+4. Put FIX_REPORT.md in `<corpus>`, then zip the layout of 1.2:
+   `cd <corpus> && zip -r ../corpus_fixed.zip documents indexes search INDIA_MANIFEST.json FIX_REPORT.md scripts/*.json -x '*/__pycache__/*'`.
+5. List the zip contents, and check that it holds no `.pdf`, `.png`, `.jpg` or `.py`.
+6. **Test the import** on a fresh copy of the unzipped **first-pass** corpus (with its `scripts/`):
+   `python <copy>/scripts/import_corpus_zip.py corpus_fixed.zip --root <copy> --dry-run`, and then the same command with `--rebuild` in place of `--dry-run`.
+   - The script must exit 0 and list every stem.
+   - It must say that the data files were applied.
+   - Its validate run must end `CORPUS: PASS`.
+7. Give the user `corpus_fixed.zip` and FIX_REPORT.md.
 
 ---
 
@@ -693,7 +732,7 @@ These were found in first-pass conversions of the same documents. Expect each on
   - For IS 1893 the searchable body had to be rebuilt from the `pdftotext` text layer (kept in `markdown/pages_recovered/`).
   - Restore any caption that was lost with it.
 - **Two-column interleaving** in the `pdftotext -layout` text. A left-column clause and a right-column formula share a line. Linearise it.
-- **Converted grids served on search paths** after a transcription existed. Hence the K02 pattern: the transcription must replace the grid everywhere, and probes check that garbled strings are absent.
+- **Converted grids served on search paths** after a transcription existed. Hence the K02 pattern: the transcription must replace the grid everywhere, and your checks (6.11 B) confirm that the garbled strings are gone.
 - **Tables not recognised**: the caption was garbled, or it was a text mention only. See the caption rule in 4.1. Text mentions must not become table records.
 - **Clause ids missing**: headings garbled, annex ids not indexed ("Annex D" answered by the contents page). Annex ids `D-1`, `E-1.1` and `Annex D` must be exact sections. Contents pages are flagged and demoted.
 - **Page labels**: covers labelled with a year; shifted folios.
@@ -810,7 +849,9 @@ Close every one of these, or report it still open with its reason:
 
 The job is accepted when all of these hold:
 
-- `python scripts/validate.py --corpus` prints `CORPUS: PASS`, apart from the documented probe exceptions (6.11). If validate.py is missing, the table in 6.11 is checked by hand with `search.py`, and the result of each probe is reported.
+- `python scripts/validate.py --corpus --strict` prints `CORPUS: PASS`, with no advisories for the supplied stems, apart from the documented exceptions (6.11 A). If validate.py is missing, run the checks of 6.11 A by hand with `search.py` and report each one.
+- Every change has a value check against the PDF page in FIX_REPORT.md (6.11 B), and every check passes. This is the evidence for the values; the validator checks none.
+- The import test of 6.12 step 6 passes.
 - `strip_watermark.py --check` exits 0, and the manual grep for the licensee is empty.
 - `serve_figure_transcriptions.py` prints only `OK`.
 - Every item of 7.2 and 7.3 for the supplied stems is fixed or listed as unresolved with its reason.
@@ -829,10 +870,11 @@ The job is accepted when all of these hold:
 ## Section tables          rows corrected (designation, cell, pdf p.), rows quarantined or flagged and why
 ## Metadata                edition, title and quality changes per stem
 ## Unresolved              item, pdf p., why (TODO(verify) list)
-## Probe results           full validate output (PASS/FAIL per probe); exceptions with evidence
-## New probes to add       (query / id, doc, short key) for each new transcription and fix
+## Validate               full validate.py --corpus --strict output (PASS/FAIL/WARN/SKIP per probe); exceptions with evidence
+## Value checks           | query | doc | pdf p. | compared (ids, cells, n values) | result |  -- one row per change (6.11 B)
+## Import test            import_corpus_zip.py --dry-run / --rebuild output on a copy of the first-pass corpus
 ## Proposed code changes   e.g. alias groups, OVERRIDES corrections, seismic not_tabulated note
-## Files the user must keep   scripts/ data files shipped in the zip (quality.json …)
+## Data files             scripts/*.json shipped (quality.json, bis_manual_sections.json, is811_manual.json, is808_fixes.json …): what each holds
 ```
 
-Hand the user `corpus_fixed.zip` and `FIX_REPORT.md`. Tell them to drop the zip into the hub's IS corpus module, then run **Rebuild index** and **Validate corpus** there.
+Hand the user `corpus_fixed.zip` and `FIX_REPORT.md`. Tell them to open the hub's **IS corpus → Import fixed corpus**, pick the zip, and keep *Rebuild index (no repair) and Validate corpus afterwards* ticked (1.3). The previous corpus goes into a backup folder, so the import can be undone.
