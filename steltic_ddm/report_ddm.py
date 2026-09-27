@@ -190,7 +190,7 @@ def build(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table, note
     parts.append('<h2>3 · Nominal GMNIA model</h2><ul>')
     parts.append('<li><b>Elements:</b> %s, 3-D Corotational transformation, %d Gauss–Lobatto points; %d / %d / %d sub-elements per column / beam / brace.</li>'
                  % ("dispBeamColumn" if o.get("fast") else "forceBeamColumn", o.get("nip", 5), *o.get("nsub", (2, 2, 4))))
-    parts.append('<li><b>Sections:</b> fibre W-shapes from d, t<sub>w</sub>, b<sub>f</sub>, t<sub>f</sub> (fillets ignored: A and I 1–3 %% low, conservative); rectangular HSS with A500 design thickness 0.93 t; %s.</li>'
+    parts.append('<li><b>Sections:</b> fibre W-shapes from d, t<sub>w</sub>, b<sub>f</sub>, t<sub>f</sub> (India: root-fillet fibres, A and I<sub>x</sub> = IS 808 catalogue, NL-26; USA: fillets ignored, A and I 1–3 %% low); rectangular HSS with A500 design thickness 0.93 t; %s.</li>'
                  % _h(", ".join("%s (%d fibres)" % (l, n) for _, l, _, n, _ in o.get("section_log", [])[:12])))
     parts.append('<li><b>Material:</b> Steel01, F<sub>y</sub> = %.0f ksi (nominal), E = 29 000 ksi, kinematic hardening b = %.3f.</li>' % (o.get("Fy", 50.0), o.get("hardening", 0.002)))
     parts.append('<li><b>Residual stresses:</b> %s (W: Galambos–Ketter linear pattern, σ<sub>rc</sub> = 0.3 F<sub>y</sub> at flange tips, self-equilibrating; HSS: provisional membrane pattern).</li>' % _h(o.get("residual")))
@@ -328,7 +328,7 @@ IS_STATEMENT = ("IS 1893 (Part 1):2016 provides no acceptance criteria for nonli
 def _lam(res):
     lam = res.get("lambda_u")
     if lam is None:
-        return "NO_LIMIT_POINT (terminated: %s at λ = %.3f)" % (res.get("termination"), res.get("lambda_end") or 0)
+        return "%s (terminated: %s at λ = %.3f)" % (res.get("status") or "NO_LIMIT_POINT", res.get("termination"), res.get("lambda_end") or 0)
     return "%.3f [%s]" % (lam, res.get("status"))
 
 
@@ -354,8 +354,11 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
         P.append('</table></div>')
     # 2 model
     P.append('<h2>2 · Model</h2><ul>')
-    P.append('<li>forceBeamColumn, 3-D Corotational, %d Lobatto points; %d / %d / %d sub-elements (column / beam / brace).</li>' % (
-        o.get("nip", 5), *o.get("nsub", (2, 2, 4))))
+    P.append('<li>forceBeamColumn, 3-D Corotational (columns, braces, sloped / free beams) and P-Delta for the horizontal beams inside '
+             'one rigid diaphragm (NL-24: the diaphragm holds their ends at a fixed plan distance, and a Corotational beam would turn '
+             'its sag into catenary tension the connections and the HR design do not have), %d Lobatto points; %d / %d / %d '
+             'sub-elements (column / beam / brace). Rolled I-sections carry root-fillet fibres so A, I<sub>x</sub> and Z<sub>p</sub> '
+             'equal the IS 808 catalogue values of the HR design (NL-26).</li>' % (o.get("nip", 5), *o.get("nsub", (2, 2, 4))))
     P.append('<li>Steel01, E = 200 000 MPa, hardening b = %.3f; f<sub>y</sub> per section from IS 2062 (Part 1):2025 Table 3 by thickness band '
              '(expected-strength factor 1.0 unless the EOR sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
     P.append('<li>Residual stress pattern: %s.</li>' % _h(o.get("residual")))
@@ -364,8 +367,12 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
         round(1 / (o.get("bow_hollow") or o.get("bow", 1 / 1000)))))
     P.append('<li>Combinations: IS 800:2007 Table 4 combinations from load_plan (IS 875 / IS 1893), applied proportionally and scaled by λ.</li>')
     P.append('<li>λ<sub>u</sub> is reported only at a detected limit point: LIMIT_POINT (λ falls over ≥ 2 converged steps — negative tangent), '
-             'PLASTIC_PLATEAU (tangent < 2 %% of elastic) or DUCTILITY_CAP (max fibre strain = %.0f ε<sub>y</sub>). Runs stopped by the clock, '
-             'step exhaustion or the step budget are NO_LIMIT_POINT and are not capacities. Time limit per sweep %.0f s.</li></ul>' % (
+             'PLASTIC_PLATEAU (tangent < 2 %% of elastic) or DUCTILITY_CAP (max fibre strain = %.0f ε<sub>y</sub>). Runs stopped by the clock '
+             'or the step budget are NO_LIMIT_POINT and are not capacities. Solver: displacement control with an algorithm ladder '
+             '(KrylovNewton, NewtonLineSearch, ModifiedNewton, then relaxed tolerances), step cuts and an arc-length rescue '
+             '(MinUnbalDispNorm) near the limit; a run the equilibrium iterations still stop is SOLVER_FAILURE (a numerical stop, '
+             'blocks the gate) unless the tangent there is below 10 %% of elastic (a genuine limit, NO_LIMIT_POINT). '
+             'Time limit per sweep %.0f s.</li></ul>' % (
                  o.get("strain_cap") or 0, o.get("time_limit") or 0))
     b11 = o.get("b11") or {}
     if b11:

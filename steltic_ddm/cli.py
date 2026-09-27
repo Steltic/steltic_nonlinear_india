@@ -319,7 +319,7 @@ def _print_done(r):
     lam = res.get("lambda_u")
     print("   done %-40s imp %-3s %s  (%d steps, %.0f s) %s" % (
         r["label"][:40], r["imp"], ("lambda_u %.3f [%s]" % (lam, res.get("status"))) if lam is not None else
-        ("NO_LIMIT_POINT (terminated: %s at lambda %.3f)" % (res.get("termination"), res.get("lambda_end") or 0)),
+        ("%s (terminated: %s at lambda %.3f)" % (res.get("status") or "NO_LIMIT_POINT", res.get("termination"), res.get("lambda_end") or 0)),
         res["steps"], res["seconds"], r["cls"]["mechanism"][:60]), flush=True)
 
 
@@ -372,7 +372,8 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
                               "IS 800 Annex B-1.2 section capacities are the code check." if opts_rep.get("india") else None),
                    runs=[dict(label=r["combo"][0], imp=r["imp"], kind=r["summary"]["kind"], lambda_u=r["res"]["lambda_u"],
                               lambda_end=r["res"].get("lambda_end"), status=r["res"].get("status"), termination=r["res"].get("termination"),
-                              b12=r.get("b12"),
+                              b12=r.get("b12"), stop_tangent_ratio=r["res"].get("stop_tangent_ratio"),
+                              control_mode=r["res"].get("control_mode"), ladder_used=r["res"].get("ladder_used"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
                                                                    steps=r["res"]["steps"], fails=r["res"].get("fails"), lam_at_1p25d=r["res"].get("lam_at_1p25d"),
                                                                    seconds=r["res"]["seconds"], log=r["res"]["log"], state=r["state"],
@@ -389,7 +390,8 @@ def _runs_from_results(d):
         res = dict(lambda_u=r["lambda_u"], lambda_end=r.get("lambda_end", r["lambda_u"]), status=r.get("status"),
                    termination=r.get("termination"), first_yield=r.get("first_yield"), hist=r["hist"], steps=r["steps"], fails=r.get("fails"), lam_at_1p25d=r.get("lam_at_1p25d"),
                    seconds=r["seconds"], snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
-                   log=r.get("log", []), frames=r.get("frames", []))
+                   log=r.get("log", []), frames=r.get("frames", []), stop_tangent_ratio=r.get("stop_tangent_ratio"),
+                   control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"))
         runs.append(dict(combo=(r["label"],), summary=dict(kind=r["kind"]), res=res, cls=r["cls"], phi=r["phi"], check=r["check"], imp=r["imp"], state=r["state"],
                          b12=r.get("b12")))
     return runs

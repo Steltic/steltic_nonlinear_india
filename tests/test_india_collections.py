@@ -1,5 +1,5 @@
 """NL-3: IS 18168 is in the India collection map, the corpus root resolves like steltic_india (env var, sibling
-checkout, /workspace fallback), and the shipped JSON equals the module."""
+corpus folder, /workspace fallback), and the shipped JSON equals the module."""
 import importlib
 import json
 import os
@@ -32,7 +32,7 @@ def test_corpus_root_env_then_sibling_then_default(tmp_path, monkeypatch):
     assert IC.corpus_root() == str(tmp_path / "y")
     monkeypatch.delenv("ENGINEERING_RAG_INDIA")
     assert IC.corpus_root("/explicit") == "/explicit"
-    # sibling checkout next to a copied repo
+    # sibling corpus folder next to a copied repo
     repo = tmp_path / "steltic_nonlinear_india"
     (repo / "snl").mkdir(parents=True)
     (repo / "snl" / "india_collections.py").write_text(open(IC.__file__).read())

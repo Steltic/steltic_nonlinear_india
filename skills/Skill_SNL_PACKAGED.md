@@ -21,7 +21,7 @@ description: >-
 
 Locked editions: ASCE/SEI 7-22 (Chapter 16), ASCE/SEI 41-23, ANSI/AISC 342-22, AISC 341-22, AISC 360-22 App. 1. The stem table, id traps and honest-absence lists of **Engineering retrieval plan (PACKAGED)** apply unchanged. On ANY edition change re-verify.
 
-> **INDIA FORK (`steltic_nonlinear_india`).** Locked India stems: `IS_1893_Part_1_2016`, `IS_800_2007`, `IS_875_Part_*` via `/workspace/engineering_rag_india`. ASCE/AISC editions below are USA scaffolding only — never quote as India law without retrieved IS text. See `contract/INDIA_START.md` and `nlrha/india_authority.py` (found:false gaps).
+> **INDIA FORK (`steltic_nonlinear_india`).** Locked India stems: `IS_1893_Part_1_2016`, `IS_800_2007`, `IS_875_Part_*` via your IS corpus (built in the Steltic hub from your own licensed BIS PDFs; `RAG_API_URL`). ASCE/AISC editions below are USA scaffolding only — never quote as India law without retrieved IS text. See `contract/INDIA_START.md` and `nlrha/india_authority.py` (found:false gaps).
 
 
 # Steltic Nonlinear (SNL) (PACKAGED)

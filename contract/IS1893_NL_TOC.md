@@ -1,6 +1,6 @@
 # IS 1893 (Part 1) : 2016 — NL-relevant anchors (India RAG)
 
-Corpus stem: `IS_1893_Part_1_2016` under `/workspace/engineering_rag_india`.
+Corpus stem: `IS_1893_Part_1_2016` in your IS corpus, built in the Steltic hub from your own licensed BIS PDFs (see CORPUS_FIX_LLM_INSTRUCTIONS.md).
 
 These ids resolve in the India index. **Always re-retrieve LIVE** before quoting body text
 in a deliverable — Docling page merges can pollute neighbouring body text.

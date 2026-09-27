@@ -194,7 +194,7 @@ def drift_plan(jd, options=None):
                 "India: ASCE 7-22 §16.1.2 drift relief found:false — no IS 1893 analogue retrieved "
                 "that waives cl.7.11.1.1 (0.004 h). Leave WARN; do not fabricate. "
                 "(Provide nl_plan.drift_relief_analogue with stem/clause/cite if an AHJ-accepted "
-                "clause is found via /workspace/engineering_rag_india.)"
+                "clause is found in the IS corpus.)"
             )
             plan["eligible"] = False
             # Still fill numbers for transparency when NLRHA exists, then return ineligible.

@@ -17,7 +17,7 @@ Every commit message is `USA-SYNC <sha>: <what>, adapted for India: <how>`, with
 | 9607577 | Feedback tab, Brand Orange palette | already in | styles.css identical at the fork | none |
 | b94e4e4 | Windows loop state.json retry | already in | loop.py carries it | none |
 | bd8ba3a | `snl review`, llm.py, rag.py, Feedback reasoning box, 0.3.0 | **adapted** | IS collections only (IS1893 / IS800 / IS18168 / IS2062 / IS808 / IS875); reviewer prompt IS-only with **no verdict**; opens with the D7 sentence; drift vs 7.11.1.1 for comparison only; IS 800 §12 rotations as reference; gather() reads the India package shapes (DBE / MCE level packages, seismic_calc, load_plan, complete_gate); India MOCK. New tests/india_nl_job.py fixture. | 3a62bf6 |
-| 402c61a | /healthz, corpus gap, miss ladder, 0.3.1 | **adapted** | IS corpus stems and titles; gap note points at engineering_rag_india; policy text with IS ids | f4ebe36 |
+| 402c61a | /healthz, corpus gap, miss ladder, 0.3.1 | **adapted** | IS corpus stems and titles; gap note points at the hub's IS corpus module; policy text with IS ids | f4ebe36 |
 | 41a3e4d | NLRHA viewer per-frame hinges | **ported as-is** | Applied with offsets over the India run.py additions. The India NLRHA path writes no nlrha_viewer_3d.html, so the change only shows on the US-scaffolding path. | 62f0098 |
 | c15237e | `snl revise` | **adapted** | Grounds the IS clauses (1893 7.7.4 / 7.11.1.1 / 6.4.2, plus the system's IS 800 §12 clause). Hinge groups are **not searched** and are recorded as modelling assumptions; the ASCE 41 / AISC 342 searches were skipped. `_first_real_hit` now checks the source document, which the USA code did not. | bbddf25 |
 | f22d16b | Shared retrieval policy, exact id first, no search cap, top_k 20 | **adapted** | India RETRIEVAL POLICY (which IS document governs what); `_DOCNAME_RE` strips IS designations; a bare "Table 3" is treated as an id | 729a20e |
@@ -28,7 +28,7 @@ Every commit message is `USA-SYNC <sha>: <what>, adapted for India: <how>`, with
 
 | USA | What | Result | Why / how | India commit |
 |---|---|---|---|---|
-| f1b1708 | One port per module, Stop grace, CLI events, run.llm, NL Review tab, 0.2.1 | **partly already in; Review tab adapted** | Everything except the Review tab was in the baseline. The Review tab uses `{server.engineering_rag_india}` with IS wording and no verdict. | fd1b3fe |
+| f1b1708 | One port per module, Stop grace, CLI events, run.llm, NL Review tab, 0.2.1 | **partly already in; Review tab adapted** | Everything except the Review tab was in the baseline. The Review tab uses the hub's IS corpus module server with IS wording and no verdict. | fd1b3fe |
 | 9997de4 | Admin batch resume, run.continues, QFM bridge, 0.2.2 | already in | plans.py and manifest are identical; the India bridge already accepts any indexed stem | none |
 | fbb5508, 30dbaa3 | HR Revise tab added, then removed | skipped | Net effect is a JSON re-escape of the US HR catalog. Their surviving hub tests are in cf81db7's port. | (7d6ba3a) |
 | cf81db7 | Tab actions, Revise on NL Run, running rail, unix launcher | **adapted** | Revise action queries the IS corpus. Hazard / criteria / mesh tabs stage `{out.steltic_india}`. Added `unix/steltic_india.sh` (+ .desktop, install.sh): India data dir, port 8301, India names, and `logs/` created first (the US script misses this). | 7d6ba3a |
@@ -60,5 +60,5 @@ So these failures predate the sync.
 1. **No NLRHA viewer for India jobs.** The India NLRHA path (`_run_india` / `_finish_india`) writes no `nlrha/nlrha_viewer_3d.html`, but the hub catalog's Viewers and compare.py's file list point to it.
 2. **Hinge path still uses US steel.** The repo `pushover/hinge_params.json` material is still A992 (Fy_ksi 50, Ry 1.1), and hinge_models uses it for the hinge-only path and panel-zone Vy. Only a collected file replaces it with the IS 2062 fy.
 3. **Vendored modules have drifted.** `snl/vendor_steltic_india` differs in 8 files from the current steltic_india, and the engine-dependent DDM tests fail with LoadPlanError.
-4. **Collection map is incomplete.** `snl/india_collections.py` and `contract/IS_COLLECTIONS.md` lack IS 18168 and hard-code `/workspace/engineering_rag_india`.
+4. **Collection map is incomplete.** `snl/india_collections.py` and `contract/IS_COLLECTIONS.md` lack IS 18168 and hard-code a /workspace corpus path.
 5. **Hub launcher installs the US package.** Not an NL issue: the India hub's `windows/Steltic.ps1` installs the PyPI `steltic-hub` (the US package) when not run from a checkout.

@@ -3,10 +3,11 @@
 Canonical map: `snl/india_collections.py` (+ `snl/india_collection_stems.json`, regenerated from it; a test keeps
 them equal).
 
-Corpus root: `$INDIA_CORPUS_ROOT` (or `$ENGINEERING_RAG_INDIA`), else a sibling `engineering_rag_india` checkout
-next to this repo, else `/workspace/engineering_rag_india` -- the same resolution as steltic_india (L-08).
+Corpus: your IS corpus, built in the Steltic hub from your own licensed BIS PDFs (see CORPUS_FIX_LLM_INSTRUCTIONS.md).
+Corpus root: `$INDIA_CORPUS_ROOT`, else a sibling corpus folder next to this repo, else the historical /workspace
+path -- the same resolution as steltic_india (L-08).
 The aliases file is `$RAG_ALIASES_FILE`, else `<corpus root>/indexes/aliases.json`. Live retrieval goes through
-`RAG_API_URL` (the corpus's `scripts/serve_http.py`, e.g. `http://127.0.0.1:8765/query`).
+`RAG_API_URL` (the hub's IS corpus server, e.g. `http://127.0.0.1:8765/query`).
 
 | collection= (either `engineering_standards_` or `engineering_standard_` prefix) | stem |
 |---|---|

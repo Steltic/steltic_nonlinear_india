@@ -69,7 +69,7 @@ COLL = {"engineering_standards_IS1893": IS1893, "engineering_standards_IS800": I
 
 
 class FakeRAG(BaseHTTPRequestHandler):
-    """The IS corpus bridge (engineering_rag_india rag_server) as the Review sees it: /healthz names the documents the
+    """The IS corpus bridge (the hub's IS corpus module rag_server) as the Review sees it: /healthz names the documents the
     corpus holds (`docs`), a query for one that is absent answers the server's own "not in the corpus" note, a query
     with no document searches everything that is present."""
     queries = []
@@ -245,7 +245,7 @@ def test_corpus_status_names_what_is_present_and_absent():
         assert cm["absent"] == ["IS808", "IS875_P1", "IS875_P2"] and cm["other"] == ["IS_4000_1992"]
         line = rag.describe_corpus(cm)
         assert "IS 2062 (Part 1):2025 (IS_2062_P1_2025)" in line and "ABSENT: IS 808:2021 (stem IS_808_2021)" in line and "IS_4000_1992" in line
-        assert "engineering_rag_india" in line
+        assert "IS corpus module" in line and "engineering_rag_india" not in line
         assert rag.resolve("engineering_standards_IS18168") == "IS18168" and rag.resolve("is-800") == "IS800" and rag.resolve("IS875_P1") == "IS875_P1"
         assert rag.resolve("IS_1893_Part_1_2016") == "IS1893" and rag.resolve("nope") is None
         assert rag.resolve("ASCE7") is None and rag.resolve("A342") is None                   # no foreign design basis (D3)

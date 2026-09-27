@@ -1,6 +1,6 @@
 # India NL runbook -- producing a "gold NL solution" for an HR gold building
 
-Repo: `/home/claude/nl/work/steltic_nonlinear_india` branch `review-fix-2026-09` (NL-1..NL-19). For long runs use a frozen
+Repo: `/home/claude/nl/work/steltic_nonlinear_india` branch `review-fix-2026-09` (NL-1..NL-27). For long runs use a frozen
 worktree so edits cannot change code under a running job: `git -C <repo> worktree add --detach /home/claude/nl/run_repo review-fix-2026-09`
 (then `git -C /home/claude/nl/run_repo checkout --detach review-fix-2026-09` to refresh). All commands below run from that worktree.
 
@@ -145,3 +145,51 @@ Started 2026-09-27 06:38 (+07) at df041ec. Estimated durations (fast, 2 cores; +
 
 Per job the NLRHA dominates, then the DDM (61-sweep jobs: Ex1, Ex9, Ex10, Ex11, Ex14, Ex15); a pushover promotion
 round adds one pushover re-run.
+
+## DDM results after NL-24..NL-26 (batch switch, NL-27)
+
+NL-24 (deck beams P-Delta, solver ladder / SOLVER_FAILURE), NL-25 (B-1.2 at lambda = 1 exactly) and NL-26 (fillet
+fibres) change every India DDM result; pushover and NLRHA are unaffected (no shared code path; the pushover fibre builder
+keeps fillets=False). The batch was stopped at 2026-09-27 09:45:43 (+07), after IN_Ex13's NLRHA ended (its df041ec DDM
+was killed at start), and restarted from `/home/claude/nl/run_repo2` @ aa3009b with the same progress log and markers:
+`nohup /home/claude/nl/run_repo2/scripts/run_gold_batch.sh >> /home/claude/nl/gold_nl/batch_nohup.out 2>&1 &`.
+
+- Markers now carry `ddm_code` (`DDM_CODE="NL-26"` in the script). A DDM marker without it is stale: an unfinished job
+  re-runs its DDM in the main loop (Ex5, Ex13); a finished job (`batch_done.json`) gets `snl run --only ddm` +
+  `snl report` in the refresh pass after the last job -- queued: Ex11 unitC_gym, Ex3, Ex11 unitB_link, Ex11, Ex14,
+  Ex8 workshop. Previous DDM outputs are kept in `<job>/_ddm_before_NL-26/` (Ex11 also `_ddm_df041ec/`).
+- Clean stop: `touch /home/claude/nl/gold_nl/STOP_BATCH` (exits before the next step; remove the file to resume).
+- Bump `DDM_CODE` in a commit that changes DDM results again; the next batch start re-runs the stale DDMs only.
+- A SOLVER_FAILURE row in `ddm_results.json` blocks COMPLETE; see its `log`, `ladder_used`, `stop_tangent_ratio`.
+  Sensitivity switches: `SNL_DDM_BEAM_TRANSF=Corotational`, `SNL_DDM_FILLETS=0`.
+
+ETA at the switch: remaining jobs by the table above 51.9 h (-> 2026-09-29 ~13:40 +07); the jobs so far ran at ~0.7x
+their estimates -> about 2026-09-28 23:00 (+07). DDM sweeps are faster with NL-24 (Ex11 575 s at 2 workers -> 285 s at 1).
+
+## Jobs offloaded to the owner's PC (NL-28, NL-29)
+
+9 runs go to the owner's PC (Windows, 14 cores, 16 GB; WSL2 Ubuntu): IN_Ex9, IN_Ex10, IN_Ex6, IN_Ex7, IN_Ex9 units/stem,
+IN_Ex4, IN_Ex1, IN_Ex12, IN_Ex2. They are listed in `/home/claude/nl/gold_nl/SKIP_JOBS` (NL-28), so the container batch
+never starts or DDM-refreshes them. The file is re-read before every job, so no restart is needed after editing it.
+The container keeps Ex15, Ex8 and the DDM refresh pass.
+
+- Package: `/home/claude/nl/nl_pc_package.zip` (top folder `nlpc/`). It is built by `/home/claude/nl/build_pc_package.sh`
+  from this repo at the commit in `nlpc/NL_REV` and steltic_india 9402e03, both as plain copies. The job folders are
+  the batch's own `gold_nl/<job>` copies, collected here with the package code; the answers are in `nlpc/answers/`.
+  The owner follows `nlpc/README_PC.md`.
+- Runner `nlpc/run_pc.sh` calls this repo's `scripts/run_gold_batch.sh`, so the settings, markers and resume logic are
+  the batch's own, with `GOLD_NL=nlpc/jobs`, `LOG=nlpc/pc_progress.log`, largest first (`jobs/ORDER`) and
+  `--parallel 12`. The environment (`nlpc/pc_env.sh`) sets or clears every variable read: `RAG_API_URL=""`,
+  `INDIA_CORPUS_ROOT=<empty folder>`, `STELTIC_ENGINE_DIR=<package engine>`, `SNL_*` unset, `OMP_NUM_THREADS=1`.
+- Corpus independence: after collect, `snl run` / `snl report` read no corpus and open no socket. An audit hook
+  (open / socket events in every process) on IN_Ex3 (pushover, DDM, report) and IN_Ex9 (DDM gate + sweeps) found 0
+  corpus reads and 0 connects, with the corpus server up and INDIA_CORPUS_ROOT set.
+- Memory, measured on IN_Ex9 (1308 elements): NLRHA worker 474 MB (parent 488 MB), DDM worker 501 MB (parent 307 MB).
+  The budget is 600 MB per worker and 1 GB for the parent, so 12 workers use about 8.2 GB of the 12 GB WSL gets.
+  NL-29 pools the 22 DBE + MCE records, so all 12 workers stay busy.
+- PC estimate: about 8-10 h (14 h worst case), against about 34 h for these runs on the 2-core container.
+- Back here: `/home/claude/nl/merge_pc_results.sh <nl_pc_results_*.zip>`. It checks the sha256 of every file,
+  backs up any existing outputs to `<job>/_before_pc_merge_<stamp>/`, and copies the files into `gold_nl/<job>/`.
+  It then runs `snl report` for each run from the worktree `/home/claude/nl/merge_repo` at the package commit, and
+  logs a MERGE line per run in `batch_progress.log`. The PC's step markers come along (rev = the package commit,
+  ddm_code NL-26).

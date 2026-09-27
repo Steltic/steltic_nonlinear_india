@@ -1,5 +1,5 @@
 {
-  "corpus": "resolved at run time: $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling engineering_rag_india checkout, else /workspace/engineering_rag_india",
+  "corpus": "resolved at run time: $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling corpus folder, else the historical /workspace path",
   "collection_to_stem": {
     "IS800": "IS_800_2007",
     "IS_800": "IS_800_2007",

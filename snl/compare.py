@@ -196,7 +196,7 @@ def build_india(job, out_name="four_analyses.html"):
                                  for r in ddm.get("runs") or []])
         for r in ddm.get("runs") or []:
             rows.append(("DDM %s" % r.get("label"), r.get("status") or "?",
-                         ("λu = %.3f" % r["lambda_u"]) if r.get("lambda_u") is not None else "NO_LIMIT_POINT (λ reached %.3f)" % (r.get("lambda_end") or 0)))
+                         ("λu = %.3f" % r["lambda_u"]) if r.get("lambda_u") is not None else "%s (λ reached %.3f)" % (r.get("status") or "NO_LIMIT_POINT", r.get("lambda_end") or 0)))
         rows.append(("IS 800 B-1.2 section check at λ = 1", "code check", "satisfied" if (ddm.get("b12_check") or {}).get("ok") else "NOT satisfied / not run"))
     H = ["<!doctype html><meta charset='utf-8'><title>Four analyses (IS)</title><style>body{font-family:Georgia,serif;max-width:1000px;margin:24px auto;padding:0 16px}"
          "table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #bbb;padding:4px 6px;text-align:left}.s{background:#fff4d6;padding:8px 12px;font-weight:bold}</style>",

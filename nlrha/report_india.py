@@ -178,7 +178,7 @@ def write_index(out, pkg, level_summaries: dict, modal, numerics, hazard):
                            levels=hazard["design"]["levels"], R_in_target=False) if hazard else None,
                plasticity=numerics.get("plasticity"))
     for lv, (summ, path) in level_summaries.items():
-        idx["levels"][lv] = dict(package=os.path.relpath(path, out), target_label=summ["target_label"],
+        idx["levels"][lv] = dict(package=os.path.relpath(path, out).replace(os.sep, "/"), target_label=summ["target_label"],
                                  n_records=summ["n_records"], n_converged=summ["n_converged"],
                                  max_mean_drift=summ["max_mean_drift"], max_peak_drift=summ["max_peak_drift"],
                                  base_shear=summ["base_shear"], ductility=summ["ductility"], non_vacuous=summ["non_vacuous"],

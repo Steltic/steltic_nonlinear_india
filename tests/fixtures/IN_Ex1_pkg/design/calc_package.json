@@ -2328,7 +2328,7 @@
    "base_plate_worksheet"
   ],
   "capacities_invented": false,
-  "rag_corpus": "/workspace/engineering_rag_india/",
+  "rag_corpus": "IS corpus (RAG_API_URL)",
   "excerpts_verified": [
    "IS_4000_1992 Table 2 Vob (LIVE RAG found:true)",
    "IS_800_2007 \u00a710.5.7.1.1 fillet fwd (LIVE RAG found:true)",
@@ -2348,7 +2348,7 @@
    "gusset_block_shear_capacity_N"
   ],
   "capacities_invented": false,
-  "rag_corpus": "/workspace/engineering_rag_india/",
+  "rag_corpus": "IS corpus (RAG_API_URL)",
   "excerpts_verified": [
    "IS_800_2007 \u00a77.4.3.1 Slab Bases ts (LIVE RAG found:true)",
    "IS_800_2007 \u00a76.4.1 block shear (LIVE RAG found:true)",

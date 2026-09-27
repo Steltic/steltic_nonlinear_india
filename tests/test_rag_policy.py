@@ -64,7 +64,7 @@ def test_the_review_tool_offers_the_policys_own_fields():
         assert k in props, k
     assert set(props["type"]["enum"]) >= {"exact_section", "exact_table", "fts"}
     assert props["top_k"]["maximum"] == 20                  # the server's cap, not an arbitrary 8
-    assert "RETRIEVAL POLICY" in review.SYSTEM and "engineering_rag_india" in review.SYSTEM
+    assert "RETRIEVAL POLICY" in review.SYSTEM and "IS corpus module" in review.SYSTEM
     assert "ONE document per call" in review.SYSTEM
     assert '"IS1893" | "IS800" | "IS18168"' in review.SYSTEM and "no ASCE / AISC document is searched" in review.SYSTEM
 

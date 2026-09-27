@@ -246,7 +246,7 @@ def main(argv=None):
     mc.add_argument("--no-rigid-end-offset", action="store_true")
     p = sub.add_parser("report"); p.add_argument("job")
     rs = sub.add_parser("revise", help="re-issue the reports with the IS corpus behind them: needs review.md "
-                                       "from the Review tab, re-asks IS 1893 / IS 800 through RAG_API_URL (engineering_rag_india), "
+                                       "from the Review tab, re-asks IS 1893 / IS 800 through RAG_API_URL (the IS corpus), "
                                        "records every passage and replaces the placeholder wording with the citation")
     rs.add_argument("job")
     co = sub.add_parser("collect", help="read the IS specification values the analyses rely on (IS 2062 fy / fu, IS 18168 Ry / Ru, "

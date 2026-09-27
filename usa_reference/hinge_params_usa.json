@@ -2,7 +2,7 @@
   "_README": [
     "USA SCAFFOLDING ONLY (ASCE 41 / AISC 342 placeholders) -- loaded only for non-India (USA regression) packages by pushover.hinge_models.load_params(jurisdiction='usa'). India jobs use pushover/hinge_params.json (NL-6).",
     "INDIA FORK (steltic_nonlinear_india): ASCE 41 / AISC 342 hinge + acceptance analogue is",
-    "found:false in /workspace/engineering_rag_india (IS 1893 has no NSP/hinge tables; IS 800 §4.5",
+    "found:false in the IS corpus (IS 1893 has no NSP/hinge tables; IS 800 §4.5",
     "is static plastic analysis only — not IO/LS/CP). Keep verified=false. See",
     "nlrha.india_authority.hinge_analogue_status(). Do not invent ASCE→IS hinge maps.",
     "Nonlinear component modelling parameters + acceptance criteria used by the Pushover Analyst.",

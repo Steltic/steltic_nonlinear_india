@@ -6,8 +6,8 @@ Compares, elastic vs elastic:
     with elastic fibre sections, no imperfections, same masses)
   * roof displacement under the same ELF-pattern lateral load in X and in Y
 A mismatch beyond `tol` (default 5 %) blocks the run and names the likely cause (orientation,
-release decoding, diaphragm membership, section mapping). Fibre W-sections ignore fillets, so a
-1-3 % softer GMNIA model is expected and reported, not flagged.
+release decoding, diaphragm membership, section mapping). India fibre I-sections carry the root
+fillets (NL-26: A, Ix = IS 808 catalogue); USA W-sections ignore them (1-3 % softer, reported, not flagged).
 """
 import math, re
 import openseespy.opensees as ops
