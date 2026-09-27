@@ -455,8 +455,77 @@ class FiberSectionBuilder:
         self.log.append((secTag, label, "CHS", nfib, "OD=%.3f t=%.3f units=%s" % (od, t, self.units)))
         return dict(A=A, Ix=I, Iy=I, d=od, bf=od, tf=t, tw=t, nfib=nfib)
 
+    # ---- built-up welded box (HR custom_sections, NL-4) ------------------------------------
+    def box_plates(self, secTag, label, axis="y", n_per_side=10, n_thick=2, residual=None):
+        """Fibre built-up welded box from its four plates (pushover.india_sections registry, mm): flanges B x tf at
+        +/-(D - tf)/2 along the depth axis, webs (D - 2 tf) x tw at +/-(B - tw)/2. axis="y": depth along local y
+        (column, strong axis local z, as w_shape); "z": depth along local z (beam). No residual stress pattern
+        (welded-box residual stresses are not modelled -- disclosed in the section log)."""
+        from pushover import india_sections as IS_
+        p = IS_.get_mm(label)
+        if p is None:
+            raise ValueError("%s is not a declared built-up box" % label)
+        sc = 1.0 if self.units == "N-mm" else 1.0 / MM_PER_IN
+        B, D, tf, tw = p["bf"] * sc, p["d"] * sc, p["tf"] * sc, p["tw"] * sc
+        J = p["J"] * sc ** 4
+        self.ops.section("Fiber", secTag, "-GJ", self.G * J)
+        m = self._mat(0.0)
+        nfib = 0
+
+        def put(yc, zc, a):
+            nonlocal nfib
+            if axis == "y":
+                self.ops.fiber(yc, zc, a, m)
+            else:
+                self.ops.fiber(zc, yc, a, m)
+            nfib += 1
+        for sgn in (+1, -1):                                     # flanges (full width B)
+            for i in range(n_per_side):
+                zc = -B / 2 + (i + 0.5) * B / n_per_side
+                for j in range(n_thick):
+                    yc = sgn * (D / 2 - (j + 0.5) * tf / n_thick)
+                    put(yc, zc, (B / n_per_side) * (tf / n_thick))
+        hw = D - 2 * tf
+        for sgn in (+1, -1):                                     # webs between the flanges
+            for i in range(n_per_side):
+                yc = -hw / 2 + (i + 0.5) * hw / n_per_side
+                for j in range(n_thick):
+                    zc = sgn * (B / 2 - (j + 0.5) * tw / n_thick)
+                    put(yc, zc, (hw / n_per_side) * (tw / n_thick))
+        self.log.append((secTag, label, "BOX", nfib, "built-up box B=%.1f D=%.1f tf=%.1f tw=%.1f (%s) axis=%s units=%s; "
+                         "no residual stress" % (p["bf"], p["d"], p["tf"], p["tw"], "mm", axis, self.units)))
+        return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib)
+
+    # ---- EBF shear link (NL-10) -------------------------------------------------------------
+    def link_aggregator(self, aggTag, fibreTag, label, fy_MPa, box=False, hardening=0.005):
+        """IS 18168:2023 11.2 shear yielding of an EBF link, added to the flexural fibre section `fibreTag`:
+        V_pL = fy A_wL / sqrt(3), A_wL = (d_L - 2 t_f) t_w (x2 for a box link); elastic shear stiffness G A_wL;
+        Steel01 on the vertical shear resultant (section code Vz: beams are built with their depth along local z).
+        The post-yield slope (`hardening`, default 0.5 % of G A_wL, about 1.2 V_pL at 0.08 rad) is a MODELLING
+        ASSUMPTION -- IS 18168 gives the strength, not a link hysteresis. Returns the record for the report."""
+        from pushover import india_materials as IM
+        sp = IM.section_props_mm(label)
+        d, tf, tw = float(sp["d"]), float(sp["tf"]), float(sp["tw"])
+        Aw_mm2 = (2.0 if box else 1.0) * (d - 2.0 * tf) * tw
+        Vp_N = float(fy_MPa) * Aw_mm2 / math.sqrt(3.0)
+        G_MPa_ = E_MPA / 2.6
+        if self.units == "N-mm":
+            Vp, K = Vp_N, G_MPa_ * Aw_mm2
+        else:
+            Vp, K = Vp_N / 4448.2216152605, (G_MPa_ / 6.894757293168361) * Aw_mm2 / MM_PER_IN ** 2
+        mt = self.next_mat; self.next_mat += 1
+        self.ops.uniaxialMaterial("Steel01", mt, Vp, K, hardening)
+        self.ops.section("Aggregator", aggTag, mt, "Vz", "-section", fibreTag)
+        rec = dict(section=label, Aw_mm2=Aw_mm2, fy_MPa=float(fy_MPa), Vp_kN=Vp_N / 1e3, gamma_y=float(fy_MPa) / math.sqrt(3.0) / G_MPa_,
+                   hardening=hardening, clause="IS 18168:2023 11.2 a) V_pL = fy A_wL / sqrt(3) (Pu/Py <= 0.15)",
+                   hardening_basis="modelling assumption (no IS link hysteresis)")
+        self.log.append((aggTag, label, "LINK", 0, "shear Vp %.1f kN on Vz, fibre section %d" % (Vp_N / 1e3, fibreTag)))
+        return rec
+
     def build(self, secTag, label, kind, axis=None):
         lab = str(label).upper().replace(" ", "")
+        if lab.startswith("BOX"):
+            return self.box_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
         if lab.startswith("HSS") and hss_dims(lab):
             return self.hss_rect(secTag, lab, residual=("none" if self.residual == "none" else "cf_hss_membrane"))
         # IS 1161 CHS / round HSS (no XxY rect dims)

@@ -189,6 +189,8 @@ def india_checks(cfg):
             say(sev, msg)
         for msg in G.occupancy_findings(cfg):
             say("ERROR", "IS 1893 Table 8: " + msg)
+        for msg in G.occupancy_warnings(cfg):          # H20
+            say("WARN", "IS 1893 Table 8: " + msg)
         # 7.7.1 gate (WP1.3)
         ok_esm, why = G.esm_permitted(cfg, None)
         an = [str(a).upper() for a in (cfg.get("analyses") or [])]
@@ -203,6 +205,15 @@ def india_checks(cfg):
             Ah = IS.design_Ah(Z, I, R, Ta, ss.get("soil"), "ESM")
             rho_min = {"II": 0.007, "III": 0.011, "IV": 0.016, "V": 0.024}.get(G.zone_of(cfg))
             Ah_d = max(Ah, rho_min or 0.0)
+            # H06: with per-direction R (R_x / R_y) the governing-direction Ah uses that direction's R and Ta
+            _sr = G.resolve_system_R(cfg)
+            for _d in ("x", "y"):
+                if _sr.get("R_%s_declared" % _d) is None or ss.get("Ta_%s_s" % _d) is None:
+                    continue
+                _Ahd = max(IS.design_Ah(Z, I, float(_sr["R_" + _d]), float(ss["Ta_%s_s" % _d]), ss.get("soil"), "ESM"),
+                           rho_min or 0.0)
+                if abs(float(ss["Ah"]) - _Ahd) <= 0.01 * _Ahd:
+                    Ah_d, Ah, Ta = _Ahd, _Ahd, float(ss["Ta_%s_s" % _d])
             if abs(float(ss["Ah"]) - Ah_d) > 0.01 * Ah_d:
                 say("ERROR", "seismic_summary.Ah = %.5f but (Z/2)(I/R)(Sa/g)(Ta=%.3f s, ESM) = %.5f%s (6.4.2 / Table 7)"
                     % (float(ss["Ah"]), Ta, Ah, (" -> Table 7 minimum %.3f" % rho_min) if rho_min and rho_min > Ah else ""))
@@ -221,6 +232,13 @@ def india_checks(cfg):
                 say("ERROR", "engine seismic weight %.1f kN differs from design W %.1f kN by %.1f %% (> 2 %%): W must be "
                              "full DL + self-weight + partitions (7.3.6) + Table 10 IL + 7.3.5 snow (WP1.6)"
                              % (We, W, 100 * (We - W) / W))
+            # H22 / ruling R1: partitions in W not below the IS 875-2 3.1.2 design allowance
+            _pp, _pa = cfg.get("partition_seismic_kNm2"), float(cfg.get("partition_load_kNm2") or 0.0)
+            if cfg.get("partitions", True) and _pp is not None and float(_pp) < _pa - 1e-9:
+                say("WARN", "partition_seismic_kNm2 = %.2f kN/m2 is below the partition design allowance "
+                            "partition_load_kNm2 = %.2f kN/m2 -- IS 1893 7.3.6: 'In case the minimum values of seismic "
+                            "weights corresponding to partitions given in parts of IS 875 are higher, the higher values "
+                            "shall be used' (ruling R1: W uses max(0.5, allowance) when not declared)" % (float(_pp), _pa))
             if abs(VB - float(ss["Ah"]) * We) > 0.15 * VB:
                 say("ERROR", "|VB - Ah x W_engine| > 15 %% (VB %.1f kN, Ah x W_engine %.1f kN) -- units? (WP1.12)"
                     % (VB, float(ss["Ah"]) * We))
@@ -236,6 +254,19 @@ def india_checks(cfg):
                                  "story forces are UNFACTORED, WP1.1/1.12)" % (d, tot, VBd))
                 if tot < 0.001 * We:
                     say("ERROR", "EQ_%s story forces sum to < 0.1 %% of W -- kip/kN entered as N? (WP1.12)" % d)
+            # H02: the agent's V-bar_B per direction must not be more than 2 % below the engine's IS 1893 value
+            # (Z, I, R_d, soil, Ta_d, W).  A single VB_kN is checked against both directions.
+            for d in ("X", "Y"):
+                try:
+                    vr = E.VBbar_record(cfg, d)
+                except Exception as ex:
+                    say("ERROR", "V-bar_B %s could not be evaluated: %s" % (d, ex)); continue
+                if vr.get("engine_N") and vr.get("agent_N") is not None and vr["agent_N"] < 0.98 * vr["engine_N"]:
+                    say("ERROR", "%s = %.1f kN is %.1f %% below the engine IS 1893 7.6.1 VB_%s = %.1f kN (Ah %.5f = "
+                                 "(Z/2)(I/R)(Sa/g) at Ta_%s %.3f s, R %.2f, W %.1f kN; 6.4.2 / Table 7) -- the design base "
+                                 "shear may not be lower (7.7.3)"
+                        % (vr["agent_source"], vr["agent_N"] / 1e3, 100 * vr["agent_shortfall"], d.lower(),
+                           vr["engine_N"] / 1e3, vr["Ah"], d.lower(), vr["Ta_s"], vr["R"], vr["W_used_N"] / 1e3))
         except (KeyError, TypeError, ValueError) as ex:
             say("ERROR", "IS 1893 seismic summary incomplete / invalid: %s" % ex)
     if cfg.get("drift_relief_16_1_2"):
@@ -249,9 +280,30 @@ def india_checks(cfg):
     md = cfg.get("model")
     if not (isinstance(md, dict) and {"bases", "joints", "gravity"} <= set(md)):
         say("ERROR", "cfg['model'] = {'bases','joints','gravity'} declaration missing")
+    # ---- H18: pitched-roof guard (true-slope beams / zero roof tributary -> silent zero roof load) ----
+    try:
+        import static_model as _SMp
+        for sev, msg in _SMp.pitched_roof_findings(cfg):
+            say(sev, msg)
+    except Exception:
+        pass                          # a build failure is reported by the seismic-weight block above
     dia = cfg.get("diaphragm", "rigid")
     if dia not in ("rigid", "flexible", "semi-rigid"):
         say("ERROR", "cfg['diaphragm'] must be 'rigid' | 'flexible' | 'semi-rigid' (got %r)" % (dia,))
+    try:                                  # AUD-3: board / CFS / bare-deck diaphragm declared rigid without a basis
+        import india_diaphragm as _DIA
+        for sev, msg in _DIA.light_diaphragm_rigid_findings(cfg):
+            say(sev, msg)
+        for msg in _DIA.diaphragm_labels(cfg)[1]:            # GOLD-COLL: per-level diaphragm labels
+            say("ERROR", msg)
+    except Exception:
+        pass
+    try:                                  # AUD-4: anchorage transparency (asserted capacity, breakout delegation)
+        import india_connection_design as _CDa
+        for sev, msg in _CDa.anchorage_findings(cfg):
+            say(sev, msg)
+    except Exception:
+        pass
     if not cfg.get("steel_grade"):
         say("ERROR", "cfg['steel_grade'] (IS 2062 grade, e.g. 'E250BR' / 'E350') required -- no default fy (WP2.3)")
     if cfg.get("braces") or "brace" in str(cfg.get("system") or "").lower() or "bf" in str(cfg.get("system") or "").lower():
@@ -265,6 +317,15 @@ def india_checks(cfg):
         pass
     for sev, msg in _IL.crane_findings(cfg):
         say(sev, msg)
+    # O2 (owner ruling 2026-09-26): gantry weight as nodal dead loads, never also as element self-weight
+    if cfg.get("self_weight_in_nodal_loads") or cfg.get("nodal_dead_loads") or cfg.get("crane") or cfg.get("cranes"):
+        import engine3d as E
+        try:
+            _o2 = E.self_weight_nodal_findings(cfg)
+        except Exception as ex:
+            _o2 = [("ERROR", "O2 gantry self-weight / nodal-load check failed (%s: %s)" % (type(ex).__name__, ex))]
+        for sev, msg in _o2:
+            say(sev, msg)
     return out
 
 

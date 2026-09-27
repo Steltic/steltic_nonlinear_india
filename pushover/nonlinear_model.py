@@ -57,7 +57,10 @@ def member_kind(pkg, e):
     k = pkg.schedule.get(e["tag"], {}).get("member")
     if k:
         return k
-    d, _ = _dir_vec(pkg.model.nodes[e["n1"]], pkg.model.nodes[e["n2"]])
+    p1, p2 = pkg.model.nodes[e["n1"]], pkg.model.nodes[e["n2"]]
+    if math.dist(p1, p2) < 1e-9:
+        return "zerolength"        # HR zeroLength springs (roof-plane / release / support springs): passed through raw
+    d, _ = _dir_vec(p1, p2)
     return "col" if abs(d[2]) > 0.9 else "beam"
 
 
@@ -132,13 +135,17 @@ def fr_joint_plan(pkg):
     return plan
 
 
-def brace_india(pkg, sec):
-    """India brace strength inputs (IS 2062 fy x EOR factor) or None for USA scaffolding."""
+def brace_india(pkg, sec, tag=None):
+    """India brace strength inputs (the HR package's fy -- IS 2062 / IS 1161 -- x EOR factor) or None for USA
+    scaffolding. Tubes: hot-finished seamless (HFS) buckles on Table 10 curve a, other processes on b (NL-5)."""
     if getattr(pkg.basis, "jurisdiction", None) != "india":
         return None
     from . import india_model as IMD
-    f = IMD.fy_section(pkg, sec, "brace")
-    return dict(fye_MPa=f["fye_MPa"], hollow_forming=IMD.material_ctx(pkg)["plan"]["hollow_forming"])
+    f = IMD.fy_section(pkg, sec, "brace", tag=tag)
+    plan = IMD.material_ctx(pkg)["plan"]
+    proc = str(plan.get("brace_process") or "").upper()
+    forming = plan["hollow_forming"] if not proc else ("hot_rolled" if proc == "HFS" else "cold_formed")
+    return dict(fye_MPa=f["fye_MPa"], hollow_forming=forming)
 
 
 def levels(pkg):
@@ -199,10 +206,41 @@ def build_elastic(pkg):
         ops.rigidDiaphragm(perp, master, *slaves)
 
 
+def gravity_chains(parents):
+    """{parent element tag: [(sub_tag, s0, s1)]} for the model now in OpenSees: the fibre chain (the parent keeps its tag
+    for segment 0, SEG_ELE_BASE + tag*100 + si for the others) or the single elastic element."""
+    have = set(ops.getEleTags())
+    out = {}
+    for p in parents:
+        p = int(p)
+        if p not in have:
+            continue
+        chain = [p] + [t for t in (SEG_ELE_BASE + p * 100 + si for si in range(1, 100)) if t in have]
+        n = len(chain)
+        out[p] = [(t, si / n, (si + 1) / n) for si, t in enumerate(chain)]
+    return out
+
+
+def apply_gravity_pattern(loads):
+    """Nodal Pz loads (int keys, kip) and, NL-14, the HR engine's element / nodal gravity (key '_hr', N and N-mm) on
+    whatever model is built. Returns the replay record (element / nodal loads applied, load on absent parents)."""
+    info = None
+    for n, pz in loads.items():
+        if isinstance(n, str):
+            continue
+        ops.load(n, 0.0, 0.0, pz, 0.0, 0.0, 0.0)
+    hr = loads.get("_hr") if isinstance(loads, dict) else None
+    if hr:
+        from snl import hr_gravity as HG
+        from snl.india_units import KIP_TO_N, MM_PER_IN
+        chains = gravity_chains({int(e[0]) for e in hr.get("ele", [])})
+        info = HG.apply(ops, hr, chains, force_scale=1.0 / KIP_TO_N, length_scale=1.0 / MM_PER_IN)
+    return info
+
+
 def _apply_gravity(loads, nsteps=10):
     ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-    for n, pz in loads.items():
-        ops.load(n, 0.0, 0.0, pz, 0.0, 0.0, 0.0)
+    apply_gravity_pattern(loads)
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
     ops.test("NormDispIncr", 1e-8, 50); ops.algorithm("Newton")
     ops.integrator("LoadControl", 1.0 / nsteps); ops.analysis("Static")
@@ -404,7 +442,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
             if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
-                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
                 mat += 1; HM.make_brace_material(mat, spec, prm)
                 ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
                 hinges[e["tag"]] = dict(ele=e["tag"], end=0, kind="brace", section=sec, dof=0, K0=E_KSI_AL(spec), mat=mat,
@@ -418,7 +456,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
         if kind == "brace" and sec:                          # elasticBeamColumn brace (steltic default builder) -> pin-ended nonlinear truss
-            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
             mat += 1; HM.make_brace_material(mat, spec, prm)
             ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
             hinges[e["tag"]] = dict(ele=e["tag"], end=0, kind="brace", section=sec, dof=0, K0=E_KSI_AL(spec), mat=mat,
@@ -707,7 +745,7 @@ def _tail_recovery(rec, snapshot, roof, dof, dU0, umax, Vmax, strategies, verbos
 
 
 def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, verbose=True, gravity_table=None,
-             tail_strategies=("fine_step", "arclength"), recorder=None, target_estimator=None):
+             tail_strategies=("fine_step", "arclength"), recorder=None, target_estimator=None, stop_at_strength_fraction=None):
     """Gravity (load control) then displacement-controlled push at the roof master in `direction`
     with the first-mode force pattern. Records the capacity curve, story displacements and every
     hinge's plastic rotation at each step. Stops at max_roof_drift*H, at 20% strength loss past the
@@ -775,6 +813,9 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
         rec["col_N"].append([ops.eleResponse(c, "localForce")[0] for c in cols])
         if recorder is not None:
             rec["members"].append(recorder.sample())
+        from . import elastic_gravity as _EG
+        if _EG.CURRENT:                                   # NL-21: elastic gravity members, yield ratio per step
+            rec.setdefault("elastic", []).append(_EG.sample())
     snapshot()
     dU, umax, Vmax, halvings, step = dU0, max_roof_drift * H, 0.0, 0, 0
     stop_reason = "reached max roof drift %.1f%% of H" % (100 * max_roof_drift)
@@ -792,6 +833,13 @@ def pushover(pkg, hinges, direction, loads, prm, max_roof_drift=0.08, dU0=None, 
             print("[pushover %s] step %d u=%.3f in V=%.0f kip dU=%.4f halvings=%d" % (direction, step, rec["u"][-1], rec["V"][-1], dU, halvings), flush=True)
         if rec["V"][-1] < 0.2 * Vmax and rec["u"][-1] > 0.3 * umax:
             stop_reason = "strength dropped below 20%% of Vmax at u=%.2f in" % rec["u"][-1]; break
+        # NL-12 (India): every reported quantity is known once the curve has lost 1 - f of Vmax past the peak and the
+        # push is beyond twice the largest target estimate -- delta_u (0.8 Vmax) is captured; pushing on to 10 % roof
+        # drift only costs hours of failed Newton steps on a braced frame.
+        if (stop_at_strength_fraction and Vmax > 0 and rec["V"][-1] <= stop_at_strength_fraction * Vmax
+                and rec["u"][-1] >= u_fine_until and rec["u"][-1] > rec["u"][rec["V"].index(max(rec["V"]))]):
+            stop_reason = ("descending branch captured: V = %.0f%% of Vmax at u=%.2f in (past 2 x the target estimate)"
+                           % (100 * rec["V"][-1] / Vmax, rec["u"][-1])); break
         if halvings and step % 20 == 0 and dU < dU0:
             dU *= 2.0                                        # try to speed back up
         if u_fine_until and rec["u"][-1] > u_fine_until and dU0 < dU_coarse:

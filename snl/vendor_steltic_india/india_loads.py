@@ -657,17 +657,18 @@ def cpe_walls_fallback(h_over_w: float, l_over_w: float, theta_deg: float = 0.0)
 cpe_walls_override = cpe_walls_fallback
 
 
-def resolve_ka(A_m2: float, corpus_hit=None, *, allow_fallback: bool = True) -> dict:
-    """Prefer corpus exact_table 4; fallback to in-repo Ka only if found:false."""
+def resolve_ka(A_m2: float, corpus_hit=None, *, allow_fallback: bool = True, direction=None) -> dict:
+    """Prefer corpus exact_table 4; fallback to in-repo Ka only if found:false.  A declared Ka is per direction or
+    checked against Table 4 at A_m2 (RR-BUG-6, india_wind_tables.resolve_ka)."""
     from india_wind_tables import resolve_ka as _resolve
-    return _resolve(A_m2, corpus_hit, allow_fallback=allow_fallback)
+    return _resolve(A_m2, corpus_hit, allow_fallback=allow_fallback, direction=direction)
 
 
 def resolve_cpe_walls(h_over_w: float, l_over_w: float, theta_deg: float = 0.0,
-                      corpus_hit=None, *, allow_fallback: bool = True) -> dict:
-    """Prefer corpus exact_table 5; fallback to in-repo Cpe only if found:false."""
+                      corpus_hit=None, *, allow_fallback: bool = True, eor_cpe=None) -> dict:
+    """Prefer corpus exact_table 5; fallback to in-repo Cpe only if found:false; EOR Cpe outside the table (H15)."""
     from india_wind_tables import resolve_cpe_walls as _resolve
-    return _resolve(h_over_w, l_over_w, theta_deg, corpus_hit, allow_fallback=allow_fallback)
+    return _resolve(h_over_w, l_over_w, theta_deg, corpus_hit, allow_fallback=allow_fallback, eor_cpe=eor_cpe)
 
 
 
@@ -821,6 +822,24 @@ def resolve_storage_height_m(cfg=None, *, eor_h_m=None, eor_cite=None, eor_sourc
 
 
 
+def roof_level_set(cfg, NF=None) -> set:
+    """H50 (HR-B-16, HR-E-21): the storey levels treated as roofs -- the top level NF plus cfg['roof_levels']
+    (1-based levels of lower roofs / lean-tos / setback roofs).  A roof level carries D_roof, Lr and snow, no
+    partitions and no floor imposed load."""
+    cfg = cfg or {}
+    if NF is None:
+        NF = len(cfg.get("heights") or [])
+    out = {int(NF)} if NF else set()
+    for k in (cfg.get("roof_levels") or []):
+        try:
+            k = int(k)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= k <= int(NF or k):
+            out.add(k)
+    return out
+
+
 # --- HR polish Wave D: Annex town / site proxy disclosure ---------------------
 
 SITE_PROXY_OK_SOURCES = frozenset({
@@ -847,16 +866,25 @@ def resolve_site_annex_proxy(
     proxy_value=None,
     proxy_cite=None,
     proxy_source=None,
+    distance_km=None,
+    verify=None,
+    record=None,
 ):
     """Resolve Annex A (Vb) / Annex E (Z) town values with explicit site_proxy.
 
-    When the requested town is found:false in Annex tables, refuse silent
-    wrong-city Vb/Z. Accept a disclosed proxy (Kochi→Kozhikode/Trivandrum Vb=39,
-    Indore→Bhopal Z/Vb, Noida→Delhi Z/Vb) only with site_proxy source + cite.
-    Never invent.
+    Ruling R5 (H47) -- the ONE site-proxy policy, used by the preflight (india_wind_tables.site_proxy_findings)
+    and by callers: a town that the corpus does not tabulate (annex hit found:false, or the record states
+    ``annex_found: False`` / ``corpus_status: 'not_tabulated'``) may use a disclosed proxy with
+    source 'site_proxy', proxy_town, distance_km, basis/cite and verify: True (e.g. Kochi->Kozhikode Vb 39,
+    Indore->Bhopal Z/Vb, Noida->Delhi Z/Vb).  Free-text 'nearest'/'proxy' without that record, a proxy used when the
+    town IS tabulated, or any silent value is refused.  Never invent.
+
+    ``record`` is a wind_summary / seismic_summary style dict: {Vb_source|zone_source: 'site_proxy', proxy_town,
+    distance_km, basis, verify, Vb_mps|Vb|Z|zone, annex_found|corpus_status}.
     """
     cfg = cfg or {}
-    town = town or cfg.get("town") or cfg.get("site_town") or cfg.get("city")
+    rec = dict(record or {})
+    town = town or rec.get("town") or cfg.get("town") or cfg.get("site_town") or cfg.get("city")
     quantity = str(quantity or "Vb").strip()
     q_l = quantity.lower()
 
@@ -882,8 +910,30 @@ def resolve_site_annex_proxy(
                 "note": "Annex town row found:true — not a site_proxy.",
             }
 
+    if rec:
+        qsrc = rec.get("Vb_source") if q_l in ("vb", "vb_mps", "wind") else (rec.get("zone_source") or rec.get("Z_source"))
+        proxy_source = proxy_source or qsrc
+        proxy_town = proxy_town or rec.get("proxy_town") or rec.get("site_proxy_town")
+        proxy_cite = proxy_cite or rec.get("basis") or rec.get("cite") or rec.get("site_proxy_cite")
+        distance_km = distance_km if distance_km is not None else rec.get("distance_km")
+        verify = verify if verify is not None else rec.get("verify")
+        if proxy_value is None:
+            keys = (("Vb_mps", "Vb", "proxy_Vb_mps") if q_l in ("vb", "vb_mps", "wind")
+                    else (("Z", "proxy_Z") if q_l in ("z", "zone_factor") else ("zone", "proxy_zone")))
+            for k in keys:
+                if rec.get(k) is not None:
+                    proxy_value = rec[k]
+                    break
+        if annex_hit is None and (rec.get("annex_found") is False
+                                  or str(rec.get("corpus_status") or "").lower() in ("not_tabulated", "found_false")):
+            annex_hit = {"found": False, "status": "not_tabulated"}
+
     proxy_town = proxy_town or cfg.get("site_proxy_town") or cfg.get("proxy_town")
     proxy_cite = proxy_cite or cfg.get("site_proxy_cite") or cfg.get("proxy_cite")
+    if distance_km is None:
+        distance_km = cfg.get("site_proxy_distance_km", cfg.get("proxy_distance_km"))
+    if verify is None:
+        verify = cfg.get("site_proxy_verify", cfg.get("verify"))
     src = _site_norm(
         proxy_source or cfg.get("site_proxy_source") or cfg.get("proxy_source")
         or ("site_proxy" if cfg.get("site_proxy") is True else "")
@@ -907,43 +957,50 @@ def resolve_site_annex_proxy(
                         proxy_value = cfg[k]
                         break
 
-    # Disclosed site_proxy path
-    if proxy_value is not None and src in SITE_PROXY_OK_SOURCES and proxy_cite:
-        if src in SITE_PROXY_REFUSED:
+    not_tabulated = isinstance(annex_hit, dict) and annex_hit.get("found") is False
+
+    # Disclosed site_proxy path (ruling R5: full record + corpus not tabulated)
+    if src in SITE_PROXY_OK_SOURCES:
+        missing = []
+        if proxy_value is None:
+            missing.append("%s value" % quantity)
+        if not proxy_town:
+            missing.append("proxy_town")
+        if distance_km is None:
+            missing.append("distance_km")
+        if not proxy_cite:
+            missing.append("basis / cite")
+        if verify is not True:
+            missing.append("verify: True")
+        if not not_tabulated:
+            missing.append("corpus lookup for the town returned not_tabulated (annex_found: False)")
+        if not missing:
             return {
-                "found": False,
+                "found": True,
                 "town": town,
                 "town_found": False,
                 "quantity": quantity,
-                "value": None,
-                "site_proxy": False,
+                "value": float(proxy_value) if q_l != "zone" else proxy_value,
+                "site_proxy": True,
+                "proxy_town": proxy_town,
+                "distance_km": float(distance_km),
+                "verify": True,
                 "source": src,
-                "resolved_via": "refused",
-                "cite": "refuse silent/assumed site invent",
-                "note": "Refused site_proxy source=%r." % (src,),
-                "required_inputs": [
-                    "site_proxy_source in site_proxy/eor_documented",
-                    "site_proxy_cite",
-                ],
-                "policy": "refuse_silent_wrong_city",
+                "resolved_via": "site_proxy",
+                "cite": str(proxy_cite),
+                "note": (
+                    "Annex town %r found:false — using disclosed site_proxy %s=%r via %r (%s km, VERIFY). "
+                    "Not a silent wrong-city invent (ruling R5)."
+                    % (town, quantity, proxy_value, proxy_town, distance_km)
+                ),
+                "policy": "site_proxy_ok_when_annex_town_miss",
             }
         return {
-            "found": True,
-            "town": town,
-            "town_found": False,
-            "quantity": quantity,
-            "value": float(proxy_value) if q_l != "zone" else proxy_value,
-            "site_proxy": True,
-            "proxy_town": proxy_town,
-            "source": src,
-            "resolved_via": "site_proxy",
-            "cite": str(proxy_cite),
-            "note": (
-                "Annex town %r found:false — using disclosed site_proxy %s=%r via %r. "
-                "Not a silent wrong-city invent."
-                % (town, quantity, proxy_value, proxy_town)
-            ),
-            "policy": "site_proxy_ok_when_annex_town_miss",
+            "found": False, "town": town, "town_found": False, "quantity": quantity, "value": None,
+            "site_proxy": False, "source": src, "resolved_via": "refused",
+            "cite": "ruling R5: site_proxy needs proxy_town, distance_km, basis, verify: True and a not_tabulated "
+                    "corpus result",
+            "required_inputs": missing, "policy": "refuse_silent_wrong_city",
         }
 
     # Silent cfg value without disclosure → refuse
@@ -956,15 +1013,15 @@ def resolve_site_annex_proxy(
         silent_val = cfg.get("zone")
 
     refused = []
-    if silent_val is not None and not (src in SITE_PROXY_OK_SOURCES and proxy_cite):
+    if silent_val is not None:
         refused.append(
             "silent %s=%r without site_proxy + cite — refuse wrong-city invent"
             % (quantity, silent_val)
         )
-    if proxy_value is not None and src not in SITE_PROXY_OK_SOURCES:
+    if proxy_value is not None:
         refused.append("site_proxy_source must be site_proxy/eor_documented/documented")
-    if proxy_value is not None and not proxy_cite:
-        refused.append("site_proxy_cite")
+    if src in SITE_PROXY_REFUSED:
+        refused.append("refused site_proxy source %r" % src)
 
     return {
         "found": False,
@@ -981,18 +1038,17 @@ def resolve_site_annex_proxy(
         ),
         "note": (
             "Annex town %r found:false for %s. Do not silently use another city's "
-            "Vb/Z. Set site_proxy=True + site_proxy_town + site_proxy_value + "
-            "site_proxy_cite (e.g. Kochi→Kozhikode Vb=39; Indore→Bhopal Z=0.10/Vb=39; "
+            "Vb/Z. Set site_proxy source + proxy_town + value + distance_km + basis/cite + verify: True "
+            "(ruling R5; e.g. Kochi→Kozhikode Vb=39; Indore→Bhopal Z=0.10/Vb=39; "
             "Noida→Delhi Z=0.24/Vb=47)."
             % (town, quantity)
         ),
         "required_inputs": refused or [
             "annex corpus hit for town",
-            "OR site_proxy=True + site_proxy_town + site_proxy_value + site_proxy_cite",
+            "OR site_proxy + proxy_town + value + distance_km + basis/cite + verify: True",
         ],
         "policy": "refuse_silent_wrong_city",
     }
-
 
 
 # ---------------------------------------------------------------------------

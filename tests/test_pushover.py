@@ -69,7 +69,7 @@ def test_panel_zones_scissors_builds():
     assert sample["kind"] == "panel_zone"
 
 
-def test_panel_zones_scissors_push_plausible():
+def test_panel_zones_scissors_push_plausible(monkeypatch):
     """Scissors short push: T1 near rigid twin (slightly softer); V same order of magnitude.
 
     Root cause fixed 2026-09-08: equalDOF to a rigidDiaphragm slave under Transformation produced
@@ -78,8 +78,12 @@ def test_panel_zones_scissors_push_plausible():
     """
     from pushover import package_reader as PR, nonlinear_model as NM, hinge_models as HM
     import copy
+    # NL-20: Ex22_SMF is a USA example -> the USA parameter file (NL-7 made the India file the default); the process-
+    # wide $SNL_PLASTICITY / $SNL_MEMBER_NSEG that build_nonlinear records are cleared (test-order independence)
+    monkeypatch.delenv("SNL_PLASTICITY", raising=False); monkeypatch.delenv("SNL_MEMBER_NSEG", raising=False)
     pkg = PR.load(EX)
-    prm_r = HM.load_params()
+    prm_r = HM.load_params(jurisdiction="usa")
+    prm_r.setdefault("numerics", {})["member_nseg"] = 1
     loads, table = NM.gravity_loads(pkg, prm_r, verbose=False)
     PG = NM.column_gravity_axials(pkg, loads)
     h_r, _ = NM.build_nonlinear(pkg, prm_r, PG, verbose=False, plasticity="imk")
@@ -104,11 +108,16 @@ def test_panel_zones_scissors_push_plausible():
     # Infinite-K scissors must recover rigid twin (topology check)
     prm_k = copy.deepcopy(prm_s)
     prm_k["panel_zones"]["K_theta"] = 1.0e14
-    h_k, _ = NM.build_nonlinear(pkg, prm_k, PG, verbose=False)
+    h_k, _ = NM.build_nonlinear(pkg, prm_k, PG, verbose=False, plasticity="imk")   # same plasticity as the rigid twin
     run_k = NM.pushover(pkg, h_k, "X", loads, prm_k, max_roof_drift=0.004, verbose=False,
                         gravity_table=table, tail_strategies=())
     assert abs(run_k["pattern"]["T1"] - T_r) / T_r < 0.01
-    assert abs(run_k["rec"]["V"][-1] - V_r) / V_r < 0.01
+    # compare at the same roof displacement: whether the push takes one more step before max_roof_drift is floating-
+    # point jitter (u = 0.6879999999999998 vs 0.688 on a fresh vs a re-used OpenSees domain), so the last points differ
+    import numpy as np
+    u_end = min(run_k["rec"]["u"][-1], run_r["rec"]["u"][-1])
+    V_k_at = float(np.interp(u_end, run_k["rec"]["u"], run_k["rec"]["V"])); V_r_at = float(np.interp(u_end, run_r["rec"]["u"], run_r["rec"]["V"]))
+    assert abs(V_k_at - V_r_at) / V_r_at < 0.01
 
 
 def test_panel_zone_hysteretic_spec():

@@ -48,7 +48,7 @@ def _run(args):
     missing = [k for k in ("SDS", "SD1", "W_kip") if getattr(pkg.basis, k) is None]
     if missing:
         sys.exit("design basis incomplete (%s) -- add cfg.py to the package or pass --sds/--sd1" % missing)
-    prm = HM.load_params(args.params)
+    prm = HM.load_params(args.params, jurisdiction="usa")          # USA scaffolding path only (NL-6)
     if getattr(args, "plasticity", None):
         os.environ["SNL_PLASTICITY"] = str(args.plasticity)
         prm.setdefault("numerics", {})["plasticity"] = args.plasticity
@@ -131,8 +131,70 @@ def _run(args):
         print("viewer", V3.write(out, pkg, prm, runs, results, stats))
     except Exception as ex:
         print("viewer failed:", ex)
-    shutil.copy(args.params or os.path.join(os.path.dirname(__file__), "hinge_params.json"), os.path.join(out, "hinge_params_used.json"))
+    _copy_params(args.params or HM.default_params_path("usa"), os.path.join(out, "hinge_params_used.json"))
     print("wrote", html, "(%.0f s)" % (time.time() - t0))
+
+
+def _copy_params(src, dst):
+    """Copy the parameters the run used into the job folder, keeping any grounding already recorded.
+
+    This copy is what used to erase `snl revise`'s work: the engineer ran Revise, was told to re-run
+    the analyses to "pick the citation up", and the re-run put the un-annotated file straight back --
+    a loop with no exit. The record itself lives in revise_evidence.json at the job root, which the
+    run never writes, so it is simply re-applied here when it was taken against these same numbers.
+    India: the record grounds the IS clauses (no IS hinge table exists to ground a backbone), so the
+    file's `source` is only rewritten when a component group was grounded; the backbones otherwise stay
+    modelling assumptions (information / EOR input).
+    """
+    import shutil as _sh
+    from snl import grounding as _G
+    _sh.copy(src, dst)
+    try:
+        prm = json.load(open(dst, encoding="utf-8"))
+        st, ev = _G.state(prm, os.path.dirname(dst))
+        if st == _G.GROUNDED and ev:
+            prm["grounding"] = (prm.get("grounding") or {}) | {
+                "asked": ev.get("asked"),
+                "groups": {g: {k: r.get(k) for k in ("document", "citation", "section", "page")}
+                           for g, r in (ev.get("groups") or {}).items() if r.get("grounded")},
+                "clauses": {c: (r.get("citation") if isinstance(r, dict) else r)
+                            for c, r in (ev.get("clauses") or {}).items()
+                            if (r.get("grounded") if isinstance(r, dict) else r)},
+                "evidence": _G.EVIDENCE, "reapplied_by": "pushover run"}
+            cites = "; ".join(_G.citations(ev))
+            if cites:
+                prm["source"] = ("cited from the corpus on this PC %s -- %s. The numeric backbone values in this "
+                                 "file were NOT read out of those tables; `verified` stays false until "
+                                 "they are." % (ev.get("asked") or "", cites))
+            json.dump(prm, open(dst, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
+            print("params: grounding from %s re-applied (%d groups, %d IS clauses)"
+                  % (_G.EVIDENCE, len(_G.citations(ev)), len(_G.clause_citations(ev))))
+    except Exception as ex:                       # never fail a completed run over a provenance note
+        print("params: could not re-apply grounding:", ex)
+
+
+def elastic_check(run, nsp) -> dict | None:
+    """NL-21: peak first-yield ratio of every elastic gravity member over the WHOLE analysed curve (every reported
+    quantity -- Vmax, the descending branch -- must rest on a valid model: a member above 1.0 anywhere is flagged and
+    promoted), and up to the largest NSP target for information."""
+    from . import elastic_gravity as EG
+    steps = run["rec"].get("elastic") or []
+    if not steps:
+        return None
+    u = run["rec"]["u"]
+    u_lim = max(n["target_disp_in"] for n in nsp.values())
+    to_t, full = {}, {}
+    past = False
+    for ui, smp in zip(u, steps):
+        EG.envelope(full, smp)
+        if not past:
+            EG.envelope(to_t, smp)
+            past = ui >= u_lim
+    out = EG.summary(full, meta=EG.meta_now())
+    out.update(check_range="whole analysed curve (to the end of the push)", u_end_in=u[-1] if u else None,
+               max_ratio_to_target=round(max(to_t.values()), 4) if to_t else 0.0, u_target_in=u_lim,
+               u_target_basis="largest NSP target (IS-MCE) of this direction")
+    return out
 
 
 def _run_india(args, pkg, t0):
@@ -142,12 +204,15 @@ def _run_india(args, pkg, t0):
     from . import nonlinear_model as NM, hinge_models as HM, postprocess as PP, report_india as RI, member_response as MR
     from . import india_materials as IM
     from nlrha import india_hazard as IH
-    prm = HM.load_params(args.params)
+    prm = HM.load_params(args.params, jurisdiction="india")
     plast = str(getattr(args, "plasticity", None) or "fibre").lower()
     if plast not in ("fibre", "fiber"):
         print("[pushover] India: fibre plasticity is used (member strains/rotations are recorded from fibres); "
               "--plasticity %s ignored" % plast)
     os.environ["SNL_PLASTICITY"] = "fibre"; prm.setdefault("numerics", {})["plasticity"] = "fibre"
+    os.environ["SNL_ANALYSIS"] = "pushover"                           # NL-21: per-analysis promotion list
+    if getattr(args, "gravity_elastic", None):                       # NL-21
+        os.environ["SNL_GRAVITY_ELASTIC"] = "1" if args.gravity_elastic == "on" else "0"
     if getattr(args, "member_nseg", None) is not None:
         os.environ["SNL_MEMBER_NSEG"] = str(args.member_nseg); prm["numerics"]["member_nseg"] = int(args.member_nseg)
     strategies = {"auto": ("fine_step", "arclength"), "fine_step": ("fine_step",), "arclength": ("arclength",), "none": ()}[args.tail]
@@ -173,11 +238,17 @@ def _run_india(args, pkg, t0):
         hinges, stats = NM.build_nonlinear(pkg, prm, PG)
         rec = MR.MemberRecorder(pkg, hinges, stats)
         run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
-                          tail_strategies=strategies, recorder=rec, target_estimator=estimator)
+                          tail_strategies=strategies, recorder=rec, target_estimator=estimator,
+                          stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
         nsp = {lvn: PP.nsp_target(run, pkg.basis, prm, lv) for lvn, lv in levels.items()}
-        cap = PP.capacity_summary(run, pkg.basis, nsp["IS-DBE"])
-        resp = {lvn: PP.response_at(run, n["target_disp_in"], lvn, rec.meta(), ref, pkg.basis) for lvn, n in nsp.items()}
-        runs[d] = run; results[d] = dict(nsp=nsp, capacity=cap, resp=resp, ref_rot=ref, meta=rec.meta())
+        from snl.india_units import KN_TO_KIP
+        vbd = IH.vb_direction_kN(ind, d)                  # NL-4: V-bar_B of THIS direction (per-direction R)
+        vbd_kip = vbd * KN_TO_KIP if vbd is not None else None
+        cap = PP.capacity_summary(run, pkg.basis, nsp["IS-DBE"], V_design_kip=vbd_kip)
+        resp = {lvn: PP.response_at(run, n["target_disp_in"], lvn, rec.meta(), ref, pkg.basis, V_design_kip=vbd_kip)
+                for lvn, n in nsp.items()}
+        runs[d] = run; results[d] = dict(nsp=nsp, capacity=cap, resp=resp, ref_rot=ref, meta=rec.meta(),
+                                         elastic=elastic_check(run, nsp))
         for lvn, n in nsp.items():
             a = resp[lvn]
             print("  [%s %s] Te=%.3fs Sa=%.3fg C0=%.2f C1=%.2f C2=%.2f -> dt=%.1f mm (%.3f%% H) | V=%.0f kN (V/VB %.2f) "
@@ -191,7 +262,7 @@ def _run_india(args, pkg, t0):
             f.write("roof_disp_mm,base_shear_kN\n")
             for u, v in zip(run["rec"]["u"], run["rec"]["V"]):
                 f.write("%.3f,%.2f\n" % (u * 25.4, v * 4.4482216152605))
-    shutil.copy(args.params or os.path.join(os.path.dirname(__file__), "hinge_params.json"), os.path.join(out, "hinge_params_used.json"))
+    _copy_params(args.params or HM.default_params_path("india"), os.path.join(out, "hinge_params_used.json"))
     print("wrote", html_path, "(%.0f s)" % (time.time() - t0))
     return results
 
@@ -203,6 +274,9 @@ def main(argv=None):
     r.add_argument("--max-drift", type=float, default=None,
                    help="max roof drift ratio H (default: 0.10 India fibre, else 0.08). Raise to capture descending branch.")
     r.add_argument("--site-class", default="D"); r.add_argument("--params")
+    r.add_argument("--stop-at", type=float, default=0.8, help="India: stop the push once V <= this fraction of Vmax past "
+                   "the peak and beyond 2 x the largest target estimate (default 0.8: delta_u captured); 0 = push to --max-drift")
+    r.add_argument("--gravity-elastic", default=None, choices=["on", "off"], help="gravity-only members elastic with a yield check (India default on; NL-21)")
     r.add_argument("--system")
     r.add_argument("--tail", default="auto", help="descending-branch escalation: auto (fine_step then arclength) | fine_step | arclength | none")
     r.add_argument("--post-cap-ratio", type=float, help="RUNG 3 (modelling change, user consent): fraction of `a` over which hinges descend to residual (default 0.15; try 0.5)")

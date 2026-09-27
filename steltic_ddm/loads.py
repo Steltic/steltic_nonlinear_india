@@ -38,7 +38,7 @@ def steltic_combos(cfg, nm=None):
     try:
         import india_loads as IL  # type: ignore
         if plan:
-            return IL.cases_from_load_plan(cfg)
+            return india_static_cases(IL.cases_from_load_plan(cfg), plan, IL)
         if indiaish:
             raise RuntimeError(
                 "steltic_nonlinear_india DDM: jurisdiction/load_plan marks India but "
@@ -62,9 +62,69 @@ def steltic_combos(cfg, nm=None):
     return DP.combos(cfg)
 
 
+def india_static_cases(cases, plan, IL):
+    """NL-13: the GMNIA is a static sweep, but the HR package's IS 1893 combinations reference the RSA envelope
+    (Case.meta['rsa'] = {direction: factor}) and carry only the 7.8.2 torsional moments as static forces. Left as they
+    were, the DDM 'EQ' runs were gravity + accidental torsion with NO lateral force. Each RSA term becomes the static
+    IS 1893 7.6.3 storey-force pattern of that direction from load_plan.story_forces (EQ_X / EQ_Y, which the HR engine
+    writes at V-bar_B) times the combination factor, added to the torsion moments; the case is tagged `lateral_basis`."""
+    sf = (plan or {}).get("story_forces") or {}
+    out = []
+    for c in cases:
+        meta = dict(getattr(c, "meta", {}) or {})
+        rsa = meta.get("rsa") or {}
+        lat = dict(c[4] or {})
+        added = []
+        for d, f in rsa.items():
+            key = "EQ_%s" % str(d).upper()[-1]
+            raw = sf.get(key)
+            if raw is None:
+                continue
+            sc = IL._story_force_scale(plan, getattr(c, "meta", {}).get("source") or {}) * float(f)
+            for k, (fx, fy, mz) in IL._as_lateral(raw).items():
+                a = lat.get(k, (0.0, 0.0, 0.0))
+                lat[k] = (a[0] + fx * sc, a[1] + fy * sc, a[2] + mz * sc)
+            added.append("%s x %.3g" % (key, float(f)))
+        if added:
+            meta["lateral_basis"] = ("static IS 1893 7.6.3 storey forces (load_plan.story_forces %s, at V-bar_B) in place "
+                                     "of the RSA envelope; 7.8.2 torsion kept" % ", ".join(added))
+            c = IL.Case(c[0], c[1], c[2], c[3], lat, c[5], **meta)
+        out.append(c)
+    return out
+
+
+def prune_india(cases, torsion="plus", include_om0=False):
+    """India default set (NL-13): factored gravity (1.5DL+1.5LL; the notional-load variants N_X / N_Y are dropped --
+    the GMNIA models the IS 800 4.3.6 imperfection explicitly), and per direction and sign the IS 800 Table 4 lateral
+    families 1.2(DL+LL+lateral), 1.5(DL+lateral), 0.9DL+1.5 lateral for EQ (accidental-torsion case [ea] unless
+    torsion='both') and W (storey wind; member-level wind cases WM* carry no storey force and are not a DDM pattern;
+    the 0.6 W partial rows are not strength patterns). [col] Omega rows only with include_om0."""
+    keep = []
+    for c in cases:
+        lab = c[0]
+        col_only = c[5] or "[col]" in lab
+        if col_only and not include_om0:
+            continue
+        if lab.upper().startswith("SLS") or (getattr(c, "meta", {}) or {}).get("service"):
+            continue                                             # serviceability rows are not strength patterns
+        if "+N_" in lab or "-N_" in lab or "WM" in lab or "0.6W" in lab or "_across" in lab:
+            continue
+        if "EQ" in lab and "[eb]" in lab and torsion != "both":
+            continue
+        if torsion == "minus" and "[ea]" in lab:
+            continue
+        if not c[4] and ("EQ" in lab or "W_" in lab):
+            continue                                             # a lateral case with no storey force: nothing to sweep
+        if ("EQ_" in lab or "W_" in lab) or ("DL" in lab and "LL" in lab and "EQ" not in lab and "W" not in lab):
+            keep.append(c)
+    return keep
+
+
 def prune(cases, policy="default", torsion="plus", include_om0=False):
     if policy == "all":
         return list(cases)
+    if any(str(c[0]).startswith(("1.5DL", "1.2DL", "0.9DL")) for c in cases):
+        return prune_india(cases, torsion=torsion, include_om0=include_om0)
     # portal seismic labels are "(1.2+0.2SDS)D+E" — keep them
     # India IS 800 Table 4: 1.5DL+1.5LL, 1.2DL+1.2LL+1.2EQ_X / W_X, 0.9DL+1.5EQ_X, …
     from . import portal_adapter as PA

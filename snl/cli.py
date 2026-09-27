@@ -1,9 +1,12 @@
 """snl -- Steltic_nonlinear orchestrator.
 
+    python -m snl collect <job folder>                      # FIRST: read the IS specification values out of the IS corpus
     python -m snl run <package.zip | folder> [--out DIR] [--steltic-engine DIR] [--params hinge_params.json]
                                             [--only pushover nlrha ddm] [--skip ...] [--parallel 2] [--dt 0.01] ...
     python -m snl report <job folder>            # rebuild four_analyses.html + snl_summary.json from existing outputs
     python -m snl inspect <package.zip | folder> # read the design basis (the Pushover Analyst's reader)
+    python -m snl review <job folder> [--focus "..."] [--no-standards] [--max-searches N]
+                                                 # the model's engineer's review of the run, grounded in the standards (snl/review.py)
 
 One command takes the Steltic output package (the Download .zip or the job folder) and runs the three nonlinear
 analyses in sequence -- Pushover (ASCE 41 NSP), NLRHA (ASCE 7-22 Chapter 16) and DDM (GMNIA system capacity) --
@@ -64,24 +67,44 @@ def cmd_run(a):
     steps = [s for s in STEPS if (not a.only or s in a.only) and s not in (a.skip or [])]
     status = dict(job=job, started=time.strftime("%Y-%m-%dT%H:%M:%S"), steps={})
     log = os.path.join(job, "snl_run.log")
-    params = ["--params", os.path.abspath(a.params)] if a.params else []
-    site = ["--site-class", a.site_class]
+    # The component parameters: the file `snl collect` wrote for THIS project when it exists (the IS
+    # specification values read out of the IS corpus; hinge backbones labelled modelling assumptions), else
+    # what --params names, else the repository placeholder. Collect first is the point: the analyses then
+    # run on cited IS values and the reports need no re-issue.
+    from . import collect as _C
+    collected = os.path.join(job, _C.OUT_NAME)
+    params_path = os.path.abspath(a.params) if a.params else (collected if os.path.exists(collected) else None)
+    if params_path:
+        print(">> component parameters: %s%s" % (params_path, " (collected from the corpus)" if params_path == collected else ""))
+    else:
+        print(">> component parameters: repository placeholder -- run `snl collect` first to read the IS values from the corpus")
+    params = ["--params", params_path] if params_path else []
+    from .compare import _is_india_job
+    india = _is_india_job(job)
+    # NL-19: the India path uses no ASCE site class (IS soil type from the package) and always fibre plasticity in
+    # both analyses -- pass neither the USA site class nor the USA NLRHA default (imk), which the India CLIs ignored.
+    site = [] if india else ["--site-class", a.site_class]
     for s in steps:
         if s == "pushover":
-            cmd = [py, "-m", "pushover", "run", job] + site + params + (["--tail", a.tail] if a.tail else []) + (["--post-cap-ratio", str(a.post_cap_ratio)] if a.post_cap_ratio else [])
+            ge = ["--gravity-elastic", a.gravity_elastic] if getattr(a, "gravity_elastic", None) else []
+            cmd = [py, "-m", "pushover", "run", job] + site + params + ge + (["--tail", a.tail] if a.tail else []) + (["--post-cap-ratio", str(a.post_cap_ratio)] if a.post_cap_ratio else [])
             plast = a.plasticity if a.plasticity else "fibre"
             nseg = a.member_nseg if a.member_nseg is not None else (4 if plast == "fibre" else 1)
             cmd += ["--plasticity", plast, "--member-nseg", str(nseg)]
         elif s == "nlrha":
             cmd = [py, "-m", "nlrha", "run", job, "--parallel", str(a.parallel), "--dt", str(a.dt), "--integrator", a.integrator, "--n", str(a.n_records)] + site + params
             if a.records_set: cmd += ["--records-set"] + list(a.records_set)
+            if getattr(a, "gravity_elastic", None): cmd += ["--gravity-elastic", a.gravity_elastic]
+            if getattr(a, "trim", None): cmd += ["--trim", a.trim]
             if a.target: cmd += ["--target", a.target]          # default None: nlrha picks is1893 (elastic, D6) for India
             if getattr(a, "level", None): cmd += ["--level", a.level]
             if a.site_hazard: cmd += ["--site-hazard", os.path.abspath(a.site_hazard)]
             if a.pulse_fraction is not None: cmd += ["--pulse-fraction", str(a.pulse_fraction)]
             if a.sf_bounds: cmd += ["--sf-bounds", a.sf_bounds]
             # Product rule 1: NLRHA starts ModIMK; fibre via mesh-converge ladder
-            plast = a.plasticity if a.plasticity else "imk"
+            plast = a.plasticity if a.plasticity else ("fibre" if india else "imk")
+            if india and plast not in ("fibre", "fiber"):
+                print("!! India: NLRHA plasticity is always fibre (--plasticity %s ignored)" % plast); plast = "fibre"
             nseg = a.member_nseg if a.member_nseg is not None else (4 if plast in ("fibre", "fiber") else 1)
             cmd += ["--plasticity", plast, "--member-nseg", str(nseg)]
             if a.risk_category: cmd += ["--risk-category", a.risk_category]
@@ -93,6 +116,20 @@ def cmd_run(a):
             if a.risk_category: cmd += ["--risk-category", a.risk_category]
         status["steps"][s] = _run(cmd, log, env=env)
         print("   %s -> rc %s (%s s)" % (s, status["steps"][s]["returncode"], status["steps"][s]["seconds"]), flush=True)
+        # NL-21: an elastic gravity member past first yield is promoted to fibre and the analysis re-run
+        if india and s in ("pushover", "nlrha") and not getattr(a, "no_promote", False):
+            from pushover import elastic_gravity as EG
+            for rnd in range(1, 3):
+                fl = flagged_elastic(job, s)
+                if not fl or status["steps"][s].get("returncode") not in (0, None):
+                    break
+                EG.promote(job, fl, why="%s yield check, round %d" % (s, rnd), analysis=s)
+                print(">> %s: %d elastic gravity member(s) above first yield -> promoted to fibre, re-running (%s)"
+                      % (s, len(fl), ", ".join(str(t) for t in fl[:10])), flush=True)
+                status["steps"][s] = _run(cmd, log, env=env)
+                status["steps"][s]["promotion_round"] = rnd
+                status["steps"][s]["promoted"] = fl
+                print("   %s -> rc %s (%s s)" % (s, status["steps"][s]["returncode"], status["steps"][s]["seconds"]), flush=True)
     # comparison sheet + summary (whatever ran)
     from . import compare
     try:
@@ -116,6 +153,20 @@ def cmd_run(a):
     return 1 if bad else 0
 
 
+def flagged_elastic(job, step) -> list:
+    """Elastic gravity members above first yield in the packages `step` just wrote (NL-21)."""
+    rels = (["pushover/pushover_package.json"] if step == "pushover"
+            else ["nlrha/DBE/nlrha_package.json", "nlrha/MCE/nlrha_package.json"])
+    out = set()
+    for r in rels:
+        try:
+            d = json.load(open(os.path.join(job, r), encoding="utf-8"))
+        except Exception:
+            continue
+        out |= {int(t) for t in ((d.get("elastic_members") or {}).get("flagged_elastic") or [])}
+    return sorted(out)
+
+
 def _hub(job):
     try:
         from pushover import viewer_core as VC
@@ -130,6 +181,20 @@ def cmd_report(a):
     print(">> four analyses:", compare.build(job)); _hub(job)
 
 
+def cmd_revise(a):
+    from . import revise
+    revise.run(a.job)
+
+
+def cmd_collect(a):
+    from . import collect
+    r = collect.run(a.job, out_name=a.out, emit=collect.Emitter(), prepare=getattr(a, "prepare", False),
+                    answers=getattr(a, "answers", None))
+    if r.get("prepared"):
+        return 3
+    return 0 if r["ok"] else 2
+
+
 def cmd_inspect(a):
     job = _unpack(a.package, a.out)
     subprocess.run([sys.executable, "-m", "pushover", "inspect", job])
@@ -140,13 +205,16 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run"); r.add_argument("package"); r.add_argument("--out", help="folder to unpack a .zip into (default: next to the zip)")
     r.add_argument("--steltic-engine", help="path to steltic/steel_engine (or set STELTIC_ENGINE_DIR); required by the DDM step")
-    r.add_argument("--params", help="job copy of hinge_params.json filled from AISC 342 / ASCE 41 (default: the repository placeholder -> UNVERIFIED banner)")
+    r.add_argument("--params", help="component-parameter file (default: <job>/hinge_params_collected.json written by `snl collect`, else the repository India file pushover/hinge_params.json -> the COMPLETE gate refuses: IS values not collected)")
     r.add_argument("--only", nargs="*", choices=STEPS); r.add_argument("--skip", nargs="*", choices=STEPS)
     r.add_argument("--parallel", type=int, default=2); r.add_argument("--dt", type=float, default=0.01); r.add_argument("--integrator", default="hht", choices=["hht", "newmark"])
-    r.add_argument("--n-records", type=int, default=11); r.add_argument("--site-class", default="D"); r.add_argument("--risk-category", choices=["I", "II", "III", "IV"])
+    r.add_argument("--n-records", type=int, default=11); r.add_argument("--site-class", default="D", help="ASCE site class (USA only; the India path uses the IS soil type of the package)"); r.add_argument("--risk-category", choices=["I", "II", "III", "IV"])
     r.add_argument("--tail", choices=["auto", "fine_step", "arclength", "none"]); r.add_argument("--post-cap-ratio", type=float, help="tail-protocol rung 3 (disclosed modelling change)")
     r.add_argument("--no-block", action="store_true", help="DDM: do not write the ddm_analysis block into calc_package.json")
-    r.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="override plasticity (defaults: NSP fibre, NLRHA imk)")
+    r.add_argument("--no-promote", action="store_true", help="India: do not promote elastic gravity members that exceed first yield to fibre and re-run (NL-21)")
+    r.add_argument("--gravity-elastic", choices=["on", "off"], help="India: gravity-only members elastic with a yield check (default on; NL-21)")
+    r.add_argument("--trim", choices=["arias5-95", "none"], help="India NLRHA record trimming (default arias5-95; NL-21)")
+    r.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="override plasticity (USA defaults: NSP fibre, NLRHA imk; India: fibre always)")
     r.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default 4 fibre / 1 imk)")
     r.add_argument("--records-set", nargs="*", default=None, help="NLRHA record set folder(s): indexed sets and/or user folders of PEER .AT2 / CSV pairs (default: the shipped P-695 far-field set)")
     r.add_argument("--target", default=None, choices=["is1893", "code", "mcer", "cs"], help="NLRHA scaling target (default: is1893 elastic DBE/MCE for India; code for USA scaffolding)")
@@ -177,12 +245,33 @@ def main(argv=None):
     mc.add_argument("--rigid-end-offset", type=float, default=None, help="HR DDM rigid end offset fraction")
     mc.add_argument("--no-rigid-end-offset", action="store_true")
     p = sub.add_parser("report"); p.add_argument("job")
+    rs = sub.add_parser("revise", help="re-issue the reports with the IS corpus behind them: needs review.md "
+                                       "from the Review tab, re-asks IS 1893 / IS 800 through RAG_API_URL (engineering_rag_india), "
+                                       "records every passage and replaces the placeholder wording with the citation")
+    rs.add_argument("job")
+    co = sub.add_parser("collect", help="read the IS specification values the analyses rely on (IS 2062 fy / fu, IS 18168 Ry / Ru, "
+                                        "the IS 800 Section 12 joint-rotation capacity, IS 1893 Z / I / Sa/g / damping) out of the IS "
+                                        "corpus (RAG_API_URL) for this building and write hinge_params_collected.json; the hinge "
+                                        "backbones stay modelling assumptions. Do this BEFORE `run`.")
+    co.add_argument("job"); co.add_argument("--out", default="hinge_params_collected.json", help="file name written into the job folder")
+    co.add_argument("--prepare", action="store_true", help="fetch the IS passages (deterministic retrieval) and write "
+                    "collect_request.json / .md for a transcriber; nothing is collected (exit 3)")
+    co.add_argument("--answers", help="SCRIPTED transcriber: an answers file {group: {field: {value, quote}}} filled from "
+                    "collect_request.json; every value is still checked against the fetched passages")
     i = sub.add_parser("inspect"); i.add_argument("package"); i.add_argument("--out")
+    rv = sub.add_parser("review", help="the model reads what the run measured, looks the governing clauses up in the standards (RAG_API_URL) and writes review.md / review.html")
+    rv.add_argument("job"); rv.add_argument("--focus", default="", help="what the engineer wants the review to concentrate on")
+    rv.add_argument("--no-standards", action="store_true", help="do not query the standards server; clauses come from the model's memory, marked UNVERIFIED")
+    rv.add_argument("--max-searches", type=int, default=0, help="cap the standards searches the model may make; 0 (the default) is no cap -- it searches as often as the review needs")
     a = ap.parse_args(argv)
     if a.cmd == "mesh-converge":
         from mesh_convergence.driver import main as mc_main
         return mc_main(a)
-    return {"run": cmd_run, "report": cmd_report, "inspect": cmd_inspect, "feedback": cmd_feedback}[a.cmd](a)
+    if a.cmd == "review":
+        from .review import cmd_review
+        return cmd_review(a)
+    return {"run": cmd_run, "report": cmd_report, "revise": cmd_revise, "collect": cmd_collect,
+            "inspect": cmd_inspect, "feedback": cmd_feedback}[a.cmd](a)
 
 
 def cmd_feedback(a):

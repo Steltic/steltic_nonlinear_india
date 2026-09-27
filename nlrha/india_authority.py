@@ -31,7 +31,11 @@ import os
 from typing import Any
 
 JURISDICTION = "india"
-CORPUS_ROOT = "/workspace/engineering_rag_india"
+try:                                             # NL-3: $INDIA_CORPUS_ROOT, sibling checkout, else /workspace
+    from snl.india_collections import corpus_root as _corpus_root
+    CORPUS_ROOT = _corpus_root()
+except Exception:                                # pragma: no cover - snl always importable in this repo
+    CORPUS_ROOT = "/workspace/engineering_rag_india"
 PRIMARY_STEM = "IS_1893_Part_1_2016"
 DESIGN_STEM = "IS_800_2007"
 
@@ -502,11 +506,33 @@ def nsp_acceptance_tables_status(cfg_or_job=None, job_dir: str | None = None) ->
     }
 
 
+def method_disclosures(job_dir) -> list[dict]:
+    """NL-21 method choices read back from the analysis packages: elastic gravity members (with their yield check) and
+    record trimming. Empty when the job has no packages yet."""
+    rows = []
+    if not job_dir:
+        return rows
+    po = _read_json(os.path.join(job_dir, "pushover", "pushover_package.json")) or {}
+    lv = {x: _read_json(os.path.join(job_dir, "nlrha", x, "nlrha_package.json")) or {} for x in ("DBE", "MCE")}
+    ems = [p.get("elastic_members") for p in [po] + list(lv.values()) if p.get("elastic_members")]
+    if any(e.get("n_elastic") for e in ems):
+        rows.append(dict(id="gravity_members_elastic", found=True, disclosed=True,
+                         n_elastic=max(e.get("n_elastic") or 0 for e in ems),
+                         max_ratio=max(e.get("max_ratio") or 0.0 for e in ems),
+                         flagged_elastic=sorted({t for e in ems for t in (e.get("flagged_elastic") or [])}),
+                         note=ems[0].get("basis") or "gravity-only members elastic with a first-yield check"))
+    trims = [p.get("record_trim") for p in lv.values() if p.get("record_trim")]
+    if trims and trims[0].get("method") not in (None, "none"):
+        rows.append(dict(id="record_trimming", found=True, disclosed=True, method=trims[0].get("method"),
+                         free_vib_s=trims[0].get("free_vib_s"), note=trims[0].get("basis")))
+    return rows
+
+
 def complete_gate_disclosures(cfg_or_job=None, job_dir: str | None = None) -> list[dict]:
     """Status objects the COMPLETE gate must disclose (found:false kept honest)."""
     nsp = nsp_acceptance_tables_status(cfg_or_job, job_dir=job_dir)
     drift = drift_relief_analogue(cfg_or_job, job_dir=job_dir)
-    return [
+    return method_disclosures(job_dir) + [
         nsp,
         {
             "id": "asce_16_1_2_drift_relief_analogue",
@@ -1162,6 +1188,49 @@ def summary_inputs(job_dir: str) -> dict:
     return out
 
 
+def _package_has_links(job_dir) -> bool:
+    """True when the HR package declares EBF links (member_schedule.csv role 'link')."""
+    import csv
+    p = os.path.join(job_dir, "design", "member_schedule.csv")
+    if not os.path.exists(p):
+        return False
+    try:
+        with open(p, newline="", encoding="utf-8") as f:
+            return any((r.get("role") or "").strip() == "link" for r in csv.DictReader(f))
+    except Exception:
+        return False
+
+
+def _nl17_package_checks(job_dir, what, pk, reasons, checks):
+    """NL-17 (India): an analysis package counts toward COMPLETE only when
+      a the IS specification values were collected from the corpus (`snl collect`: spec_values_collected);
+      b its gravity is the HR engine's own seismic-weight load state (gravity_source 'hr_engine'), not the
+        idealised equal nodal loads used when the HR engine is not importable;
+      c the EBF links the HR package declares are modelled as nonlinear links (links > 0)."""
+    key = what.replace(" ", "_").lower()
+    ok_c = bool(pk.get("spec_values_collected"))
+    checks[key + "_spec_values_collected"] = ok_c
+    if not ok_c:
+        reasons.append("%s ran without collected IS specification values (run `snl collect` first; "
+                       "spec_values_collected is false)" % what)
+    gs = pk.get("gravity_source")
+    checks[key + "_gravity_source"] = gs
+    if gs != "hr_engine":
+        reasons.append("%s gravity is not the HR engine's load state (gravity_source=%r; set STELTIC_ENGINE_DIR)" % (what, gs))
+    em = pk.get("elastic_members") or {}
+    checks[key + "_elastic_members"] = em.get("n_elastic", 0)
+    if em.get("flagged_elastic"):                       # NL-21: a gravity member past first yield must be fibre
+        reasons.append("%s: %d elastic gravity member(s) exceed first yield (ratio > 1.0: %s) -- promote them to fibre "
+                       "(snl run does this automatically; %s) and re-run" % (
+                           what, len(em["flagged_elastic"]), ", ".join(str(t) for t in em["flagged_elastic"][:10]),
+                           "nl_promote_fibre.json"))
+    if _package_has_links(job_dir):
+        n = int(pk.get("links") or 0)
+        checks[key + "_links"] = n
+        if n <= 0:
+            reasons.append("%s: the HR package declares EBF links but the model has no nonlinear links" % what)
+
+
 def artefact_gate(job_dir: str | None) -> dict:
     """Checks (all required for COMPLETE):
       1 pushover_package.json + nlrha_package.json (both levels) exist and prove fibre plasticity;
@@ -1175,7 +1244,8 @@ def artefact_gate(job_dir: str | None) -> dict:
         blocks); IS 800 B-1.2 section check at lambda = 1 present -- a B-1.2 failure gives
         complete_with_capacity_shortfall;
       8 summaries (snl_summary.json) are FRESH: the package hashes they recorded match the files on disk;
-      9 validate_nl_plan has no ERROR."""
+      9 validate_nl_plan has no ERROR;
+     10 (NL-17) pushover and both NLRHA levels: IS values collected, HR-engine gravity, EBF links modelled."""
     reasons, checks = [], {}
     if not job_dir or not os.path.isdir(job_dir):
         return dict(ok=False, reasons=["no job folder / analysis artefacts -- COMPLETE refused"], checks={}, capacity_shortfall=False)
@@ -1195,6 +1265,8 @@ def artefact_gate(job_dir: str | None) -> dict:
             reasons.append("pushover NSP target not stamped as the elastic IS spectrum (R_in_target must be False)")
         if india and not (po.get("mass_gate") or {}).get("ok"):
             reasons.append("pushover mass gate (sum m g = W within 1 %) not passed")
+        if india:
+            _nl17_package_checks(job_dir, "pushover", po, reasons, checks)
         dirs = po.get("directions") or {}
         if india and set(dirs) != {"X", "Y"}:
             reasons.append("pushover package must hold both directions X and Y (has %s)" % sorted(dirs))
@@ -1225,6 +1297,7 @@ def artefact_gate(job_dir: str | None) -> dict:
                 reasons.append("NLRHA %s response summary is vacuous (%s)" % (lv, (rs.get("non_vacuous") or {}).get("missing_kinds")))
             if not (lp.get("mass_gate") or {}).get("ok"):
                 reasons.append("NLRHA %s mass gate not passed" % lv)
+            _nl17_package_checks(job_dir, "NLRHA %s" % lv, lp, reasons, checks)
         mo = nl.get("modal") or {}
         if mo and not mo.get("spurious_ok", False):
             reasons.append("spurious modes present: %s" % mo.get("spurious_modes"))

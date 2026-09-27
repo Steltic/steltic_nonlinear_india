@@ -85,8 +85,9 @@ _FY_CACHE = {}
 
 
 def _india_fy_fn(job):
-    """fy (MPa) per section from IS 2062 Table 3 (grade from nl_plan.material, default E250; EOR expected factor,
-    default 1.0) -- the SAME steel as the pushover and the NLRHA (WP4.5)."""
+    """fy (MPa) per (section, role) -- the HR package's own material record (IS 2062 Table 3 by thickness, IS 1161 for
+    tubes), nl_plan.material EOR overrides on top, expected factor default 1.0 -- the SAME steel as the pushover and
+    the NLRHA (WP4.5 / NL-5)."""
     if job in _FY_CACHE:
         return _FY_CACHE[job]
     from pushover import india_materials as IM
@@ -97,7 +98,7 @@ def _india_fy_fn(job):
                 plan = json.load(open(c)); break
             except Exception:
                 pass
-    mp = IM.material_plan(plan)
+    mp = IM.material_plan(plan, IM.package_materials(job))      # NL-5: the HR package's steel, EOR overrides on top
     cache = {}
 
     def fy(section, kind=None):

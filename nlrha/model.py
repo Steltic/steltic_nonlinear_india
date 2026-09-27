@@ -85,7 +85,8 @@ def build(pkg, prm, ch16, PG, member_nseg=None, plasticity=None):
                                        member_nseg=member_nseg, plasticity=plasticity)
     # Fibre: all forceBeamColumn tags for Rayleigh region. IMK: elastic_ele_tags (RBS extras) or pack tags.
     if stats.get("plasticity") == "fibre" and stats.get("fibre_eles"):
-        elastic_eles = list(stats["fibre_eles"])
+        # NL-21: the elastic gravity members get the same stiffness-proportional damping as the fibre members
+        elastic_eles = list(stats["fibre_eles"]) + list(stats.get("elastic_gravity_eles") or [])
     elif stats.get("elastic_ele_tags"):
         elastic_eles = list(stats["elastic_ele_tags"])
     else:
@@ -101,11 +102,28 @@ def build(pkg, prm, ch16, PG, member_nseg=None, plasticity=None):
     return hinges, stats, elastic_eles
 
 
+def n_mass_dofs(rel=1e-4) -> int:
+    """Number of REAL nodal mass entries in the current OpenSees domain: entries above `rel` x the largest
+    translational (resp. rotational) entry. The NL builders put a numerical mass of 1e-8 x the smallest storey mass on every DOF (transient
+    stability); those DOFs only add degenerate local modes (T ~ 1e-4 s) on which ARPACK stops converging and returns
+    garbage (T ~ 6e6 s, zero mass -- IN_Ex5 modes 11-12)."""
+    ms = [ops.nodeMass(t) for t in ops.getNodeTags()]
+    ref_t = max((abs(v) for m in ms for v in m[:3]), default=0.0)          # translational reference (a storey mass)
+    ref_r = max((abs(v) for m in ms for v in m[3:6]), default=0.0)         # rotational reference (a storey inertia)
+    return sum(1 for m in ms for j, v in enumerate(m[:6])
+               if abs(v) > rel * (ref_t if j < 3 else ref_r) and (ref_t if j < 3 else ref_r) > 0)
+
+
 def _participation(pkg, nmodes):
     """Eigen solve + effective modal mass fractions using the FULL nodal mass vector (all nodes, all DOFs), so that
     each fraction is <= 1 and the sum over a complete basis is 1 (WP4.12: fixes local modes reporting 100 %)."""
     ops.wipeAnalysis()
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
+    # NL-18: never ask for more modes than the model has real mass DOFs. The HR models carry their mass on the
+    # diaphragm masters only (3 DOF per level): asking 12 modes of the 2-level IN_Ex5 went into the numerical-mass
+    # local modes, ARPACK did not converge and returned "modes" 11-12 at T = 6e6 s with no mass, which the
+    # spurious-mode check flagged -- blocking COMPLETE on a sound model.
+    nmodes = max(1, min(int(nmodes), n_mass_dofs()))
     w2 = ops.eigen("-genBandArpack", nmodes)
     lv = NM.levels(pkg)
     tags = ops.getNodeTags()
@@ -136,8 +154,8 @@ def modal(pkg, nmodes=12, target=0.90, max_modes=60):
     while True:
         modes = _participation(pkg, n)
         cx = sum(m["fx"] for m in modes); cy = sum(m["fy"] for m in modes)
-        if (cx >= target and cy >= target) or n >= max_modes:
-            break
+        if (cx >= target and cy >= target) or n >= max_modes or len(modes) < n:
+            break                                   # len(modes) < n: every finite mode is already in the basis
         n = min(max_modes, n * 2)
     T1x = max(modes, key=lambda m: m["fx"])["T"]; T1y = max(modes, key=lambda m: m["fy"])["T"]
     Tf = max(T1x, T1y)

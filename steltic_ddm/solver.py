@@ -152,10 +152,11 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     `strain_cap` x eps_y -- lambda at the cap), or NO_LIMIT_POINT (time / step exhaustion / max steps / displacement
     cap with lambda still rising). lambda_u is None for NO_LIMIT_POINT (lambda_end holds the last peak)."""
     label, fD, fL, fLr, lat, col_only = combo
+    fS = float((getattr(combo, "meta", None) or {}).get("fS") or 0.0)
     t0 = time.time()
     model.build().prepare()
     ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-    W = model.apply_gravity(fD, fL, fLr, pres)
+    W = model.apply_gravity(fD, fL, fLr, pres, fS=fS, meta=getattr(combo, "meta", None))
     model.apply_lateral(lat)
     _solver_settings()
     ldir, lsgn = lateral_direction(lat)
@@ -172,7 +173,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
         # rewind failed attempt before retrying a smaller step
         model.build().prepare()
         ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
-        W = model.apply_gravity(fD, fL, fLr, pres)
+        W = model.apply_gravity(fD, fL, fLr, pres, fS=fS, meta=getattr(combo, "meta", None))
         model.apply_lateral(lat)
         _solver_settings()
         ops.analysis("Static")
@@ -341,7 +342,7 @@ def classify(res, model):
         by_kind[k] = by_kind.get(k, 0) + 1
     buckled = [t for t, s in snap.get("braces", {}).items() if s.get("buckled")]
     ductile_post = res.get("plateau", False) or (res["lam_at_1p25d"] is not None and res["lam_at_1p25d"] >= 0.9 * res["lambda_u"])
-    nbeam_h = by_kind.get("floor", 0) + by_kind.get("roof", 0)
+    nbeam_h = by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)
     if buckled and not nbeam_h:
         mech = "brace buckling (%d brace%s) governs the peak" % (len(buckled), "s" if len(buckled) > 1 else "")
         cls = "instability"
@@ -349,15 +350,15 @@ def classify(res, model):
         mech = "brace buckling (%d braces) with %d beam member%s at hinge level at the peak (proportional scaling also scales gravity)" % (
             len(buckled), nbeam_h, "s" if nbeam_h > 1 else "")
         cls = "instability"
-    elif by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0) > 0 and (by_kind.get("floor", 0) + by_kind.get("roof", 0)) == 0:
+    elif by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0) > 0 and (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)) == 0:
         mech = "column yielding / inelastic instability (%d column member%s at hinge level)" % (
             by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0), "s" if by_kind.get("lateral_col", 0) + by_kind.get("gravity_col", 0) > 1 else "")
         cls = "instability"
-    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0)) >= 3 and ductile_post:
-        mech = "beam plastic mechanism (%d beam members at hinge level)" % (by_kind.get("floor", 0) + by_kind.get("roof", 0))
+    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)) >= 3 and ductile_post:
+        mech = "beam plastic mechanism (%d beam members at hinge level)" % (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0))
         cls = "ductile"
-    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0)) >= 1:
-        mech = "beam yielding (%d beam members at hinge level), limited post-peak ductility" % (by_kind.get("floor", 0) + by_kind.get("roof", 0))
+    elif (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)) >= 1:
+        mech = "beam yielding (%d beam members at hinge level), limited post-peak ductility" % (by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0))
         cls = "ductile" if ductile_post else "limited-ductility"
     else:
         yr_roles = {}

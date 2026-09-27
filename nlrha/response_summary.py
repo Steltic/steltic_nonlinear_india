@@ -23,7 +23,9 @@ KIP_TO_KN = 4.4482216152605
 
 def _sfrs_kinds(system: str | None) -> set:
     s = str(system or "").upper()
-    if any(k in s for k in ("CBF", "SBF", "BRACE", "EBF")):
+    if "EBF" in s or "ECCENTRIC" in s:
+        return {"brace", "col", "beam", "link"}                 # NL-10: the links are the EBF's yielding members
+    if any(k in s for k in ("CBF", "SBF", "BRACE")):
         return {"brace", "col", "beam"}
     return {"col", "beam"}
 
@@ -59,6 +61,7 @@ def summarise(results, pkg, level: str, target_label: str, T1: float | None = No
                            max_Y=float(drifts[:, i, 1].max()) if len(ok) else None))
     # base shear
     VB = ind.get("VB_kN"); W = ind.get("W_kN")
+    VBx, VBy = IH.vb_direction_kN(ind, "X"), IH.vb_direction_kN(ind, "Y")     # NL-4: V-bar_B per direction
     vbx = [p["base_shear_kN"][0] for p in per if p["converged"] and p["base_shear_kN"][0] is not None]
     vby = [p["base_shear_kN"][1] for p in per if p["converged"] and p["base_shear_kN"][1] is not None]
     Sa_T1 = None; V_el = None
@@ -67,10 +70,17 @@ def summarise(results, pkg, level: str, target_label: str, T1: float | None = No
         V_el = Sa_T1 * W if W else None
     bs = dict(mean_X_kN=float(np.mean(vbx)) if vbx else None, mean_Y_kN=float(np.mean(vby)) if vby else None,
               max_kN=float(max(vbx + vby)) if (vbx or vby) else None, VB_design_kN=VB,
+              VB_design_X_kN=VBx, VB_design_Y_kN=VBy,
               elastic_kN=V_el, Sa_T1_g=Sa_T1, T1_s=T1,
-              basis="VB: IS 1893 7.6 design base shear (seismic_calc); elastic = Sa(T1)·W at this level (no R)")
-    if VB and bs["max_kN"]:
-        bs["mean_over_VB"] = max(v for v in (bs["mean_X_kN"], bs["mean_Y_kN"]) if v is not None) / VB
+              basis="VB: IS 1893 design base shear per direction (V-bar_B of the HR package, per-direction R); "
+                    "elastic = Sa(T1)·W at this level (no R)")
+    ratios = []
+    if VBx and bs["mean_X_kN"] is not None:
+        bs["mean_X_over_VB"] = bs["mean_X_kN"] / VBx; ratios.append(bs["mean_X_over_VB"])
+    if VBy and bs["mean_Y_kN"] is not None:
+        bs["mean_Y_over_VB"] = bs["mean_Y_kN"] / VBy; ratios.append(bs["mean_Y_over_VB"])
+    if ratios:
+        bs["mean_over_VB"] = max(ratios)
     if V_el and bs["max_kN"]:
         bs["mean_over_elastic"] = max(v for v in (bs["mean_X_kN"], bs["mean_Y_kN"]) if v is not None) / V_el
     # ductility from the pushover bilinear fit
@@ -86,9 +96,10 @@ def summarise(results, pkg, level: str, target_label: str, T1: float | None = No
     # members
     ref = IM.reference_rotation(pkg.basis.system)
     meta = results[0].get("member_meta") if results else None
-    mem = group_summary([r.get("member_peaks") or {} for r in ok], meta, ref) if (meta and ok) else dict(member_groups=[], brace_groups=[])
+    mem = group_summary([r.get("member_peaks") or {} for r in ok], meta, ref) if (meta and ok) else dict(member_groups=[], brace_groups=[], link_groups=[])
     kinds = _sfrs_kinds(pkg.basis.system)
-    have = {g["kind"] for g in mem["member_groups"]} | ({"brace"} if mem["brace_groups"] else set())
+    have = {g["kind"] for g in mem["member_groups"]} | ({"brace"} if mem["brace_groups"] else set()) | \
+        ({"link"} if mem.get("link_groups") else set())
     missing = sorted(kinds - have)
     nv = dict(ok=not missing and bool(ok), sfrs_kinds=sorted(kinds), missing_kinds=missing,
               n_member_rows=len(mem["member_groups"]), n_brace_rows=len(mem["brace_groups"]),
@@ -98,7 +109,8 @@ def summarise(results, pkg, level: str, target_label: str, T1: float | None = No
         acceptance_basis=None, verdict=None,
         n_records=len(results), n_converged=len(ok), converged_all=len(ok) == len(results) and bool(results),
         per_record=per, story=storey, base_shear=bs, ductility=duct,
-        member_groups=mem["member_groups"], brace_groups=mem["brace_groups"], reference_rotation=ref,
+        member_groups=mem["member_groups"], brace_groups=mem["brace_groups"], link_groups=mem.get("link_groups") or [],
+        reference_rotation=ref,
         force_controlled_columns=fc_rows or [], non_vacuous=nv,
         max_mean_drift=(max(max(s["mean_X"], s["mean_Y"]) for s in storey) if (storey and ok) else None),
         max_peak_drift=(max(max(s["max_X"], s["max_Y"]) for s in storey) if (storey and ok) else None),
@@ -119,7 +131,7 @@ def fc_columns(results, pkg, PG: dict) -> list:
         if not sec or e is None:
             continue
         L_mm = math.dist(pkg.model.nodes[e["n1"]], pkg.model.nodes[e["n2"]]) * 25.4
-        fy = IMD.fy_section(pkg, sec, "col")["fy_MPa"]
+        fy = IMD.fy_section(pkg, sec, "col", tag=c)["fy_MPa"]
         pd = IM.is800_Pd(sec, L_mm, fy, hollow_forming=IMD.material_ctx(pkg)["plan"]["hollow_forming"])
         Pmean = float(np.mean(vals)) * KIP_TO_KN; Pmax = float(np.max(vals)) * KIP_TO_KN
         row = dict(ele=c, section=sec, z_mm=pkg.model.nodes[e["n1"]][2] * 25.4, P_mean_kN=Pmean, P_max_kN=Pmax,

@@ -16,73 +16,172 @@ IS1893_STEM = "IS_1893_Part_1_2016"
 # ---------------------------------------------------------------------------
 # WP1.4 -- IS 1893 Table 8 importance factor (Amd 2: 'educational buildings' for 'schools')
 # ---------------------------------------------------------------------------
-_T8_ROW_I = (
-    "hospital", "school", "educational", "education", "college", "university",
-    "critical governance", "governance", "signature", "monument", "lifeline", "emergency",
-    "telephone exchange", "television", "radio station", "bus station", "metro", "railway station",
-    "airport", "food storage", "fuel station", "power station", "fire station", "community hall",
-    "cinema", "shopping mall", "mall", "assembly", "subway",
-)
-_T8_ROW_II = ("residential", "apartment", "housing", "hostel", "dormitory", "hotel", "office",
-              "commercial", "retail", "shop", "business", "mercantile")
+# H20: keyword classes, matched on word boundaries (no 'mall' in 'small', no 'shop' in 'workshop').  Each class
+# maps to an explicit occupancy flag; an explicit flag (True/False) overrides the keywords of its class.
+_T8_I_CLASSES = {
+    "hospital": ("hospital", "hospitals"),
+    "educational": ("school", "schools", "educational", "education", "college", "colleges", "university",
+                    "universities", "institute"),
+    "food_storage": ("food storage", "food warehouse", "food godown", "grain storage", "granary"),
+    "assembly": ("cinema", "cinema hall", "shopping mall", "mall", "assembly hall", "assembly halls",
+                 "community hall", "subway", "subway station"),
+    "lifeline": ("critical governance", "governance", "signature", "monument", "lifeline", "emergency",
+                 "telephone exchange", "television", "radio station", "bus station", "metro", "railway station",
+                 "airport", "fuel station", "power station", "fire station"),
+}
+_T8_ROW_I = tuple(k for ks in _T8_I_CLASSES.values() for k in ks)
+_T8_ROW_II = ("residential", "residence", "residences", "apartment", "apartments", "housing", "hostel", "hostels",
+              "dormitory", "dormitories", "hotel", "motel", "guest house", "office", "offices", "commercial",
+              "retail", "shop", "shops", "business", "mercantile")
+_T8_RESIDENTIAL = ("residential", "residence", "residences", "apartment", "apartments", "housing", "hostel",
+                   "hostels", "dormitory", "dormitories", "hotel", "motel", "guest house")
+# institution names that a residential use takes precedence over (a university dormitory is residential)
+_T8_INSTITUTION_NAMES = ("educational", "hospital")
+_T8_STORAGE = ("warehouse", "warehouses", "storage", "godown", "godowns", "store", "stores", "cold store")
+_T8_FLAGS = ("food_storage", "educational", "hospital", "assembly", "lifeline", "important")
+D8_AREA_ROW = "owner ruling D8 (area proxy for Table 8 (ii))"
+
+
+# RR-BUG-1: a keyword preceded (within its phrase) by a negation -- 'non-food storage', 'no food storage',
+# 'not a hospital', 'without any food storage', 'excluding food storage' -- names what the building is NOT and
+# must not select the class.  The negation attaches to the keyword: only filler words may stand between them
+# ('no food storage' negates 'food storage' but not the bare 'storage' keyword, since 'food' is not filler).
+_NEGATIONS = ("non", "no", "not", "without", "excluding", "except", "nor", "never")
+_NEG_FILLER = ("a", "an", "the", "any", "for", "of", "as", "used", "being", "intended", "meant", "use", "type",
+               "kind", "cum")
+
+
+def _negated(use: str, start: int) -> bool:
+    """True when the keyword starting at ``use[start]`` is preceded by a negation in its own phrase (RR-BUG-1)."""
+    before = _re.split(r"[.;:|]", use[:start])[-1]            # phrase boundary
+    words = _re.findall(r"[a-z0-9]+", before)
+    for w in reversed(words):
+        if w in _NEGATIONS:
+            return True
+        if w not in _NEG_FILLER:
+            return False
+    return False
+
+
+def _kw(use: str, words, negated: list = None) -> list:
+    """Keywords of ``words`` found in ``use`` on word boundaries (H20), ignoring negated occurrences (RR-BUG-1:
+    'non-food storage', 'no food storage', 'not a hospital').  Negated keywords are appended to ``negated``."""
+    out = []
+    for w in words:
+        pos = [m.start() for m in _re.finditer(r"(?<![a-z0-9])" + _re.escape(w) + r"(?![a-z0-9])", use)]
+        if not pos:
+            continue
+        if any(not _negated(use, p) for p in pos):
+            out.append(w)
+        elif negated is not None and w not in negated:
+            negated.append(w)
+    return out
 
 
 def importance_factor(occupancy) -> dict:
     """IS 1893 Table 8 (with Amd 2) importance factor from an occupancy record.
 
-    occupancy = {use | uses, persons | area_m2 + occupant_load_m2_per_person, food_storage,
-                 educational, hospital, important}  (a list of such records = mixed occupancy,
-    Note 4 takes the larger I).  Returns {found, I, row, cite, note}.
-    Clinic: owner ruling D8 -> 1.2; warehouses are general storage (1.0) unless food_storage
-    is true (Table 8 (i) 'food storage buildings (such as warehouses)' -> 1.5).
-    Commercial/residential without a person count: D8 rule -- > 2,000 m2 -> 1.2.
+    occupancy = {use | uses, persons | area_m2 + occupant_load_m2_per_person, and the explicit class flags
+                 educational, hospital, food_storage, assembly, lifeline, important}  (a list of such records =
+    mixed occupancy, Note 4 takes the larger I).  Returns {found, I, row, cite, note, matched_keyword, basis,
+    warnings}.
+    H20: keywords match on word boundaries; residential uses (hostel, dormitory, residence ...) take precedence over
+    institution names (university, school, hospital) unless the matching flag (educational / hospital) is True; an
+    explicit flag overrides the keywords of its class; a storage use without ``food_storage`` declared is 1.0 with a
+    warning asking to declare it (Table 8 (i) 'food storage buildings (such as warehouses)' -> 1.5).
+    Clinic: owner ruling D8 -> 1.2 (a ruling, not a Table 8 row).  Commercial/residential without a person count:
+    owner ruling D8 -- > 2,000 m2 -> 1.2, labelled as the ruling (area proxy for the Table 8 (ii) person count, R2).
     """
     cite = IS1893_EDITION + " Table 8"
     if isinstance(occupancy, (list, tuple)):
         rs = [importance_factor(o) for o in occupancy]
         if not rs or not all(r.get("found") for r in rs):
             bad = [r.get("note") for r in rs if not r.get("found")] or ["empty list"]
-            return {"found": False, "I": None, "cite": cite, "note": "; ".join(map(str, bad))}
+            return {"found": False, "I": None, "cite": cite, "note": "; ".join(map(str, bad)),
+                    "warnings": [w for r in rs for w in (r.get("warnings") or [])]}
         best = max(rs, key=lambda r: r["I"])
-        return dict(best, note="mixed occupancy, Table 8 Note 4: larger I governs; " + str(best.get("note") or ""))
+        return dict(best, note="mixed occupancy, Table 8 Note 4: larger I governs; " + str(best.get("note") or ""),
+                    warnings=[w for r in rs for w in (r.get("warnings") or [])])
     if not isinstance(occupancy, dict) or not occupancy:
         return {"found": False, "I": None, "cite": cite,
                 "note": "occupancy{use, persons | area_m2 + occupant_load_m2_per_person, food_storage, "
-                        "educational, hospital} missing from the brief/cfg (D8)"}
-    use = " ".join(str(u) for u in ([occupancy.get("use")] + list(occupancy.get("uses") or [])) if u).lower()
-    flags = {k: bool(occupancy.get(k)) for k in ("food_storage", "educational", "hospital", "important")}
-    if flags["food_storage"] or flags["educational"] or flags["hospital"] or flags["important"] \
-            or any(k in use for k in _T8_ROW_I):
-        if "warehouse" in use and not flags["food_storage"] and not any(k in use for k in _T8_ROW_I if k != "food storage"):
-            pass
+                        "educational, hospital, assembly, lifeline} missing from the brief/cfg (D8)"}
+    use = " ; ".join(str(u) for u in ([occupancy.get("use")] + list(occupancy.get("uses") or [])) if u).lower()
+    use_txt = use
+    use = _re.sub(r"\s*[,;]+\s*", " ; ", use)             # RR-BUG-1: keep phrase boundaries for negation scope
+    use = _re.sub(r"\s+", " ", _re.sub(r"[_/()\-]+", " ", use)).strip(" ;")
+    warnings = []
+    negated = []
+    flags = {k: occupancy.get(k) for k in _T8_FLAGS}
+    true_flags = [k for k, v in flags.items() if v is True]
+    residential = _kw(use, _T8_RESIDENTIAL, negated)
+    hits = {}
+    for cls, words in _T8_I_CLASSES.items():
+        if flags.get(cls) is False:          # explicit 'not this class' overrides its keywords
+            continue
+        neg0 = len(negated)
+        m = _kw(use, words, negated)
+        if m:
+            hits[cls] = m
+        elif len(negated) > neg0 and flags.get(cls) is None:
+            warnings.append("use %r: negated keyword %r ignored (not a Table 8 (i) %s building); declare "
+                            "occupancy['%s'] = False to confirm (RR-BUG-1)" % (use_txt, negated[neg0], cls, cls))
+    if residential:
+        for cls in _T8_INSTITUTION_NAMES:
+            if cls in hits and flags.get(cls) is not True:
+                warnings.append("use %r: residential keyword %r takes precedence over the institution name %r "
+                                "(Table 8 (ii)/(iii)); set occupancy['%s'] = True if the building itself is a "
+                                "Table 8 (i) %s building" % (use_txt, residential[0], hits[cls][0], cls, cls))
+                hits.pop(cls)
+    if true_flags or hits:
+        if true_flags:
+            matched, basis = "flag:" + ",".join(true_flags), "flag"
         else:
-            why = [k for k, v in flags.items() if v] or [k for k in _T8_ROW_I if k in use][:2]
-            return {"found": True, "I": 1.5, "row": "Table 8 (i)", "cite": cite,
-                    "note": "important service / community / educational / hospital / food storage (%s)" % ", ".join(why)}
-    if "clinic" in use:
-        return {"found": True, "I": 1.2, "row": "Table 8 (ii) (owner ruling D8: clinic)", "cite": cite,
+            cls0 = sorted(hits)[0]
+            matched, basis = hits[cls0][0], "keyword"
+            warnings.append("Table 8 (i) (I = 1.5) from the keyword %r in use %r only -- declare the class flag "
+                            "(occupancy['%s'] = True) to confirm" % (matched, use_txt, cls0))
+        return {"found": True, "I": 1.5, "row": "Table 8 (i)", "cite": cite, "matched_keyword": matched,
+                "basis": basis, "warnings": warnings,
+                "note": "important service / community / educational / hospital / food storage (%s)"
+                        % ", ".join(true_flags or [k for v in hits.values() for k in v][:2])}
+    storage = _kw(use, _T8_STORAGE, negated)
+    if storage and "food_storage" not in occupancy:
+        warnings.append("storage use %r: declare occupancy['food_storage'] (True/False) -- IS 1893 Table 8 (i) "
+                        "'food storage buildings (such as warehouses)' take I = 1.5; I = 1.0 assumed for "
+                        "general storage" % use)
+    clinic = _kw(use, ("clinic", "clinics"), negated)
+    if clinic:
+        return {"found": True, "I": 1.2, "row": "owner ruling D8 (clinic; not a Table 8 row)", "cite": cite,
+                "matched_keyword": clinic[0], "basis": "ruling", "warnings": warnings,
                 "note": "clinic: owner ruling D8 fixes I = 1.2 (not a Table 8 (i) hospital building)"}
     persons = occupancy.get("persons")
     if persons is None and occupancy.get("area_m2") and occupancy.get("occupant_load_m2_per_person"):
         persons = float(occupancy["area_m2"]) / float(occupancy["occupant_load_m2_per_person"])
-    res_com = any(k in use for k in _T8_ROW_II)
+    res_com = _kw(use, _T8_ROW_II, negated)
     if res_com:
         if persons is not None:
             if float(persons) > 200:
                 return {"found": True, "I": 1.2, "row": "Table 8 (ii)", "cite": cite, "persons": float(persons),
+                        "matched_keyword": res_com[0], "basis": "persons", "warnings": warnings,
                         "note": "residential/commercial, occupancy %.0f > 200 persons (per independent unit, Note 3)"
                                 % float(persons)}
             return {"found": True, "I": 1.0, "row": "Table 8 (iii)", "cite": cite, "persons": float(persons),
+                    "matched_keyword": res_com[0], "basis": "persons", "warnings": warnings,
                     "note": "residential/commercial with %.0f <= 200 persons" % float(persons)}
         if occupancy.get("area_m2") is not None:
             A = float(occupancy["area_m2"])
             I = 1.2 if A > 2000.0 else 1.0
-            return {"found": True, "I": I, "row": "Table 8 (%s)" % ("ii" if I > 1 else "iii"), "cite": cite,
-                    "note": "persons not stated: owner ruling D8 (> 2,000 m2 -> 1.2); area %.0f m2" % A}
-        return {"found": False, "I": None, "cite": cite,
+            row = D8_AREA_ROW if I > 1.0 else "owner ruling D8 (area proxy; Table 8 (iii))"
+            return {"found": True, "I": I, "row": row, "cite": cite + "; " + row,
+                    "matched_keyword": res_com[0], "basis": "ruling", "warnings": warnings,
+                    "note": "persons not stated: owner ruling D8 (area proxy for the Table 8 (ii) '> 200 persons'; "
+                            "> 2,000 m2 -> 1.2); area %.0f m2 -> I = %.1f" % (A, I)}
+        return {"found": False, "I": None, "cite": cite, "warnings": warnings,
                 "note": "residential/commercial occupancy needs persons or area_m2 (+ occupant load) (D8)"}
     if use:
-        return {"found": True, "I": 1.0, "row": "Table 8 (iii)", "cite": cite,
+        return {"found": True, "I": 1.0, "row": "Table 8 (iii)", "cite": cite, "matched_keyword": None,
+                "basis": "all_other", "warnings": warnings,
                 "note": "all other buildings (use %r)" % use}
     return {"found": False, "I": None, "cite": cite, "note": "occupancy.use missing"}
 
@@ -144,9 +243,9 @@ TABLE7_RHO = {"II": 0.007, "III": 0.011, "IV": 0.016, "V": 0.024}     # IS 1893 
 def esm_summary(W_by_floor_N, heights_mm, Z, I, R, soil, zone, Ta) -> dict:
     """IS 1893 7.6 equivalent static method from the (engine) seismic weights.
 
-    Ta: seconds, or {'X': Tx, 'Y': Ty}.  VB = max(Ah W, rho W) (7.6.1, 7.2.2 / Table 7),
-    Qi = VB Wi hi^2 / sum(Wj hj^2) (7.6.3(a)).  Returns a seismic_summary fragment (kN) and the
-    unfactored story forces in N."""
+    Ta: seconds, or {'X': Tx, 'Y': Ty}.  R: number, or {'X': R_x, 'Y': R_y} (H06 per-direction R).
+    VB = max(Ah W, rho W) (7.6.1, 7.2.2 / Table 7), Qi = VB Wi hi^2 / sum(Wj hj^2) (7.6.3(a)).
+    Returns a seismic_summary fragment (kN) and the unfactored story forces in N."""
     W = [float(w) for w in W_by_floor_N]
     hs = []
     z = 0.0
@@ -154,6 +253,8 @@ def esm_summary(W_by_floor_N, heights_mm, Z, I, R, soil, zone, Ta) -> dict:
         z += float(h)
         hs.append(z / 1000.0)
     Tad = Ta if isinstance(Ta, dict) else {"X": float(Ta), "Y": float(Ta)}
+    Rd = {k: float(v) for k, v in R.items()} if isinstance(R, dict) else {"X": float(R), "Y": float(R)}
+    R = min(Rd.values())
     rho = TABLE7_RHO.get(str(zone).upper().replace("ZONE", "").strip())
     Wt = sum(W)
     out = {"W_kN": round(Wt / 1000.0, 3), "W_by_floor_kN": [round(w / 1000.0, 3) for w in W],
@@ -163,7 +264,8 @@ def esm_summary(W_by_floor_N, heights_mm, Z, I, R, soil, zone, Ta) -> dict:
     den = sum(w * h * h for w, h in zip(W, hs))
     for d in ("X", "Y"):
         sa = sa_over_g(Tad[d], soil, "ESM")
-        Ah = max((float(Z) / 2.0) * (float(I) / float(R)) * sa, rho or 0.0)
+        Ah = max((float(Z) / 2.0) * (float(I) / Rd[d]) * sa, rho or 0.0)
+        out["R_%s" % d.lower()] = Rd[d]
         VB = Ah * Wt
         Q = [VB * w * h * h / den for w, h in zip(W, hs)]
         out["Ta_%s_s" % d.lower()] = round(Tad[d], 4)
@@ -489,13 +591,18 @@ def classify_plan_irregularities(cfg, footprint_flags: dict | None = None) -> di
             "note": "No δmax/δmin ratio in cfg — agent must compute from accidental-torsion analysis.",
         })
 
+    _rp = flags.get("reentrant_projection") or {}
     out["items"].append({
         "type": "Re-entrant Corners",
         "triggered": bool(flags.get("reentrant")),
         "cite": "IS 1893 Table 5 (ii)",
         "trigger": "projection > 15% of plan dimension",
         "found": True,
-        "note": "Geometric proxy from footprint non-convexity; confirm projection ratio vs 15%.",
+        "max_projection_ratio": _rp.get("max_ratio"),
+        "note": ("Table 5(ii) projection test per direction on each level's framed footprint "
+                 "(max projection / plan dimension = %.3f vs 0.15)" % float(_rp["max_ratio"])
+                 if _rp.get("max_ratio") is not None else
+                 "Geometric proxy from footprint non-convexity; confirm projection ratio vs 15%."),
     })
     out["items"].append({
         "type": "Non-Parallel Lateral Force System",
@@ -862,14 +969,35 @@ def soft_storey_screen(K, exempt=()) -> dict:
                         % [i + 1 for i, f in enumerate(soft) if f]) if any(soft) else "no soft storey"}
 
 
+R9_RULE = ("owner ruling R9: fundamental torsional mode = the longest-period mode whose rotational participation "
+           "exceeds both its X and Y mass participation; Tx / Ty = the longest-period X-dominant / Y-dominant modes "
+           "(distinct); Table 6(vii) counts the first three translational-dominant modes (max(mass_x, mass_y) > rot)")
+
+
+def _by_period(modes):
+    return sorted([dict(m, mode=m.get("mode", n + 1)) for n, m in enumerate(modes)], key=lambda m: -float(m.get("T", 0.0)))
+
+
+def fundamental_modes(modes) -> dict:
+    """R9 mode identification: {'torsional', 'x', 'y'} -> mode dict or None (longest-period mode of each kind)."""
+    ms = _by_period(modes)
+    g = lambda m, k: float(m.get(k, 0.0) or 0.0)
+    tor = next((m for m in ms if g(m, "rot") > g(m, "mass_x") and g(m, "rot") > g(m, "mass_y")), None)
+    tx = next((m for m in ms if g(m, "mass_x") > g(m, "mass_y") and g(m, "mass_x") >= g(m, "rot")), None)
+    ty = next((m for m in ms if g(m, "mass_y") > g(m, "mass_x") and g(m, "mass_y") >= g(m, "rot")), None)
+    return {"torsional": tor, "x": tx, "y": ty}
+
+
 def modes_screen(modes, zone) -> dict:
     """Table 6(vii) (Amd 2): first three lateral translational modes >= 65 % mass in each direction
-    (all zones); Zones IV/V also fundamental Tx, Ty at least 10 % apart."""
-    trans = [m for m in modes if max(m.get("mass_x", 0), m.get("mass_y", 0)) > m.get("rot", 0)]
+    (all zones); Zones IV/V also fundamental Tx, Ty at least 10 % apart.  H51: the modes counted are
+    recorded (ruling R9)."""
+    ms = _by_period(modes)
+    trans = [m for m in ms if max(m.get("mass_x", 0), m.get("mass_y", 0)) > m.get("rot", 0)]
     first3 = trans[:3]
     mx = sum(m.get("mass_x", 0) for m in first3); my = sum(m.get("mass_y", 0) for m in first3)
-    tx = max((m for m in trans), key=lambda m: m.get("mass_x", 0), default=None)
-    ty = max((m for m in trans), key=lambda m: m.get("mass_y", 0), default=None)
+    fm = fundamental_modes(modes)
+    tx, ty = fm["x"], fm["y"]
     sep = None
     if tx and ty:
         sep = abs(tx["T"] - ty["T"]) / max(tx["T"], ty["T"])
@@ -878,6 +1006,9 @@ def modes_screen(modes, zone) -> dict:
     b_ok = True if z not in ("IV", "V") or sep is None else sep >= 0.10
     ok = a_ok and b_ok
     return {"first3_mass_x": mx, "first3_mass_y": my, "Tx": tx and tx["T"], "Ty": ty and ty["T"], "separation": sep,
+            "modes_counted": [m["mode"] for m in first3], "mode_Tx": tx and tx["mode"], "mode_Ty": ty and ty["mode"],
+            "modes_excluded_rotation_dominant": [m["mode"] for m in ms if m not in trans][:6],
+            "rule": R9_RULE,
             "irregular": not ok, "clause": "IS 1893 Table 6(vii) (Amd 2)",
             "verdict": "modes regular" if ok else
             "revise configuration: Table 6(vii) (Amd 2) requires the first three translational modes >= 65 %% mass "
@@ -886,16 +1017,23 @@ def modes_screen(modes, zone) -> dict:
 
 
 def torsional_period_ok(modes) -> dict:
-    tor = max(modes, key=lambda m: m.get("rot", 0), default=None)
-    tx = max(modes, key=lambda m: m.get("mass_x", 0), default=None)
-    ty = max(modes, key=lambda m: m.get("mass_y", 0), default=None)
+    """Table 5(i) (Amd 2): the fundamental torsional mode period must be smaller than those of the first two
+    translational modes.  H03 / ruling R9: torsional = the longest-period rotation-dominant mode (not the most
+    rotational one), Tx / Ty = the longest-period X- / Y-dominant modes (distinct modes)."""
+    fm = fundamental_modes(modes)
+    tor, tx, ty = fm["torsional"], fm["x"], fm["y"]
+    rec = {"rule": R9_RULE, "clause": "IS 1893 Table 5(i) (Amd 2)",
+           "mode_torsional": tor and tor["mode"], "mode_Tx": tx and tx["mode"], "mode_Ty": ty and ty["mode"]}
     if not (tor and tx and ty):
-        return {"ok": None}
+        rec.update(ok=None, reason="no %s mode identified" % "/".join(
+            n for n, m in (("rotation-dominant", tor), ("X-dominant", tx), ("Y-dominant", ty)) if not m))
+        return rec
     ok = tor["T"] < tx["T"] and tor["T"] < ty["T"]
-    return {"ok": ok, "T_torsion": tor["T"], "Tx": tx["T"], "Ty": ty["T"],
-            "verdict": "torsional mode period below both translational periods" if ok else
-            "revise configuration: fundamental torsional period %.3f s is not below Tx %.3f / Ty %.3f "
-            "(Table 5(i), Amd 2)" % (tor["T"], tx["T"], ty["T"])}
+    rec.update(ok=ok, T_torsion=tor["T"], Tx=tx["T"], Ty=ty["T"],
+               verdict="torsional mode period below both translational periods" if ok else
+               "revise configuration: fundamental torsional period %.3f s (mode %s) is not below Tx %.3f (mode %s) / "
+               "Ty %.3f (mode %s) (Table 5(i), Amd 2)" % (tor["T"], tor["mode"], tx["T"], tx["mode"], ty["T"], ty["mode"]))
+    return rec
 
 
 def irregularity_screens(cfg, run) -> dict:
@@ -946,7 +1084,9 @@ def irregularity_screens(cfg, run) -> dict:
                                      "requires_dynamic_analysis": bool(vg) and z in ("III", "IV", "V"),
                                      "verdict": "LFRS plan dimension > 125 %% of the storey below at %s" % vg if vg else "none"}
         pir = E.plan_irregularities(cfg)
+        _rp = pir.get("reentrant_projection") or {}
         out["reentrant"] = {"irregular": bool(pir.get("reentrant")), "clause": "IS 1893 Table 5(ii) (Amd 2)",
+                            "max_projection_ratio": _rp.get("max_ratio"), "trigger": 0.15, "cite": _rp.get("cite"),
                             "requires_flexible_diaphragm_analysis": bool(pir.get("reentrant")),
                             "verdict": "re-entrant corners: 3D dynamic analysis with a flexible diaphragm in addition "
                                        "to the rigid case" if pir.get("reentrant") else "none"}
@@ -987,7 +1127,10 @@ def floating_columns(cfg) -> dict:
             bots.append((t, n1, n2))
         if kind == "brace":
             brace_nodes |= {n1, n2}
-    fl = [t for (t, n1, n2) in bots if (n1 // 100000) > 0 and n1 not in tops]
+    # H35: a column whose lower end is a support (restrained foundation / declared stepped base) is not floating
+    sup = E.support_nodes() | {E.ntag(i, j, k) for k, v in E.declared_node_sets(cfg, info, "stepped_bases").items()
+                               for (i, j) in v}
+    fl = [t for (t, n1, n2) in bots if (n1 // 100000) > 0 and n1 not in tops and n1 not in sup]
     lat = [t for (t, n1, n2) in bots if t in fl and (n1 in brace_nodes or n2 in brace_nodes or n1 in lateral or n2 in lateral)]
     return {"irregular": bool(fl), "columns": fl, "in_lateral_system": lat, "clause": "IS 1893 Table 6(vi) (Amd 2)",
             "verdict": ("not permitted: floating columns part of / supporting the lateral system %s" % lat) if lat else

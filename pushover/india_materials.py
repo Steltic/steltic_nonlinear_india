@@ -43,6 +43,13 @@ IS18168_RY = {"E250": 1.4, "E275": 1.4, "E300": 1.3, "E350": 1.2}
 
 TUBE_TYPES = ("CHS", "RHS", "SHS", "HSS")
 
+# IS 1161:2014 Table 2 (tubes for structural purposes): ReH / Rm min, MPa -- the values steltic_india sections.py uses
+IS1161_TABLE2 = {"YST210": (210.0, 330.0), "YST240": (240.0, 410.0), "YST310": (310.0, 450.0), "YST355": (355.0, 490.0)}
+IS1161_CITE = "IS 1161:2014 Table 2 (Tensile Properties of Steel Tubes for Structural Purposes)"
+# which schedule roles belong to which member kind (steltic_india member_schedule.csv `role`)
+ROLE_KIND = {"lateral_col": "col", "gravity_col": "col", "col": "col", "floor": "beam", "roof": "beam", "link": "beam",
+             "beam": "beam", "collector": "beam", "brace": "brace"}
+
 
 def normalize_grade(grade) -> str:
     g = str(grade or "E250").upper().replace(" ", "").replace("FE410", "E250")
@@ -77,6 +84,14 @@ def fy_is2062(grade="E250", t_mm: float = 10.0) -> tuple:
 def section_props_mm(section: str) -> dict:
     """IS 808 / IS 1161 section properties in mm units (from the inch-converted tables)."""
     from . import sections_db as SDB
+    from . import india_sections as ISEC
+    bx = ISEC.get_mm(section)
+    if bx is not None:                     # NL-4: HR built-up box -- exact plate values (mm), not via inches
+        out = dict(label=bx["label"], type="BOX", box=True, tube=False)
+        for k in ("A", "rx", "ry", "d", "bf", "tf", "tw", "Zx", "Zy", "Sx", "Sy", "Ix", "Iy", "J", "Aw"):
+            out[k] = float(bx[k])
+        out["source"] = bx["source"]
+        return out
     p = SDB.props(section)
     s = MM_PER_IN
     out = dict(label=str(section).upper().replace(" ", ""), type=str(p.get("Type") or ""))
@@ -123,14 +138,82 @@ def governing_thickness_mm(sp: dict) -> float:
     return float(max(sp.get("tf") or 0.0, sp.get("tw") or 0.0))
 
 
-def material_plan(nl_plan: dict | None = None) -> dict:
-    """India material block from nl_plan.material (EOR inputs), with defaults and citations."""
+def _is1161_grade(grade) -> str | None:
+    g = str(grade or "").upper().replace(" ", "")
+    return g if g in IS1161_TABLE2 else None
+
+
+def package_materials(root) -> dict:
+    """NL-5: the steel the HR package designed with -- one source for the pushover, the NLRHA and the DDM.
+
+    * design/calc_package.json `members[]`: per (role, section) the grade (`inputs.grade`) and the material record of the
+      governing element (`governing_element_result.material`: fy / fu by IS 2062 Table 3 thickness band -- AUD-2 plate
+      thickness for built-up boxes -- or IS 1161 Table 2 for tubes);
+    * design/cfg_snapshot.json: steel_grade, brace_grade, brace_process, grade_by_section.
+    Returns {'records': {(role, SECTION): rec}, 'snapshot': {...}, 'source': ...}; empty when the files are absent."""
+    import json as _json, os as _os
+    root = str(root)
+    out = dict(records={}, snapshot={}, source=None)
+    cp = _os.path.join(root, "design", "calc_package.json")
+    if _os.path.exists(cp):
+        try:
+            pkgj = _json.load(open(cp, encoding="utf-8")) or {}
+        except Exception:
+            pkgj = {}
+        for m in pkgj.get("members") or []:
+            inp = m.get("inputs") or {}
+            sec = str(inp.get("section") or m.get("section") or "").upper().replace(" ", "")
+            role = str(inp.get("role") or "").lower()
+            if not sec or not role:
+                continue
+            mat = ((m.get("governing_element_result") or {}).get("material") or {})
+            out["records"][(role, sec)] = dict(role=role, section=sec, grade=inp.get("grade") or mat.get("grade"),
+                                               fy_MPa=mat.get("fy_MPa"), fu_MPa=mat.get("fu_MPa"),
+                                               t_mm=mat.get("t_mm"), band=mat.get("thickness_band_mm"),
+                                               cite=mat.get("cite"), member_id=m.get("id"))
+        out["source"] = "design/calc_package.json members[].governing_element_result.material"
+    sn = _os.path.join(root, "design", "cfg_snapshot.json")
+    if _os.path.exists(sn):
+        try:
+            snap = _json.load(open(sn, encoding="utf-8")) or {}
+        except Exception:
+            snap = {}
+        out["snapshot"] = {k: snap.get(k) for k in ("steel_grade", "brace_grade", "brace_process", "grade_by_section")
+                           if snap.get(k) is not None}
+    return out
+
+
+def _grade_or_none(g):
+    try:
+        return normalize_grade(g) if g else None
+    except ValueError:
+        return None
+
+
+def material_plan(nl_plan: dict | None = None, package: dict | None = None) -> dict:
+    """India material block: nl_plan.material (EOR inputs / overrides) over the HR package's steel (NL-5), with
+    defaults and citations. `package` is package_materials(root)."""
     mp = dict(((nl_plan or {}).get("material") or {}))
+    pk = package or {}
+    snap = pk.get("snapshot") or {}
     f = mp.get("expected_strength_factor")
+    gbs = {str(k).upper().replace(" ", ""): v for k, v in (snap.get("grade_by_section") or {}).items()}
+    gbs.update({str(k).upper().replace(" ", ""): v for k, v in (mp.get("grade_by_section") or {}).items()})
+    gbr = {}
+    if snap.get("brace_grade"):
+        gbr["brace"] = snap["brace_grade"]
+    gbr.update({str(k).lower(): v for k, v in (mp.get("grade_by_role") or {}).items()})
     out = dict(
-        default_grade=normalize_grade(mp.get("grade") or "E250"),
-        grade_by_section={str(k).upper().replace(" ", ""): normalize_grade(v) for k, v in (mp.get("grade_by_section") or {}).items()},
-        grade_by_role={str(k).lower(): normalize_grade(v) for k, v in (mp.get("grade_by_role") or {}).items()},
+        default_grade=normalize_grade(mp.get("grade") or _grade_or_none(snap.get("steel_grade")) or "E250"),
+        default_grade_basis=("nl_plan.material.grade (EOR)" if mp.get("grade") else
+                             ("HR package cfg_snapshot.steel_grade" if snap.get("steel_grade") else "E250 (no grade in the package)")),
+        grade_by_section=gbs, grade_by_role=gbr,
+        eor_sections={str(k).upper().replace(" ", "") for k in (mp.get("grade_by_section") or {})},
+        eor_roles={str(k).lower() for k in (mp.get("grade_by_role") or {})},
+        eor_grade=bool(mp.get("grade")),
+        package_records=dict(pk.get("records") or {}),
+        package_source=pk.get("source"),
+        brace_process=snap.get("brace_process"),
         expected_strength_factor=float(f) if f is not None else 1.0,
         expected_strength_basis=(mp.get("expected_strength_cite") or
                                  ("EOR input" if f is not None else "nominal (factor 1.0): IS 800 has no Ry; IS 18168 Table 1 Ry "
@@ -141,23 +224,84 @@ def material_plan(nl_plan: dict | None = None) -> dict:
     return out
 
 
+def _fy_from_grade(grade, sp) -> tuple:
+    """(fy, fu or None, band, cite, grade label) for an IS 2062 grade by thickness, or an IS 1161 tube grade."""
+    tg = _is1161_grade(grade)
+    if tg:
+        fy, fu = IS1161_TABLE2[tg]
+        return fy, fu, None, IS1161_CITE, tg
+    g = normalize_grade(grade)
+    t = governing_thickness_mm(sp)
+    fy, band = fy_is2062(g, t)
+    return fy, None, band, IS2062_CITE, g
+
+
 def fy_for_member(section: str, role: str | None = None, plan: dict | None = None) -> dict:
-    """fy (nominal, MPa), expected fye = factor*fy, grade and band for one member section."""
+    """fy (nominal, MPa), expected fye = factor*fy, grade and band for one member.
+
+    Resolution (NL-5): an EOR grade in nl_plan.material wins (by section, then role, then the plan grade); else the HR
+    package's own record for (role, section) -- the fy the design used (IS 2062 Table 3 by thickness, IS 1161 Table 2
+    for tubes); else the package grade for the section (cfg_snapshot grade_by_section / brace_grade / steel_grade) on
+    the IS 2062 table. `role` may be a schedule role (lateral_col, floor, link, ...) or a kind (col / beam / brace):
+    with a kind, the package records of that kind for the section are used when they agree, else the lowest fy is
+    taken and flagged `ambiguous_role`."""
     mp = plan or material_plan(None)
     key = str(section).upper().replace(" ", "")
-    grade = mp["grade_by_section"].get(key) or (mp["grade_by_role"].get(str(role or "").lower()) if role else None) \
-        or mp["default_grade"]
+    r = str(role or "").lower()
+    kind = ROLE_KIND.get(r, r)
     sp = section_props_mm(section)
     t = governing_thickness_mm(sp)
-    fy, band = fy_is2062(grade, t)
     fac = float(mp["expected_strength_factor"])
-    return dict(section=key, grade=grade, t_mm=round(t, 2), band=band, fy_MPa=fy, factor=fac, fye_MPa=fy * fac,
-                cite=IS2062_CITE, factor_basis=mp["expected_strength_basis"],
-                ry_is18168_reference=IS18168_RY.get(grade))
+    source, flags, rec = None, [], None
+    grade = None
+    if key in mp.get("eor_sections", ()):
+        grade, source = mp["grade_by_section"][key], "nl_plan.material.grade_by_section (EOR)"
+    elif r and r in mp.get("eor_roles", ()):
+        grade, source = mp["grade_by_role"][r], "nl_plan.material.grade_by_role (EOR)"
+    elif mp.get("eor_grade"):
+        grade, source = mp["default_grade"], "nl_plan.material.grade (EOR)"
+    if grade is None:
+        recs = mp.get("package_records") or {}
+        rec = recs.get((r, key))
+        if rec is None:
+            cands = [v for (rr, ss), v in recs.items() if ss == key and ROLE_KIND.get(rr, rr) == kind and v.get("fy_MPa")]
+            if not cands:
+                cands = [v for (rr, ss), v in recs.items() if ss == key and v.get("fy_MPa")]
+            if cands:
+                rec = min(cands, key=lambda v: float(v["fy_MPa"]))
+                if len({float(v["fy_MPa"]) for v in cands}) > 1:
+                    flags.append("ambiguous_role: %s has fy %s by role; the lowest is used" %
+                                 (key, sorted({(v["role"], v["fy_MPa"]) for v in cands})))
+        if rec is not None and rec.get("fy_MPa"):
+            fy = float(rec["fy_MPa"])
+            g = rec.get("grade") or ""
+            try:                                          # cross-check the package value on the IS 2062 / IS 1161 table
+                fy_tab = _fy_from_grade(g, sp)[0]
+            except Exception:
+                fy_tab = None
+            if fy_tab is not None and abs(fy_tab - fy) > 0.5:
+                flags.append("package fy %.0f differs from the table value %.0f for %s at t=%.1f mm" % (fy, fy_tab, g, t))
+            return dict(section=key, role=rec.get("role"), grade=g, t_mm=round(t, 2), band=rec.get("band"), fy_MPa=fy,
+                        fu_MPa=rec.get("fu_MPa"), factor=fac, fye_MPa=fy * fac, cite=rec.get("cite") or IS2062_CITE,
+                        source="HR package %s (%s)" % (mp.get("package_source") or "calc_package", rec.get("member_id")),
+                        table_fy_MPa=fy_tab, factor_basis=mp["expected_strength_basis"], flags=flags,
+                        ry_is18168_reference=IS18168_RY.get(_grade_or_none(g) or ""))
+        grade = mp["grade_by_section"].get(key) or (mp["grade_by_role"].get(r) or mp["grade_by_role"].get(kind)) \
+            or mp["default_grade"]
+        source = ("HR package grade (cfg_snapshot) on the table" if (mp["grade_by_section"].get(key) or
+                  mp["grade_by_role"].get(r) or mp["grade_by_role"].get(kind)) else mp.get("default_grade_basis", "default"))
+    fy, fu, band, cite, glab = _fy_from_grade(grade, sp)
+    return dict(section=key, role=r or None, grade=glab, t_mm=round(t, 2), band=band, fy_MPa=fy, fu_MPa=fu, factor=fac,
+                fye_MPa=fy * fac, cite=cite, source=source, factor_basis=mp["expected_strength_basis"], flags=flags,
+                ry_is18168_reference=IS18168_RY.get(glab))
 
 
 def buckling_classes(sp: dict, hollow_forming: str = "hot_rolled") -> dict:
     """IS 800 Table 10 buckling class about z-z (major) and y-y (minor)."""
+    if sp.get("box"):
+        # Table 10 welded box: 'generally b'; thick welds and b/tf < 30: c -- the conservative row c for every built-up
+        # box, as steltic_india india_is800 does (WP6-fix)
+        return {"zz": "c", "yy": "c", "basis": "Table 10 welded box (row c, as the HR engine)"}
     if sp.get("tube"):
         c = "a" if str(hollow_forming).lower().startswith("hot") else "b"
         return {"zz": c, "yy": c, "basis": "Table 10 hollow section, %s" % hollow_forming}
@@ -227,7 +371,9 @@ def section_capacity(section: str, fy_MPa: float, gamma_m0: float = GAMMA_M0) ->
     A = sp["A"]
     Zpz = sp.get("Zx") or 0.0
     Zpy = sp.get("Zy") or 0.0
-    if sp.get("tube"):
+    if sp.get("box"):
+        Av = sp.get("Aw") or 2.0 * (sp["d"] - 2 * sp["tf"]) * sp["tw"]      # two webs (8.4.1.1 welded plates, as HR)
+    elif sp.get("tube"):
         Av = 2.0 * A / math.pi if str(sp.get("type")).upper() == "CHS" else A * 0.5
     else:
         Av = (sp.get("d") or 0.0) * (sp.get("tw") or 0.0)
@@ -251,7 +397,29 @@ def b12_interaction(N_N: float, Mz_Nmm: float, My_Nmm: float, V_N: float, cap: d
 
 # ------------------------------------------------------------------ IS 800 §12 / IS 18168 reference deformation capacities
 def reference_rotation(system: str | None) -> dict:
-    """IS 800 §12 joint-rotation capacity for the SFRS (a REFERENCE value, not an acceptance limit — D7)."""
+    """IS 800 §12 joint-rotation capacity for the SFRS (a REFERENCE value, not an acceptance limit — D7).
+
+    A combined system ("SMRF+SCBF", "OMRF+OCBF") gives the refs of every part; `value` is the smallest of them
+    (the conservative reference for a member whose frame is not identified) and `parts` keeps each one (NL-8)."""
+    s = str(system or "").upper()
+    import re as _re
+    parts = [x.strip() for x in _re.split(r"\s*[+/&]\s*|\s+AND\s+", s) if x.strip()]
+    if len(parts) > 1:
+        subs = [_reference_rotation_one(x) for x in parts]
+        refs, seen = [], set()
+        for sub in subs:
+            for r in sub.get("refs") or []:
+                k = (r.get("clause"), r.get("value"))
+                if k not in seen:
+                    seen.add(k); refs.append(r)
+        vals = [x["value"] for x in subs if x.get("value") is not None]
+        return dict(value=(min(vals) if vals else None), system=s, refs=refs,
+                    parts={p_: x.get("value") for p_, x in zip(parts, subs)},
+                    note="combined system: each part's IS 800 Section 12 reference; value = the smallest")
+    return _reference_rotation_one(s)
+
+
+def _reference_rotation_one(system: str | None) -> dict:
     s = str(system or "").upper()
     rows = []
     if "EBF" in s or "ECCENTRIC" in s:

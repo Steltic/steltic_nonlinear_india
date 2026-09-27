@@ -245,7 +245,7 @@ IS_NL_STATEMENT = ("IS 1893 (Part 1):2016 provides no acceptance criteria for no
                    "results are for information.")
 
 
-def response_at(run, disp, level_name, meta=None, ref_rot=None, basis=None):
+def response_at(run, disp, level_name, meta=None, ref_rot=None, basis=None, V_design_kip=None):
     """India NSP response quantities AT delta_t (linear interpolation between the bracketing steps; the push step is
     <= delta_t/10 near the target). No IO/LS/CP verdict (D7): storey drifts, base shear vs VB, member fibre-strain
     ratios and chord rotations vs the IS 800 §12 REFERENCE rotation, brace ductility, and the yield census."""
@@ -264,19 +264,24 @@ def response_at(run, disp, level_name, meta=None, ref_rot=None, basis=None):
         bb = {t: (a["b"][t][0] + w * (b["b"].get(t, a["b"][t])[0] - a["b"][t][0]), bool(b["b"].get(t, a["b"][t])[1] if w > 0.5 else a["b"][t][1]))
               for t in a["b"]}
         pk = MR_envelope_single(m, bb)
+        if a.get("l"):                                     # EBF links (NL-10)
+            pk["l"] = {t: [x + w * (y - x) for x, y in zip(a["l"][t], b.get("l", {}).get(t, a["l"][t]))] for t in a["l"]}
         mem = group_summary([pk], meta, ref_rot)
-    Vdes = getattr(basis, "V_design_kip", None) if basis is not None else None
+    Vdes = V_design_kip if V_design_kip is not None else (getattr(basis, "V_design_kip", None) if basis is not None else None)
     census = None
     if mem:
         census = dict(members_yielded=sum(1 for g in mem["member_groups"] if g["yielded"]),
                       member_groups=len(mem["member_groups"]),
                       braces_yielded_tension=sum(1 for g in mem["brace_groups"] if g["yielded_tension"]),
                       braces_buckled=sum(g["n_buckled_max"] for g in mem["brace_groups"]),
+                      links_yielded=sum(1 for g in mem.get("link_groups") or [] if g["yielded"]),
                       basis="fibre yielding (strain ratio >= 1) and brace tension yield / buckling at delta_t")
     return dict(level=level_name, roof_disp_in=u, roof_disp_mm=u * 25.4, step_bracket=[i0, i1], weight=w,
                 base_shear_kip=V, base_shear_kN=V * 4.4482216152605, V_over_VB=(V / Vdes if Vdes else None),
+                VB_design_kN=(Vdes * 4.4482216152605 if Vdes else None),
                 story_drifts=drifts, max_story_drift=max(d["drift_ratio"] for d in drifts),
-                members=mem, census=census, non_vacuous=bool(mem and (mem["member_groups"] or mem["brace_groups"])),
+                members=mem, census=census,
+                non_vacuous=bool(mem and (mem["member_groups"] or mem["brace_groups"] or mem.get("link_groups"))),
                 statement=IS_NL_STATEMENT)
 
 
@@ -285,15 +290,16 @@ def MR_envelope_single(m, b):
                 b={t: [max(v[0], 0.0), max(-v[0], 0.0), v[1]] for t, v in b.items()})
 
 
-def capacity_summary(run, basis, nsp_dbe):
+def capacity_summary(run, basis, nsp_dbe, V_design_kip=None):
     """India: capacity-curve quantities for information -- Vmax, Vmax/VB, Vmax/W, yield displacement from the
     bilinear fit at delta_t(DBE), displacement ductility at each level and at the end of the curve."""
     u = np.asarray(run["rec"]["u"]); V = np.asarray(run["rec"]["V"])
     Vmax = float(V.max()); i_max = int(np.argmax(V))
     W = basis.W_kip
+    Vd = V_design_kip if V_design_kip is not None else basis.V_design_kip      # NL-4: V-bar_B of the push direction
     ide = idealize(u, V, float(u[-1]))
     return dict(Vmax_kip=Vmax, Vmax_kN=Vmax * 4.4482216152605, u_at_Vmax_in=float(u[i_max]),
-                V_design_kip=basis.V_design_kip, Vmax_over_VB=(Vmax / basis.V_design_kip if basis.V_design_kip else None),
+                V_design_kip=Vd, Vmax_over_VB=(Vmax / Vd if Vd else None),
                 Vmax_over_W=(Vmax / W if W else None), uy_fit_in=ide["uy"], Vy_fit_kip=ide["Vy"],
                 u_end_in=float(u[-1]), mu_end=float(u[-1] / ide["uy"]) if ide["uy"] > 0 else None,
                 stop_reason=run.get("stop_reason"), tail_status=(run.get("tail") or {}).get("status"),

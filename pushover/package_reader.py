@@ -340,6 +340,8 @@ def load(path: str | os.PathLike, apply_is_mass: bool = True) -> Package:
              "cfg": root / "cfg.py", "report": root / "report.html",
              "design_report": root / "design" / "design_report.md"}
     model = parse_model_script(files["model"])
+    from . import india_sections as _ISEC
+    _ISEC.register_from_package(root)            # NL-4: the package's built-up boxes before any section lookup
     schedule = read_schedule(files["schedule"]) if files["schedule"].exists() else {}
     calc = json.load(open(files["calc"])) if files["calc"].exists() else {}
     basis = read_basis(root, calc)
@@ -439,6 +441,8 @@ def apply_nl_unit_bridge(pkg: "Package") -> "Package":
             e["A"], e["E"], e["G"], e["J"], e["Iy"], e["Iz"] = A, E, G, J, Iy, Iz
             n_ele += 1
 
+    n_raw = convert_raw_elements_mm_to_in(pkg.model)
+
     if pkg.basis.heights_in:
         h0 = pkg.basis.heights_in[0]
         if h0 is not None and float(h0) >= 500:  # mm storeys
@@ -447,13 +451,80 @@ def apply_nl_unit_bridge(pkg: "Package") -> "Package":
                 (pkg.basis.sources.get("heights_in") or "cfg") + " (mm→in bridge)"
             )
 
-    detail = dict(signals, n_nodes=n_nodes, n_mass_nodes=n_mass, n_elements=n_ele)
+    detail = dict(signals, n_nodes=n_nodes, n_mass_nodes=n_mass, n_elements=n_ele, raw_elements=n_raw)
     bridge = U.build_nl_unit_bridge(source="N-mm", detail=detail)
     pkg.calc["_nl_unit_bridge"] = bridge
     pkg.calc["_nl_analysis_units"] = "kip-in"      # explicit: fibre/hinge builders must not assume N-mm (WP4.7)
     pkg.basis.package_units = "N-mm→kip-in"
     pkg.basis.sources["unit_bridge"] = "apply_nl_unit_bridge Stage B"
     return pkg
+
+
+_MPA_TO_KSI = 1.0 / 6.894757293168361
+_N_TO_KIP = 1.0 / 4448.2216152605
+_MM_TO_IN = 1.0 / 25.4
+# what one unit of a uniaxialMaterial's "stiffness" argument means, by the element that uses it
+_MAT_SCALE = {"stress": _MPA_TO_KSI,                              # Truss: stress-strain (MPa -> ksi)
+              "force": _N_TO_KIP / _MM_TO_IN,                     # zeroLength dir 1-3: N/mm -> kip/in
+              "moment": _N_TO_KIP * _MM_TO_IN}                   # zeroLength dir 4-6: N-mm/rad -> kip-in/rad
+
+
+def convert_raw_elements_mm_to_in(model: "ElasticModel") -> dict:
+    """NL-4: the Stage-B bridge converted only elasticBeamColumn properties; the raw (replayed) elements kept their N-mm
+    arguments inside a kip-in model. Convert them, by element type:
+      * Truss / corotTruss: A mm^2 -> in^2; its material becomes a 'stress' copy (MPa -> ksi);
+      * ElasticTimoshenkoBeam (EBF links): E, G MPa -> ksi; A, Avy, Avz mm^2 -> in^2; J, Iy, Iz mm^4 -> in^4;
+      * zeroLength: each -mat of a translational -dir becomes a 'force' copy (N/mm -> kip/in), of a rotational -dir a
+        'moment' copy (N-mm/rad -> kip-in/rad).
+    Materials are cloned per usage (a tag used as stress and as force gets two copies), so no argument is converted
+    twice. Only 'Elastic' materials are converted; any other raw material type used by a raw element is an error."""
+    counts = dict(truss=0, timoshenko=0, zerolength=0, other=[], materials_cloned=0)
+    clones = {}                                      # (old tag, usage) -> new tag
+    next_tag = max([990000000] + [int(t) + 1 for t in model.materials])
+
+    def clone(tag, usage):
+        nonlocal next_tag
+        key = (int(tag), usage)
+        if key in clones:
+            return clones[key]
+        a = model.materials.get(int(tag))
+        if a is None:
+            raise ValueError("raw element uses uniaxialMaterial %s which the model script does not define" % tag)
+        if str(a[0]) != "Elastic":
+            raise ValueError("raw element material %s is %r: only 'Elastic' can be unit-converted (NL-4)" % (tag, a[0]))
+        f = _MAT_SCALE[usage]
+        new = ["Elastic", next_tag, float(a[2]) * f] + [(float(v) * f if i == 1 else v) for i, v in enumerate(a[3:])]
+        model.materials[next_tag] = new
+        clones[key] = next_tag; next_tag += 1; counts["materials_cloned"] += 1
+        return clones[key]
+
+    for e in model.elements:
+        if "etype" not in e or e.get("_si_converted"):
+            continue
+        raw = list(e["raw"]); et = str(raw[0])
+        if et in ("Truss", "truss", "corotTruss"):
+            raw[4] = float(raw[4]) * _MM_TO_IN ** 2
+            raw[5] = clone(raw[5], "stress")
+            counts["truss"] += 1
+        elif et == "ElasticTimoshenkoBeam":
+            # eleTag iNode jNode E G A Jx Iy Iz Avy Avz transfTag
+            raw[4] = float(raw[4]) * _MPA_TO_KSI; raw[5] = float(raw[5]) * _MPA_TO_KSI
+            raw[6] = float(raw[6]) * _MM_TO_IN ** 2
+            for i in (7, 8, 9):
+                raw[i] = float(raw[i]) * _MM_TO_IN ** 4
+            for i in (10, 11):
+                raw[i] = float(raw[i]) * _MM_TO_IN ** 2
+            counts["timoshenko"] += 1
+        elif et == "zeroLength":
+            im, idr = raw.index("-mat"), raw.index("-dir")
+            mats = raw[im + 1:idr]; dirs = raw[idr + 1:idr + 1 + len(mats)]
+            raw[im + 1:idr] = [clone(m, "force" if int(d) <= 3 else "moment") for m, d in zip(mats, dirs)]
+            counts["zerolength"] += 1
+        else:
+            counts["other"].append(et)
+            continue
+        e["raw"] = raw; e["_si_converted"] = True
+    return counts
 
 
 def summary(p: Package) -> str:

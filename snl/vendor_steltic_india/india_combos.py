@@ -178,6 +178,10 @@ def _lat_label(f, kind, d, extra=""):
     return "%s%s%s_%s%s" % ("+" if f >= 0 else "-", _fmt(f), tok, d, extra)
 
 
+SNOW_NOTE_CITE = ("IS 875 (Part 5):1987 8.1 Note 1 (snow load replaces the roof imposed load when snow is present "
+                  "and exceeds it)")
+
+
 def _grav_label(fD, fL, fLr=0.0, fS=0.0, fC=0.0):
     parts = ["%sDL" % _fmt(fD)]
     if fL:
@@ -226,6 +230,93 @@ def member_wind_patterns(plan) -> list:
     return out
 
 
+ACROSS_10_4_CITE = ("IS 875 (Part 3):2015 10.3 (across-wind Fz,c = (3 Mc / h^2)(z / h)) + 10.4 ('The along wind and "
+                    "across wind loads have to be applied simultaneously on the building/structure during design')")
+
+
+def across_wind_patterns(plan, cfg) -> dict:
+    """X05: IS 875-3 10.3 across-wind story-force patterns when wind_summary.across_wind is evaluated (ruling R10:
+    found True with numeric Mc, an EOR {value, source, cite}, or an EOR Cfs record from which Mc is computed).
+
+    Returns {'evaluated': bool, 'reason', 'resolved': {...}, 'patterns': {'W_X_across': {k: [fx, fy, 0]}, ...},
+    'summary': {ref: {Mc_kNm, V_kN, V_total_kN, M_base_kNm, F_ground_kN, force_dir}}} in the load plan's
+    story_forces_units.  W_X_across accompanies the along-wind pattern W_X (wind along X) and acts along Y (normal to
+    the wind); W_Y_across acts along X.  Only directions whose along-wind W_<d> story forces exist get a pattern."""
+    plan = plan or {}
+    cfg = cfg or {}
+    ws = plan.get("wind_summary") or {}
+    out = {"evaluated": False, "reason": None, "resolved": None, "patterns": {}, "summary": {}}
+    aw = ws.get("across_wind")
+    if plan.get("no_wind") or not aw or not cfg.get("heights"):
+        out["reason"] = "no across_wind record" if not aw else "no wind / no model heights"
+        return out
+    import india_wind_tables as WT
+    dims = {}
+    try:
+        import engine3d as _E
+        dims = _E.across_wind_model_dims(cfg)
+    except Exception:
+        dims = {"h_m": float(sum(cfg["heights"])) / 1000.0}
+    res = WT.resolve_across_wind(aw, ws, **dims)
+    out["resolved"] = res
+    out["evaluated"] = bool(res.get("found"))
+    out["reason"] = res.get("reason")
+    if not out["evaluated"]:
+        return out
+    u = str(plan.get("story_forces_units") or "").strip().lower()
+    scale = 1.0 if u in ("kn", "kilonewton", "kilonewtons") else 1000.0      # kN -> plan units
+    sf = plan.get("story_forces") or {}
+    z = 0.0
+    zs = []
+    for h in cfg["heights"]:
+        z += float(h) / 1000.0
+        zs.append(z)
+    for d in ("X", "Y"):
+        if not sf.get("W_" + d):
+            continue
+        rd = res["by_dir"][d]
+        lf = WT.across_wind_level_forces(zs, rd["Mc_kNm"])
+        comp = 1 if d == "X" else 0                     # across-wind force normal to the wind direction
+        pat = {}
+        for k, F in enumerate(lf["F_kN"], start=1):
+            v = [0.0, 0.0, 0.0]
+            v[comp] = F * scale
+            pat[str(k)] = v
+        ref = "W_%s_across" % d
+        out["patterns"][ref] = pat
+        out["summary"][ref] = {"Mc_kNm": rd["Mc_kNm"], "basis": rd.get("basis"), "source": rd.get("source"),
+                               "cite": rd.get("cite"), "force_dir": "Y" if d == "X" else "X",
+                               "V_kN": lf["V_kN"], "V_total_kN": lf["V_total_kN"], "F_ground_kN": lf["F_ground_kN"],
+                               "M_base_kNm": lf["M_base_kNm"], "h_m": lf["h_m"], "distribution": lf["cite"]}
+    return out
+
+
+def _add_across_wind_rows(combos, aw_pats):
+    """X05 / IS 875-3 10.4: every along-wind row (strength and serviceability; not the member-wind rows) is repeated
+    with the across-wind pattern of the same wind direction applied simultaneously, with both signs (the across-wind
+    response oscillates), at the along-wind load factor.  The along-wind-only rows are kept."""
+    out = []
+    for c in combos:
+        if c.get("lateral_kind") != "W" or c.get("fW") is None or c.get("member_wind"):
+            continue
+        ref = str(c.get("lateral_ref") or "")
+        aref = ref + "_across"
+        if ref not in ("W_X", "W_Y") or aref not in aw_pats:
+            continue
+        f = abs(float(c["fW"]))
+        for sa in (1, -1):
+            n = dict(c)
+            n["tags"] = list(c.get("tags") or []) + ["across_wind"]
+            n["terms"] = list(c.get("terms") or []) + [{"ref": aref, "f": sa * f, "rsa": None}]
+            n["label"] = c["label"] + "%s%s%s" % ("+" if sa > 0 else "-", _fmt(f), aref)
+            n["family"] = str(c.get("family") or "") + " + across (10.4)"
+            n["cite"] = str(c.get("cite") or "") + " + " + ACROSS_10_4_CITE
+            n["across_wind"] = {"ref": aref, "sign": sa}
+            out.append(n)
+    combos.extend(out)
+    return len(out)
+
+
 def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
     """Generate every required IS 800 Table 4 / IS 1893 / IS 800 12.2.3 combination."""
     plan = plan or {}
@@ -233,7 +324,19 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
     sf = plan.get("story_forces") or {}
     has_eq = bool(sf.get("EQ_X") or sf.get("EQ_Y")) and not cfg.get("no_seismic")
     has_w = bool(sf.get("W_X") or sf.get("W_Y"))
+    # X05: IS 875-3 10.3 across-wind patterns (only when wind_summary.across_wind is evaluated, ruling R10); the
+    # engine-generated W_<d>_across story forces are written into the plan so the combinations can reference them
+    awp = across_wind_patterns(plan, cfg) if has_w else {"evaluated": False, "patterns": {}, "summary": {},
+                                                         "reason": "no along-wind story forces"}
+    if awp["patterns"]:
+        sf = plan.setdefault("story_forces", sf)
+        for _ref, _pat in awp["patterns"].items():
+            sf[_ref] = _pat
     snow = _f(cfg.get("snow"), 0.0) or 0.0
+    # H11 (HR-E-07): IS 875 (Part 5) 8.1 Note 1 -- 'When snow load is present on roofs, replace imposed load by
+    # snow load for the purpose of above load combinations': the roof imposed term of every lateral / member-wind
+    # row is max(Lr, snow), i.e. fS takes the place of fLr when snow > Lr.
+    snow_governs_roof = snow > (_f(cfg.get("Lr"), 0.0) or 0.0) + 1e-12
     crane = cfg.get("crane") or cfg.get("cranes")
     rsa = (method or "").upper() == "RSA" if method else _rsa_required(cfg, plan)
     nonpar = bool(cfg.get("nonparallel") or cfg.get("skew"))
@@ -246,9 +349,13 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
     if s12:
         try:
             import india_is18168 as I18
-            is18168 = I18.applies(cfg.get("system"), _zone(cfg, plan), opt_in=bool(cfg.get("apply_is18168")))
+            is18168 = I18.applies_for_cfg(cfg.get("system"), _zone(cfg, plan), cfg)
             if is18168["applies"]:
                 is18168["Omega"] = I18.omega(cfg.get("system"))["Omega"]
+                # H46: 5.5 gamma_LL = 0.25 for an imposed-load class <= 3.0 kN/m2, 0.50 above (0.50 when undeclared)
+                _lls = [_f(cfg.get("L_floor"), None)] + [_f(v, None) for v in (cfg.get("L_by_level") or {}).values()]
+                _lls = [v for v in _lls if v is not None]
+                is18168["gamma_LL"] = I18.gamma_LL(max(_lls)) if _lls else 0.50
                 is18168["members"] = I18.overstrength_members(cfg.get("system"))
                 is18168["cite"] = I18.CITE_5_5
         except Exception:
@@ -311,16 +418,22 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                 rows.insert(1, (1.2, 1.2, 0.6, "T4 DL+LL+0.6WL"))
             if kind == "EQ" and s12:
                 rows += [(1.2, 0.5, 2.5, "IS 800 12.2.3(a)"), (0.9, 0.0, 2.5, "IS 800 12.2.3(b)")]
+                gll = is18168.get("gamma_LL", 0.50)
                 if is18168.get("applies") and (is18168.get("Omega") or 0) > 2.5:
                     om = is18168["Omega"]          # SMRF 3.0: stricter than 12.2.3, both families kept
-                    rows += [(1.2, 0.5, om, "IS 18168 5.5(1)"), (0.9, 0.0, om, "IS 18168 5.5(2)")]
+                    rows += [(1.2, gll, om, "IS 18168 5.5(1)"), (0.9, 0.0, om, "IS 18168 5.5(2)")]
+                elif is18168.get("applies") and abs(gll - 0.50) > 1e-9:
+                    # Omega 2.5 (SCBF / EBF) with gamma_LL 0.25: 5.5(1) differs from 12.2.3(a) (0.5 LL) -> own row;
+                    # 5.5(2) = 12.2.3(b) (no LL) keeps both cites (H46)
+                    rows += [(1.2, gll, is18168["Omega"], "IS 18168 5.5(1)")]
             if crane:
                 rows += [(1.2, 1.2, 0.6, "T4 DL+LL+CL+0.6%s" % ("EL" if kind == "EQ" else "WL")),
                          (1.2, 1.2, 1.2, "T4 DL+LL+0.53CL+1.2%s" % ("EL" if kind == "EQ" else "WL"))]
             for (fD, fL, fl, fam) in rows:
                 is1223 = fam.startswith("IS 800 12.2.3") or fam.startswith("IS 18168 5.5")
                 is5_5 = fam.startswith("IS 18168 5.5") or (fam.startswith("IS 800 12.2.3") and is18168.get("applies")
-                                                          and abs((is18168.get("Omega") or 0) - fl) < 1e-9)
+                                                          and abs((is18168.get("Omega") or 0) - fl) < 1e-9
+                                                          and (fam.endswith("(b)") or abs(fL - is18168.get("gamma_LL", 0.5)) < 1e-9))
                 fC = 0.0
                 if fam.startswith("T4 DL+LL+CL+0.6"):
                     fC = 1.05
@@ -329,6 +442,9 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                 if kind == "EQ" and fl == 0.6 and not crane:
                     continue
                 fLr = fL          # Table 4 'LL' = every imposed load (floor + roof); 7.3.2 is about mass only
+                fSr = 0.0
+                if snow_governs_roof and fLr:          # H11: IS 875-5 8.1 Note 1
+                    fSr, fLr = fLr, 0.0
                 for s in (1, -1):
                     f = s * fl
                     tvars = (["a", "b"] if (kind == "EQ" and tors.get(d)) else [None])
@@ -349,6 +465,9 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                                     cite_fam = "IS 800:2007 12.2.3"
                                 else:
                                     cite_fam = "IS 18168:2023 5.5"
+                                    if fD == 1.2:
+                                        cite_fam += (" (gamma_LL = %.2f: 0.25 for imposed load <= 3.0 kN/m2, 0.50 "
+                                                     "above or when undeclared)" % fL)
                                 if is5_5:
                                     tags.append("is18168_5_5")
                                     mem = is18168.get("members") or {}
@@ -359,12 +478,13 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                                     if fam.startswith("IS 800 12.2.3"):
                                         cite_fam += " (= IS 18168:2023 5.5, Omega %.1f)" % is18168["Omega"]
                                 extra += "[col]"
-                            lab = _grav_label(fD, fL, fLr, 0, fC) + _lat_label(f, kind, d, extra)
+                            lab = _grav_label(fD, fL, fLr, fSr, fC) + _lat_label(f, kind, d, extra)
                             cpats = [("L", None), ("R", None)] if fC else [None]
                             for cp in cpats:
                                 c = add(lab + ("[CL:%s]" % cp[0] if cp else ""), fD, fL, fLr, family=fam, cite=cite_fam
-                                        + (" + " + IS1893 + " 6.3" if kind == "EQ" else " + IS 875 (Part 3):2015"),
-                                        lateral_kind=kind, direction=d, sign=s, tags=tags, fC=fC)
+                                        + (" + " + IS1893 + " 6.3" if kind == "EQ" else " + IS 875 (Part 3):2015")
+                                        + (" + " + SNOW_NOTE_CITE if fSr else ""),
+                                        lateral_kind=kind, direction=d, sign=s, tags=tags, fC=fC, fS=fSr)
                                 if cp:
                                     c["crane"] = True
                                     c["crane_pattern"] = list(cp)
@@ -393,8 +513,14 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                             f = s * 0.3 * fl
                             lab = _grav_label(fD, fL) + "%s%sEQ_Z" % ("+" if sz > 0 else "-", _fmt(fl)) + \
                                 _lat_label(f, "EQ", d)
-                            c = add(lab, fD, fL, 0.0, family=fam, cite=IS1893 + " 6.3.4.1(c)",
-                                    lateral_kind="EQ", direction=d, sign=s, tags=[])
+                            # H11: the roof imposed term follows the floor factor (Table 4 'LL' = every imposed
+                            # load), as snow when snow > Lr (IS 875-5 8.1 Note 1) -- it was dropped (fLr 0) here
+                            fLrz, fSz = (0.0, fL) if (snow_governs_roof and fL) else (fL, 0.0)
+                            if fSz:
+                                lab = lab.replace(_grav_label(fD, fL), _grav_label(fD, fL, 0.0, fSz), 1)
+                            c = add(lab, fD, fL, fLrz, family=fam, cite=IS1893 + " 6.3.4.1(c)"
+                                    + (" + " + SNOW_NOTE_CITE if fSz else ""),
+                                    lateral_kind="EQ", direction=d, sign=s, tags=[], fS=fSz)
                             c["fE"] = f
                             c["fEv"] = sz * fl * Av
                             c["vertical"] = {"Av": Av, "coef": sz}
@@ -403,18 +529,28 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                             else:
                                 c["lateral_ref"] = ref
     # ---- member-level wind (low-rise / portal: IS 875-3 7.3.1 (Cpe - Cpi) pd patterns) ----
-    for pat in member_wind_patterns(plan):
-        for (fD, fL, fl, fam) in ((1.5, 0.0, 1.5, "T4 DL+WL (member wind)"),
-                                  (0.9, 0.0, 1.5, "T4 0.9DL+WL (member wind, uplift)"),
-                                  (1.2, 1.2, 1.2, "T4 DL+LL+WL (member wind)"),
-                                  (1.2, 1.2, 0.6, "T4 DL+LL+0.6WL (member wind)")):
-            c = add(_grav_label(fD, fL, fL) + "+%s%s" % (_fmt(fl), pat["name"]), fD, fL, fL, family=fam,
-                    cite=IS800_T4 + " + IS 875 (Part 3):2015 7.3.1, Table 5, Table 6",
-                    lateral_kind="W", direction=pat.get("wind_axis"), sign=1, tags=["member_wind"])
-            c["fWM"] = fl
-            c["member_wind"] = {k: pat.get(k) for k in ("name", "direction", "wind_axis", "roof_windward_kNm2",
-                                                        "roof_leeward_kNm2", "wall_windward_kNm2",
-                                                        "wall_leeward_kNm2", "Cpi")}
+    # H14 (HR-A-15, HR-B-12): every pattern is applied from both sides of its axis -- sign +1 (wind towards +axis,
+    # windward = low-coordinate face) and the reversed pattern '<name>R' (sign -1, windward = high-coordinate face),
+    # unless the pattern itself fixes 'sign'.
+    for pat0 in member_wind_patterns(plan):
+        signs = [(-1 if float(pat0["sign"]) < 0 else 1)] if pat0.get("sign") is not None else [1, -1]
+        for sg in signs:
+            pat = dict(pat0, sign=sg)
+            if pat0.get("sign") is None and sg < 0:
+                pat["name"] = str(pat0["name"]) + "R"
+            for (fD, fL, fl, fam) in ((1.5, 0.0, 1.5, "T4 DL+WL (member wind)"),
+                                      (0.9, 0.0, 1.5, "T4 0.9DL+WL (member wind, uplift)"),
+                                      (1.2, 1.2, 1.2, "T4 DL+LL+WL (member wind)"),
+                                      (1.2, 1.2, 0.6, "T4 DL+LL+0.6WL (member wind)")):
+                fLr_, fS_ = (0.0, fL) if (snow_governs_roof and fL) else (fL, 0.0)     # H11: IS 875-5 8.1 Note 1
+                c = add(_grav_label(fD, fL, fLr_, fS_) + "+%s%s" % (_fmt(fl), pat["name"]), fD, fL, fLr_,
+                        family=fam, cite=IS800_T4 + " + IS 875 (Part 3):2015 7.3.1, Table 5, Table 6"
+                        + (" + " + SNOW_NOTE_CITE if fS_ else ""),
+                        lateral_kind="W", direction=pat.get("wind_axis"), sign=sg, tags=["member_wind"], fS=fS_)
+                c["fWM"] = fl
+                c["member_wind"] = {k: pat.get(k) for k in ("name", "direction", "wind_axis", "roof_windward_kNm2",
+                                                            "roof_leeward_kNm2", "wall_windward_kNm2",
+                                                            "wall_leeward_kNm2", "Cpi", "sign")}
     # ---- serviceability (Table 4 cols 7-10): tagged, excluded from the strength envelope ----
     add("SLS:1.0DL+1.0LL", 1.0, 1.0, 1.0, family="T4 SLS DL+LL", cite=IS800_T4 + " serviceability", service=True,
         tags=["service"])
@@ -430,6 +566,7 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                         lateral_kind=kind, direction=d, sign=1)
                 c[key] = fl
                 c["lateral_ref"] = ref
+    n_across = _add_across_wind_rows(combos, awp["patterns"]) if awp["patterns"] else 0
     # meta record for the report / gates
     for c in combos:
         c.setdefault("lateral_kind", None)
@@ -437,6 +574,8 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
     _META.update({"rsa": rsa, "vertical": {"required": vreq, "why": vwhy, **av}, "section12": s12, "is18168": is18168,
                   "nonparallel": nonpar, "torsion": {d: {k: v for k, v in (tors.get(d) or {}).items()
                                                          if k in ("esi", "b_i")} for d in ("X", "Y")},
+                  "across_wind": {"evaluated": awp["evaluated"], "reason": awp.get("reason"),
+                                  "summary": awp["summary"], "n_rows": n_across, "cite": ACROSS_10_4_CITE},
                   "n": len(combos)})
     return combos
 
@@ -495,7 +634,7 @@ def validate_combinations(combos, cfg, plan=None) -> list:
                                      "for a Section 12 system"))
             try:
                 import india_is18168 as I18
-                a = I18.applies(cfg.get("system"), _zone(cfg, plan), opt_in=bool(cfg.get("apply_is18168")))
+                a = I18.applies_for_cfg(cfg.get("system"), _zone(cfg, plan), cfg)
                 om = I18.omega(cfg.get("system"))["Omega"] if a["applies"] else None
                 if om and not fam(1.2, 0.5, om, "fE") and not fam(0.9, 0.0, om, "fE"):
                     out.append(("ERROR", "IS 18168:2023 5.5 overstrength combinations (Omega = %.1f for %s) missing "
@@ -506,6 +645,16 @@ def validate_combinations(combos, cfg, plan=None) -> list:
             if vreq and not any(c.get("fEv") for c in combos):
                 out.append(("ERROR", "IS 1893 6.3.3.1 (Amd 2) vertical earthquake required (%s) but no ELZ "
                                      "term in any combination" % "; ".join(why)))
+    if has_w:
+        # X05: an evaluated across-wind record (R10) requires the 10.4 simultaneous along + across rows
+        try:
+            awp = across_wind_patterns(dict(plan or cfg.get("load_plan") or {}, story_forces=sf), cfg)
+        except Exception:
+            awp = {"patterns": {}}
+        for aref in sorted(awp.get("patterns") or {}):
+            if not any(aref == t.get("ref") for c in combos for t in (c.get("terms") or []) if not c.get("service")):
+                out.append(("ERROR", "IS 875-3 10.4: across-wind is evaluated (10.3) but no strength combination applies "
+                                     "%s simultaneously with %s" % (aref, aref[:-len("_across")])))
     if cfg.get("crane") or cfg.get("cranes"):
         if not any(c.get("fC") for c in combos):
             out.append(("ERROR", "crane present but no IS 800 Table 4 DL+LL+CL rows"))

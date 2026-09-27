@@ -80,12 +80,12 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
                                   elastic=False, mat_tag0=1000, units=units)
     builders = {}           # India: one builder per distinct fye (distinct material tags)
 
-    def _builder_for(sec, kind):
+    def _builder_for(sec, kind, tag=None):
         if not india:
             return builder
         from . import india_model as IMD
         from snl.india_units import MPA_TO_KSI
-        f = IMD.fy_section(pkg, sec, kind)
+        f = IMD.fy_section(pkg, sec, kind, tag=tag)
         fk = round(f["fye_MPa"] * MPA_TO_KSI, 6)
         if fk not in builders:
             builders[fk] = FiberSectionBuilder(ops, Fy=fk, E=None, hardening=0.01, residual=residual, elastic=False,
@@ -100,23 +100,34 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
                  fibre_eles=[], fibre_secs=0, fibre_units=units, fibre_nip=nip)
     sec_cache = {}  # (section, kind) -> secTag
     cover = stats.setdefault("_dof_cover", {})
+    # NL-21: gravity-only members elastic (pushover.elastic_gravity); registry of the model now in OpenSees
+    from . import elastic_gravity as EG
+    EG.reset()
+    eg_set = EG.classify(pkg, prm)
+    stats["elastic_members"] = {int(t): r for t, r in eg_set.items()}
+    stats["elastic_gravity_eles"] = []
+    stats["gravity_elastic"] = EG.enabled(pkg, prm)
 
     def _cov(n, dofs):
         cover.setdefault(n, set()).update(dofs)
     nseg = max(1, int(nseg))
     pin_count = 0
 
-    def _fibre_sec(sec, kind):
-        key = (str(sec).upper(), kind)
+    def _fibre_sec(sec, kind, etag=None):
+        role = (pkg.schedule.get(etag) or {}).get("role") if etag is not None else None
+        key = (str(sec).upper(), kind, role or "")
         if key in sec_cache:
             return sec_cache[key]
         tag = FIB_SEC_BASE + len(sec_cache) + 1
         axis = "y" if kind == "col" else "z"
         lab = str(sec)
-        bld = _builder_for(sec, kind)
+        bld = _builder_for(sec, kind, etag)
         from . import india_materials as IMAT
         try:
-            if IMAT.is_tube(lab):
+            from . import india_sections as _ISEC
+            if _ISEC.is_box(lab):
+                bld.box_plates(tag, lab, axis=axis)
+            elif IMAT.is_tube(lab):
                 typ = str((IMAT.section_props_mm(lab) if india else {}).get("type") or "").upper()
                 if typ == "CHS" or lab.upper().startswith("CHS"):
                     bld.hss_round(tag, lab, residual=residual)
@@ -143,12 +154,39 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         _cov(grid, dirs); _cov(dup, dirs)
         return zl
 
+    link_recs = {}
+
+    def _link(e, sec):
+        """EBF link (NL-10): the HR model's ElasticTimoshenkoBeam becomes a forceBeamColumn on the beam's fibre
+        section aggregated with the IS 18168 11.2 shear yielding (Vz), same nodes and transformation."""
+        raw = e["raw"]; transf = int(raw[12])
+        fib = _fibre_sec(sec, "beam", e["tag"])
+        bld = _builder_for(sec, "beam", e["tag"])
+        agg = FIB_SEC_BASE + 500000 + len(link_recs) + 1
+        fy = IMD_fy(sec, e["tag"]) if india else float(Fy) * 6.894757293168361
+        rec = bld.link_aggregator(agg, fib, sec, fy)
+        ops.beamIntegration("Lobatto", agg, agg, nip)
+        ops.element("forceBeamColumn", e["tag"], e["n1"], e["n2"], transf, agg, "-iter", 30, 1e-8)
+        _cov(e["n1"], range(1, 7)); _cov(e["n2"], range(1, 7))
+        p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
+        link_recs[e["tag"]] = dict(rec, ele=e["tag"], n1=e["n1"], n2=e["n2"], L_in=math.dist(p1, p2),
+                                   z=max(p1[2], p2[2]), nip=nip)
+        stats["fibre_eles"].append(e["tag"])
+        stats["links"] = stats.get("links", 0) + 1
+
+    def IMD_fy(sec, tag):
+        from . import india_model as IMD
+        return IMD.fy_section(pkg, sec, "beam", tag=tag)["fye_MPa"]
+
     for e in m.elements:
         if "etype" in e:
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
+            if e["etype"] == "ElasticTimoshenkoBeam" and sec and (pkg.schedule.get(e["tag"]) or {}).get("role") == "link":
+                _link(e, sec)
+                continue
             if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
-                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+                spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
                 mat += 1; HM.make_brace_material(mat, spec, prm)
                 ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
                 _cov(e["n1"], (1, 2, 3)); _cov(e["n2"], (1, 2, 3))
@@ -166,13 +204,29 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
         if kind == "brace" and sec:
-            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec))
+            spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
             mat += 1; HM.make_brace_material(mat, spec, prm)
             ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)
             _cov(e["n1"], (1, 2, 3)); _cov(e["n2"], (1, 2, 3))
             hinges[e["tag"]] = dict(ele=e["tag"], end=0, kind="brace", section=sec, dof=0, K0=E_KSI_AL(spec), mat=mat,
                                     node=e["n1"], z=max(p1[2], p2[2]), spec=spec)
             stats["brace"] += 1; stats["brace_nonlinear"] += 1
+            continue
+        if e["tag"] in eg_set:
+            # NL-21: two elasticBeamColumn sub-elements with the HR properties and end releases (mid node: mass only)
+            mid = SEG_NODE_BASE + e["tag"] * 100 + 1
+            ops.node(mid, *[(p1[k] + p2[k]) / 2.0 for k in range(3)]); ops.mass(mid, *([tiny] * 6))
+            ra, rb = EG.split_releases(e["release"])
+            base = [e["A"], e["E"], e["G"], e["J"], e["Iy"], e["Iz"], e["transf"]]
+            sub2 = SEG_ELE_BASE + e["tag"] * 100 + 1
+            ops.element("elasticBeamColumn", e["tag"], e["n1"], mid, *(base + ra))
+            ops.element("elasticBeamColumn", sub2, mid, e["n2"], *(base + rb))
+            for n_ in (e["n1"], mid, e["n2"]):
+                _cov(n_, range(1, 7))
+            EG.register(e["tag"], (e["tag"], sub2), kind, sec, EG.capacities(pkg, e, kind, sec), eg_set[e["tag"]])
+            stats["elastic_gravity_eles"] += [e["tag"], sub2]
+            stats["elastic_gravity"] = stats.get("elastic_gravity", 0) + 1
+            stats[kind] += 1
             continue
         if sec is None or kind not in ("col", "beam"):
             args = [e["A"], e["E"], e["G"], e["J"], e["Iy"], e["Iz"], e["transf"]] + (e["release"] or [])
@@ -184,8 +238,15 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         flag = "-releasey" if slot == "Iy" else "-releasez"
         relz = int(rel[rel.index(flag) + 1]) if flag in rel else 0
         # force-controlled columns: still fibre (distributed) but note them
-        if HM.column_hinge(sec, L, PG.get(e["tag"], 0.0), prm).force_controlled if kind == "col" else False:
-            stats["force_controlled"] += 1
+        if kind == "col":
+            prm_c = prm
+            if india:                                   # NL-6: the flag uses the member's own fy, not a file default
+                from . import india_model as IMD
+                from snl.india_units import MPA_TO_KSI
+                prm_c = dict(prm, material=dict(prm.get("material") or {}, Ry_expected=1.0,
+                                                Fy_ksi=IMD.fy_section(pkg, sec, kind, tag=e["tag"])["fye_MPa"] * MPA_TO_KSI))
+            if HM.column_hinge(sec, L, PG.get(e["tag"], 0.0), prm_c).force_controlled:
+                stats["force_controlled"] += 1
         end1, end2 = e["n1"], e["n2"]
         # major-axis releases -> pin (no rotational continuity); unreleased -> continuous fibre
         if relz in (1, 3):
@@ -194,7 +255,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         if relz in (2, 3):
             end2 = FIB_PIN_NODE + e["tag"] * 10 + 2; ops.node(end2, *p2); ops.mass(end2, *([tiny] * 6))
             dof = strong_rot_dof(pkg, e, kind); _pin(e["n2"], end2, {dof}); stats["released_ends"] += 1
-        secTag = _fibre_sec(sec, kind)
+        secTag = _fibre_sec(sec, kind, e["tag"])
         chain = [end1]
         for si in range(1, nseg):
             f = si / float(nseg)
@@ -209,6 +270,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
             _cov(chain[si], range(1, 7)); _cov(chain[si + 1], range(1, 7))
             stats["fibre_eles"].append(etag)
         stats[kind] += 1
+    stats["link_registry"] = link_recs
     stats["panel_zone_registry"] = {}
     for perp, master, slaves in m.diaphragms:
         ops.rigidDiaphragm(perp, master, *slaves)
@@ -227,8 +289,9 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         allb = [builder] + list(builders.values())
         nfib = sum(x[3] for b in allb for x in (b.log or []))
         print("[nonlinear_model] FIBRE plasticity: cols %d beams %d braces %d (nl %d) nseg=%d nip=%d secs=%d fibres~%d released_ends=%d"
+              " elastic gravity members %d"
               % (stats["col"], stats["beam"], stats["brace"], stats["brace_nonlinear"], nseg, nip,
-                 stats["fibre_secs"], nfib, stats["released_ends"]))
+                 stats["fibre_secs"], nfib, stats["released_ends"], stats.get("elastic_gravity", 0)))
     return hinges, stats
 
 

@@ -38,8 +38,14 @@ K_ROT = 1.0e10       # kip-in/rad
 class GMNIAModel:
     def __init__(self, nm, cfg, nsub=(4, 4, 6), residual="lehigh", Fy=None, hardening=0.002,
                  elastic=False, fast=False, out_of_plumb=(None, 0.0), bow=1 / 1000.0, bow_sign=+1,
-                 brace_bow=1 / 1000.0, nip=5, brace_pins=True, rigid_end_offset=False, fy_fn=None, bow_hollow=None):
+                 brace_bow=1 / 1000.0, nip=5, brace_pins=True, rigid_end_offset=False, fy_fn=None, bow_hollow=None,
+                 transf_type="Corotational"):
         self.nm, self.cfg = nm, cfg
+        # NL-15: the gravity-transfer gate compares with the HR engine's P-Delta static model -- it builds with
+        # "PDelta" so a long axially-restrained beam does not pick up catenary tension (large-displacement
+        # Corotational) that the HR model cannot have (IN_Ex13 15 m roof girders: -8 % midspan moment). The DDM
+        # sweeps keep Corotational (GMNIA = geometrically nonlinear).
+        self.transf_type = transf_type
         # WP4.5 / WP4.9 India: fy per section (IS 2062 Table 3 band, same steel as pushover/NLRHA) and a separate
         # bow for hollow sections (IS 800 Table 34: 0.002L hollow, 0.001L otherwise)
         self.fy_fn = fy_fn
@@ -133,11 +139,11 @@ class GMNIAModel:
         for t in self.masters:
             if t not in nm.fixes:
                 ops.fix(t, 0, 0, 1, 1, 1, 0)
-        ops.geomTransf("Corotational", 1, 1.0, 0.0, 0.0)
-        ops.geomTransf("Corotational", 2, 0.0, 1.0, 0.0)
-        ops.geomTransf("Corotational", 3, 0.0, 0.0, 1.0)
-        ops.geomTransf("Corotational", 4, 0.0, 1.0, 0.0)
-        ops.geomTransf("Corotational", 5, 1.0, 0.0, 0.0)
+        ops.geomTransf(self.transf_type, 1, 1.0, 0.0, 0.0)
+        ops.geomTransf(self.transf_type, 2, 0.0, 1.0, 0.0)
+        ops.geomTransf(self.transf_type, 3, 0.0, 0.0, 1.0)
+        ops.geomTransf(self.transf_type, 4, 0.0, 1.0, 0.0)
+        ops.geomTransf(self.transf_type, 5, 1.0, 0.0, 0.0)
         ops.uniaxialMaterial("Elastic", 1, K_TRANS)
         ops.uniaxialMaterial("Elastic", 2, K_ROT)
         self.builder = FiberSectionBuilder(ops, Fy=self.Fy, hardening=self.hardening,
@@ -146,6 +152,7 @@ class GMNIAModel:
         self._builders = {}
         for m in nm.members:
             self._add_member(m)
+        self._add_springs()
         for master, slaves in nm.diaphragms.items():
             ops.rigidDiaphragm(3, master, *slaves)
         if with_mass:
@@ -156,6 +163,38 @@ class GMNIAModel:
                 if t not in nm.masses:
                     ops.mass(t, *([1e-8 * mmin] * 6))
         return self
+
+    SPRING_MAT0 = 9_000_000
+    SPRING_ELE0 = 45_000_000
+
+    def _add_springs(self):
+        """NL-15: the HR zeroLength springs, verbatim (same nodes, same -dir, the HR uniaxialMaterial re-created
+        under an offset tag). The package model is N-mm and the GMNIA geometry is the package geometry, so the
+        stiffnesses are used as recorded."""
+        nm, made = self.nm, set()
+        self.springs = []
+        for a in getattr(nm, "springs", None) or []:
+            a = list(a)
+            if "-mat" not in a or "-dir" not in a:
+                continue
+            i, j = a.index("-mat"), a.index("-dir")
+            mats, dirs = a[i + 1:j], []
+            for v in a[j + 1:]:
+                if isinstance(v, str):
+                    break
+                dirs.append(v)
+            new = []
+            for mt in mats:
+                raw = (nm.uni_materials or {}).get(mt)
+                if raw is None:
+                    raise KeyError("zeroLength %s: uniaxialMaterial %s not in model_opensees.py" % (a[1], mt))
+                t = self.SPRING_MAT0 + int(mt)
+                if t not in made:
+                    ops.uniaxialMaterial(raw[0], t, *raw[2:]); made.add(t)
+                new.append(t)
+            tag = self.SPRING_ELE0 + len(self.springs) + 1      # own tag range (HR tags can clash with sub-elements)
+            ops.element("zeroLength", tag, a[2], a[3], "-mat", *new, "-dir", *dirs)
+            self.springs.append(dict(tag=tag, hr_tag=a[1], n1=a[2], n2=a[3], dirs=dirs))
 
     def _is_secondary(self, m):
         """Purlins/girts/eave struts — keep elastic (fibre secondaries cause spurious local buckling)."""
@@ -170,12 +209,13 @@ class GMNIAModel:
 
     def _section(self, m):
         axis = "y" if m.kind == "col" else "z"
-        key = (m.section.upper(), m.kind, axis)
+        link = (getattr(m, "role", "") == "link")
+        key = (m.section.upper(), "link" if link else m.kind, axis)
         if key not in self.secs:
             tag = len(self.secs) + 1
             bld, fy = self.builder, self.Fy
             if self.fy_fn is not None:
-                fy = float(self.fy_fn(m.section, m.kind))
+                fy = float(self.fy_fn(m.section, m.role or m.kind))
                 if abs(fy - self.Fy) > 1e-9:
                     if fy not in self._builders:
                         self._builders[fy] = FiberSectionBuilder(ops, Fy=fy, hardening=self.hardening, residual=self.residual,
@@ -185,7 +225,12 @@ class GMNIAModel:
             props = bld.build(tag, m.section, m.kind, axis=axis)
             if bld is not self.builder:
                 self.builder.log.extend(bld.log[-1:])
-            ops.beamIntegration("Lobatto", tag, tag, self.nip)
+            if link:                                  # NL-10: IS 18168 11.2 shear yielding aggregated on the fibres
+                fy_mpa = fy if (self.fy_fn is not None or getattr(self, "_fibre_units", "kip-in") == "N-mm") else fy * 6.894757293168361
+                props["link"] = bld.link_aggregator(900000 + tag, tag, m.section, fy_mpa)
+                ops.beamIntegration("Lobatto", tag, 900000 + tag, self.nip)
+            else:
+                ops.beamIntegration("Lobatto", tag, tag, self.nip)
             self.secs[key] = tag
             self.sec_props[tag] = dict(label=m.section, kind=m.kind, Fy=fy, **props)
         return self.secs[key]
@@ -224,6 +269,8 @@ class GMNIAModel:
 
     def _add_member(self, m):
         nsub = {"col": self.nsub_col, "beam": self.nsub_beam, "brace": self.nsub_brace}[m.kind]
+        if getattr(m, "role", "") == "link":
+            nsub = 1                                  # a link is one force-based element (shear is uniform along it)
         tr = self._transf_for(m)
         p1, p2 = self._coord(m.n1), self._coord(m.n2)
         L = math.dist(p1, p2)
@@ -345,11 +392,50 @@ class GMNIAModel:
                                    span=(L * s / nsub, L * (s + 1) / nsub), Lm=L))
 
     # ------------------------------------------------------------------ loads
-    def apply_gravity(self, fD, fL, fLr, pres):
-        """Two-way tributary UDL on every grid beam sub-element (kip/in, local z down)."""
+    def apply_gravity(self, fD, fL, fLr, pres, fS=0.0, meta=None):
+        """Gravity for one combination.
+
+        India (NL-14): the HR engine's own gravity (snl.hr_gravity -- static_model.apply_gravity_state states D / L /
+        Lr / S, element by element, with member self-weight and nodal dead loads) combined with the factors and replayed
+        on the GMNIA sub-elements by span fraction -- the same loads the design used, which the gravity-transfer gate
+        then checks. Without the HR engine, and on the USA path: the two-way tributary UDL below (kip/in, local z down)."""
         from .loads import beam_udl
         total = 0.0
         india = self._india()
+        if india:
+            hr = getattr(self.nm, "_hr_gravity", None)
+            if hr is None:
+                try:
+                    from snl import hr_gravity as HG
+                    hr = HG.ensure(self.nm.job_dir) or False
+                except Exception as ex:                       # noqa: BLE001
+                    print("[gmnia] HR gravity state unavailable (%s) -- own tributary loads" % ex)
+                    hr = False
+                self.nm._hr_gravity = hr
+            if hr:
+                from snl import hr_gravity as HG
+                facs = HG.factors_for(fD, fL, fLr, meta, fS=fS)   # NL-15: partial snow, crane, vertical EQ
+                loads = HG.combine(hr, facs)
+                chains = {}
+                for e in self.elems:
+                    sp, Lm = e.get("span"), e.get("Lm") or e.get("L")
+                    if sp and Lm:
+                        chains.setdefault(int(e["mtag"]), []).append((e["tag"], sp[0] / Lm, sp[1] / Lm))
+                    elif e.get("s") in (0, None):
+                        chains.setdefault(int(e["mtag"]), []).append((e["tag"], 0.0, 1.0))
+                scale = 1.0 if getattr(self, "_fibre_units", "kip-in") == "N-mm" else None
+                if scale is None:
+                    from snl.india_units import KIP_TO_N, MM_PER_IN
+                    info = HG.apply(ops, loads, chains, force_scale=1.0 / KIP_TO_N, length_scale=1.0 / MM_PER_IN)
+                else:
+                    info = HG.apply(ops, loads, chains)
+                self.gravity_info = dict(info, basis="HR engine gravity states (snl.hr_gravity)")
+                tot = 0.0
+                for name, f in facs.items():
+                    st = (hr.get("states") or {}).get(name)
+                    if st and f:
+                        tot += f * float(st.get("total_N") or 0.0)
+                return tot if scale == 1.0 else tot / 4448.2216152605
         for e in self.elems:
             if e["kind"] != "beam" or (e.get("rigid_stub") and not india):
                 continue

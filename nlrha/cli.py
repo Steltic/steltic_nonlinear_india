@@ -13,7 +13,7 @@ def _load(args):
     from pushover import package_reader as PR, hinge_models as HM, nonlinear_model as NM
     from . import model as MD
     pkg = PR.load(args.package); print(PR.summary(pkg))
-    prm = HM.load_params(args.params)
+    prm = HM.load_params(args.params, jurisdiction=(pkg.basis.jurisdiction or "usa"))
     from . import india_authority as IA
     ch16 = IA.load_ch16_params()
     print(IA.authority_banner().splitlines()[0])
@@ -279,21 +279,31 @@ def _modal_and_range(pkg, prm, ch16, loads):
     return PG, modal, lo, hi
 
 
-def _damping(args, pkg, ch16):
+def _damping(args, pkg, ch16, prm=None):
     """Viscous damping as a parameter (WP4.11): nl_plan.damping.xi / --xi; above the cap -> WARNING, never exit."""
     from pushover import india_model as IMD
     plan = IMD.load_nl_plan(pkg) if _is_india(pkg) else {}
     dp = (plan.get("damping") or {}) if isinstance(plan, dict) else {}
-    xi = float(args.xi if getattr(args, "xi", None) is not None else (dp.get("xi") or 0.025))
-    cap = float(dp.get("xi_cap") or ch16["damping"]["xi_max"])
-    basis = dp.get("basis") or ("Rayleigh at T1 and 0.2 T1; cap %.3f is ASCE-derived (EOR-adopted); IS 1893 7.2.4 uses 5 %% "
-                                "for the design spectrum" % cap)
+    pdmp = (prm.get("damping") or {}) if isinstance(prm, dict) else {}          # NL-6: India parameter-file block
+    src = ("--xi" if getattr(args, "xi", None) is not None else
+           ("nl_plan.damping.xi (EOR)" if dp.get("xi") else "hinge_params damping.xi_default (modelling assumption)"))
+    xi = float(args.xi if getattr(args, "xi", None) is not None else (dp.get("xi") or pdmp.get("xi_default") or 0.025))
+    # the reference is IS 1893 (Part 1):2016 7.2.4 (5 %: the damping of the elastic spectrum the records are scaled to);
+    # no ASCE 16.3.5 cap on the India path
+    cap = float(dp.get("xi_cap") or pdmp.get("xi_cap") or 0.05)
+    basis = dp.get("basis") or (
+        "Rayleigh %.1f %% at T1 and 0.2 T1 (%s); mass-proportional on all nodes, stiffness-proportional on the frame "
+        "elements only. IS 1893 (Part 1):2016 7.2.4: 5 %% for estimating Ah -- the target spectrum is 5 %%-damped; the "
+        "hysteretic energy is modelled by the fibres, so the viscous part is a modelling assumption below the 7.2.4 "
+        "value" % (100 * xi, src))
     warn = None
     if xi > cap:
-        warn = "xi %.3f exceeds the adopted cap %.3f -- continuing (EOR parameter, WP4.11)" % (xi, cap)
+        warn = ("xi %.3f exceeds %.3f (IS 1893 7.2.4 reference) -- continuing; viscous damping above the code value "
+                "double-counts the hysteretic dissipation (EOR parameter)" % (xi, cap))
         print("[damping] WARNING:", warn)
     ch16["damping"]["xi_used"] = xi
-    return dict(xi=xi, cap=cap, basis=basis, warning=warn)
+    return dict(xi=xi, cap=cap, basis=basis, warning=warn, source=src,
+                reference=dict(value=0.05, clause="IS 1893 (Part 1):2016 7.2.4", role="reference (Ah); not the model's viscous damping"))
 
 
 def _india_prepare(args, pkg, prm, ch16):
@@ -302,8 +312,13 @@ def _india_prepare(args, pkg, prm, ch16):
     from . import ground_motions as GM
     loads, gtab = IMD.is_gravity_loads(pkg)
     W = sum(r["W_kN"] for r in gtab)
+    from pushover.report_india import gravity_source
+    gsrc = gravity_source(gtab)
     split = dict(sum_D=sum(r["QG_kip"] for r in gtab), sum_Lexp=0.0, ratio=0.0, no_live_case_needed=False,
-                 basis="IS 1893 seismic weight per level (D + Table 10 imposed share); W = %.1f kN" % W)
+                 gravity_source=gsrc,
+                 basis=("IS 1893 seismic weight per level (D + Table 10 imposed share); W = %.1f kN; %s" % (
+                     W, "HR engine seismic-weight load state + top-up to W_i (NL-14)" if gsrc == "hr_engine"
+                     else "IDEALISED: W_i as equal diaphragm nodal loads (HR engine not importable)")))
     print("[gravity IS] sum W = %.1f kN (= mass·g, gate %s)" % (W, (pkg.calc or {}).get("_is_mass_gate", {}).get("ok")))
     PG, modal, lo, hi = _modal_and_range(pkg, prm, ch16, loads)
     return loads, gtab, split, PG, modal, lo, hi
@@ -385,7 +400,7 @@ def _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0):
     level_summaries = {}
     for lv, (d, summ) in per_level.items():
         odir = os.path.join(out, lv)
-        rp = RI.write_level(odir, pkg, d["gm"], d["results"], summ, modal, numerics, sum(r.get("seconds", 0) for r in d["results"]))
+        rp = RI.write_level(odir, pkg, d["gm"], d["results"], summ, modal, numerics, sum(r.get("seconds", 0) for r in d["results"]), prm=prm)
         level_summaries[lv] = (summ, os.path.join(odir, "nlrha_package.json"))
         print("[%s] wrote %s | records %d/%d converged | max mean drift %s | mean V/VB %s | non-vacuous %s" % (
             lv, rp, summ["n_converged"], summ["n_records"],
@@ -394,6 +409,11 @@ def _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0):
             summ["non_vacuous"]["ok"]))
     idx = RI.write_index(out, pkg, level_summaries, modal, numerics, hz)
     print("wrote", idx, "(%.0f s)" % (time.time() - t0))
+    try:                                                   # NL-11: the India viewer (no IO/LS/CP, no verdict)
+        from . import viewer3d_india as V3I
+        print("wrote", V3I.write(out, pkg, per_level, modal, numerics, prm))
+    except Exception as ex:                                # noqa: BLE001 -- never let the viewer hide the report
+        print("[viewer] skipped:", ex)
     try:
         st = IA.write_complete_gate(str(pkg.root))
         print("[gate] design_status=%s reasons=%s" % (st["status"], "; ".join(st["reasons"])[:300]))
@@ -427,7 +447,12 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
         print("[nlrha] India: fibre plasticity is used (member strains/rotations and IS 2062 steel per section); "
               "--plasticity %s ignored" % plast)
     os.environ["SNL_PLASTICITY"] = "fibre"; prm.setdefault("numerics", {})["plasticity"] = "fibre"
-    damp = _damping(args, pkg, ch16)
+    # NL-21: record trimming and elastic gravity members (India defaults; inherited by the spawned workers)
+    os.environ["SNL_RECORD_TRIM"] = getattr(args, "trim", None) or "arias5-95"
+    os.environ["SNL_ANALYSIS"] = "nlrha"                              # per-analysis promotion list
+    if getattr(args, "gravity_elastic", None):
+        os.environ["SNL_GRAVITY_ELASTIC"] = "1" if args.gravity_elastic == "on" else "0"
+    damp = _damping(args, pkg, ch16, prm)
     loads, gtab, split, PG, modal, lo, hi = _india_prepare(args, pkg, prm, ch16)
     if not modal.get("spurious_ok", True):
         print("[modal] WARNING spurious modes %s (T > 5 T1, < 1 %% mass)" % modal.get("spurious_modes"))
@@ -435,7 +460,10 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
     torsion = None if tors_mode == "off" else dict(sx=(1 if tors_mode == "pos" else -1), sy=(1 if tors_mode == "pos" else -1), e_ratio=0.05)
     numerics = dict(plasticity="fibre", member_nseg=int(os.environ.get("SNL_MEMBER_NSEG") or 4), damping=damp,
                     torsion=dict(mode=tors_mode, **(torsion or {}), clause="IS 1893 7.8.2 (0.05 b), default on for India"),
-                    integrator=args.integrator, dt_s=args.dt, gravity=split["basis"])
+                    integrator=args.integrator, dt_s=args.dt, gravity=split["basis"], gravity_source=split["gravity_source"],
+                    record_trim=dict(method=os.environ["SNL_RECORD_TRIM"], free_vib_s=args.free_vib,
+                                     basis=(RN.TRIM_BASIS if os.environ["SNL_RECORD_TRIM"] == "arias5-95" else "full record head")),
+                    gravity_elastic=(os.environ.get("SNL_GRAVITY_ELASTIC", "1") not in ("0", "off", "false")))
     sets, recs = _library(args)
     out = args.out or os.path.join(str(pkg.root), "nlrha"); os.makedirs(out, exist_ok=True)
     pp = _pushover_pkg(args, pkg)
@@ -631,6 +659,8 @@ def main(argv=None):
             p.add_argument("--integrator", default="hht", choices=["hht", "newmark"], help="HHT alpha=0.9 (default; damps spurious high modes) or Newmark average acceleration")
             p.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default: 4 fibre / 1 imk)")
             p.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="India: fibre (always). USA: default imk=ModIMK; fibre=distributed forceBeamColumn")
+            p.add_argument("--trim", default=None, choices=["arias5-95", "none"], help="record trimming (India default arias5-95: 5-95 %% Arias, 1 s pre-pad, then --free-vib s of free vibration; USA default none)")
+            p.add_argument("--gravity-elastic", default=None, choices=["on", "off"], help="gravity-only members elastic with a yield check (India default on; NL-21)")
             p.add_argument("--early-abort-nc", type=int, default=2, help="abandon remaining records once N are NC (0=disable; product default 2)")
     lib = sub.add_parser("library", help="index a folder of PEER .AT2 / CSV record pairs (writes index.json; reads PEER _SearchResults.csv metadata when present)")
     lib.add_argument("folder")

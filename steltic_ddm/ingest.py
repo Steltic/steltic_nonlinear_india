@@ -43,6 +43,8 @@ class NeutralModel:
     transf: dict = field(default_factory=dict)       # tag -> (type, vecxz)
     members: list = field(default_factory=list)
     diaphragms: dict = field(default_factory=dict)   # master -> [slaves]
+    springs: list = field(default_factory=list)      # HR zeroLength springs, raw ops args (roof-plane / release springs)
+    uni_materials: dict = field(default_factory=dict)  # uniaxialMaterial tag -> raw args (for the springs)
     cfg: dict = None
     calc_package: dict = None
     levels: list = field(default_factory=list)       # z of each level incl. base
@@ -75,6 +77,8 @@ def _args(s):
 def parse_replay(path):
     """Parse model_opensees.py into dicts. Only the recorded ops.* lines are read."""
     nodes, fixes, masses, transf, elems, diaph = {}, {}, {}, {}, [], {}
+    uni = {}
+    parse_replay.uni_materials = uni                  # NL-15: read back by load_package (the return shape is fixed)
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -105,6 +109,8 @@ def parse_replay(path):
                 elems.append(args)
             elif cmd == "rigidDiaphragm":
                 diaph[args[1]] = list(args[2:])
+            elif cmd == "uniaxialMaterial":
+                uni[args[1]] = list(args)
     return nodes, fixes, masses, transf, elems, diaph
 
 
@@ -128,16 +134,23 @@ def load_package(job_dir, steltic_engine_dir=None):
         raise FileNotFoundError("model_opensees.py missing in %s -- ask the HR Steel App to re-run "
                                 "pipeline.design_and_report(name, cfg) WITH cfg passed (the export is skipped otherwise)" % job_dir)
     nodes, fixes, masses, transf, elems, diaph = parse_replay(replay)
+    try:                                              # NL-4: the package's built-up boxes before any section lookup
+        from pushover import india_sections as _ISEC
+        _ISEC.register_from_package(job_dir)
+    except Exception as ex:                           # noqa: BLE001
+        print("[ingest] custom sections not registered:", ex)
     nm.nodes, nm.fixes, nm.masses, nm.transf, nm.diaphragms = nodes, fixes, masses, transf, diaph
 
     # section labels from member_schedule.csv
-    secmap = {}
+    secmap, rolemap = {}, {}
     sched = os.path.join(job_dir, "design", "member_schedule.csv")
     if os.path.exists(sched):
         with open(sched, newline="") as f:
             for r in csv.DictReader(f):
                 try:
                     secmap[int(r["ele_tag"])] = (r["member"], r["section"])
+                    if (r.get("role") or "").strip():
+                        rolemap[int(r["ele_tag"])] = r["role"].strip()     # NL-5: the HR role (lateral_col, link, ...)
                 except Exception:
                     pass
 
@@ -159,6 +172,20 @@ def load_package(job_dir, steltic_engine_dir=None):
             A = float(a[4])
             kind, sec = secmap.get(tag, ("brace", "?"))
             nm.members.append(Member(tag, "brace", sec, n1, n2, 0, 3, 3, A, dirn="D"))
+        elif et == "ElasticTimoshenkoBeam":
+            # NL-10: EBF link (HR engine3d.add_link). eleTag iNode jNode E G A Jx Iy Iz Avy Avz transfTag
+            kind, sec = secmap.get(tag, ("beam", "?"))
+            i1, j1, k1 = decode_tag(n1); i2, j2, k2 = decode_tag(n2)
+            p1, p2 = nodes.get(n1), nodes.get(n2)
+            dirn = ("X" if (p1 and p2 and abs(p2[0] - p1[0]) >= abs(p2[1] - p1[1])) else "Y") if (p1 and p2) else ("X" if j1 == j2 else "Y")
+            m_ = Member(tag, "beam", sec, n1, n2, int(a[12]), 0, 0, float(a[6]), dirn=dirn)
+            m_.role = "link"
+            nm.members.append(m_)
+        elif et == "zeroLength":
+            # NL-15: HR zeroLength springs (IN_Ex15 roof-plane springs 299xxx -> 2xxxxx). Dropping them left the
+            # roof plane unconnected and every GMNIA gravity analysis failed; they are rebuilt verbatim (N-mm).
+            nm.springs.append(list(a))
+    nm.uni_materials = dict(getattr(parse_replay, "uni_materials", {}) or {})
 
     # levels
     zs = sorted({round(v[2], 6) for v in nodes.values()})
@@ -169,6 +196,9 @@ def load_package(job_dir, steltic_engine_dir=None):
     if os.path.exists(cp):
         nm.calc_package = json.load(open(cp))
     _assign_roles(nm)
+    for m in nm.members:                              # the HR package's role wins over the geometric inference
+        if m.tag in rolemap:
+            m.role = rolemap[m.tag]
 
     # cfg.py (needs the Steltic engine importable for engine3d/openseespy)
     nm.cfg = load_cfg(job_dir, steltic_engine_dir)
@@ -210,11 +240,17 @@ def load_cfg(job_dir, steltic_engine_dir=None):
     src = open(os.path.join(job_dir, "cfg.py")).read()
     ns = {"__name__": "steltic_cfg", "__file__": os.path.join(job_dir, "cfg.py")}
     old = os.getcwd()
+    jd = os.path.abspath(job_dir)
+    added = jd not in sys.path
+    if added:                                         # NL-14: job-local helper modules (hrb_build6.py, retrieval_ex6.py)
+        sys.path.insert(0, jd)                        # -- the HR app runs cfg.py with the job folder importable
     try:
         os.chdir(job_dir)
         exec(compile(src, "cfg.py", "exec"), ns)
     finally:
         os.chdir(old)
+        if added and jd in sys.path:
+            sys.path.remove(jd)
     cfg = ns.get("cfg")
     if not isinstance(cfg, dict):
         raise ValueError("cfg.py does not define a top-level `cfg = dict(...)`")
