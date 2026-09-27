@@ -12,6 +12,11 @@
 #
 # Env: GOLD_NL (job root, default /home/claude/nl/gold_nl), ANSWERS (default $GOLD_NL/answers),
 #      STELTIC_ENGINE_DIR, RAG_API_URL, INDIA_CORPUS_ROOT, PARALLEL (2), ONLY_JOBS (space-separated subset).
+#
+# NL-27: the DDM step marker records DDM_CODE (the last commit that changed DDM results). A DDM marker without the
+# current DDM_CODE is stale: an unfinished job re-runs its DDM in the main loop; a finished job (batch_done.json)
+# re-runs `--only ddm` + report in the refresh pass at the END of the batch (old DDM kept in _ddm_before_<code>/).
+# Clean stop: `touch $GOLD_NL/STOP_BATCH` -> the batch exits before its next step (a running step completes).
 set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOLD_NL="${GOLD_NL:-/home/claude/nl/gold_nl}"
@@ -23,6 +28,8 @@ export RAG_API_URL="${RAG_API_URL:-http://127.0.0.1:8765/query}"
 export INDIA_CORPUS_ROOT="${INDIA_CORPUS_ROOT:-/home/claude/corpus_srv}"
 export MPLBACKEND=Agg
 PY="${PY:-python3}"
+DDM_CODE="NL-26"            # bump when a commit changes DDM results; stale DDM markers are re-run
+STOP="$GOLD_NL/STOP_BATCH"
 
 # smallest first (elements in the HR model_opensees.py)
 JOBS_DEFAULT="IN_Ex11_SMF_3levels_Zplan_school_Chandigarh/unitC_gym
@@ -47,6 +54,11 @@ IN_Ex9_EBF_12levels_Tplan_Guwahati"
 JOBS="${ONLY_JOBS:-$JOBS_DEFAULT}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S %z')] $*" | tee -a "$LOG"; }
+stop_check() { if [ -f "$STOP" ]; then log "STOP_BATCH found -- batch stopped cleanly before: $*"; exit 0; fi; }
+ddm_current() { [ -f "$1/.batch_step_ddm" ] && grep -q "\"ddm_code\": \"$DDM_CODE\"" "$1/.batch_step_ddm"; }
+mark() {   # mark <job> <step> <seconds>
+  echo "{\"seconds\": $3, \"finished\": \"$(date -Iseconds)\", \"rev\": \"$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null)\", \"ddm_code\": \"$DDM_CODE\"}" > "$1/.batch_step_$2"
+}
 
 cd "$REPO" || exit 1
 log "batch start: repo $REPO @ $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null) | jobs $(echo $JOBS | wc -w) | parallel $PARALLEL"
@@ -55,7 +67,7 @@ for rel in $JOBS; do
   J="$GOLD_NL/$rel"
   name="${rel//\//__}"
   if [ ! -f "$J/cfg.py" ]; then log "SKIP $rel: no job folder at $J"; continue; fi
-  if [ -f "$J/batch_done.json" ]; then log "SKIP $rel: already done ($(cat "$J/batch_done.json" | tr -d '\n' | cut -c1-120))"; continue; fi
+  if [ -f "$J/batch_done.json" ]; then log "SKIP $rel: already done ($(cat "$J/batch_done.json" | tr -d '\n' | cut -c1-120))$(ddm_current "$J" || echo " -- DDM refresh queued at the end")"; continue; fi
   t_job=$(date +%s)
   log "JOB $rel start"
   # 1 collect (agent-transcribed answers; the program re-checks every value against the passages)
@@ -69,14 +81,18 @@ for rel in $JOBS; do
   fi
   # 2-4 the analyses, one step at a time (resumable)
   for step in pushover nlrha ddm; do
-    if [ -f "$J/.batch_step_$step" ]; then log "JOB $rel $step already done"; continue; fi
+    if [ -f "$J/.batch_step_$step" ]; then
+      if [ "$step" != ddm ] || ddm_current "$J"; then log "JOB $rel $step already done"; continue; fi
+      log "JOB $rel ddm marker predates $DDM_CODE -- DDM re-run"
+    fi
+    stop_check "$rel $step"
     t0=$(date +%s)
     log "JOB $rel $step start"
     $PY -m snl run "$J" --only $step --parallel "$PARALLEL" --dt 0.01 >> "$J/batch.log" 2>&1
     rc=$?
     dt=$(( $(date +%s) - t0 ))
     log "JOB $rel $step end rc=$rc (${dt} s)"
-    if [ $rc -eq 0 ]; then echo "{\"seconds\": $dt, \"finished\": \"$(date -Iseconds)\"}" > "$J/.batch_step_$step"; fi
+    if [ $rc -eq 0 ]; then mark "$J" "$step" "$dt"; fi
   done
   # 5 report + gate
   $PY -m snl report "$J" >> "$J/batch.log" 2>&1
@@ -86,5 +102,28 @@ for rel in $JOBS; do
     $PY -c "import json,sys; json.dump(dict(status=sys.argv[1], seconds=int(sys.argv[2])), open(sys.argv[3],'w'))" "${status%% |*}" "$secs" "$J/batch_done.json"
   fi
   log "JOB $rel done in ${secs} s: gate $status"
+done
+# 6 NL-27 DDM refresh: finished jobs whose DDM predates $DDM_CODE -> --only ddm + report (queued at the end)
+for rel in $JOBS; do
+  J="$GOLD_NL/$rel"
+  [ -f "$J/batch_done.json" ] || continue
+  ddm_current "$J" && continue
+  stop_check "$rel ddm refresh"
+  bk="$J/_ddm_before_$DDM_CODE"; mkdir -p "$bk/design"
+  for f in ddm_results.json ddm_report.html ddm_viewer_3d.html model_gmnia.py complete_gate.json snl_summary.json batch_done.json .batch_step_ddm; do
+    [ -f "$J/$f" ] && cp -p "$J/$f" "$bk/"
+  done
+  [ -f "$J/design/calc_package.json" ] && cp -p "$J/design/calc_package.json" "$bk/design/"
+  t0=$(date +%s)
+  log "JOB $rel ddm refresh start (DDM predates $DDM_CODE)"
+  $PY -m snl run "$J" --only ddm --parallel "$PARALLEL" --dt 0.01 >> "$J/batch.log" 2>&1
+  rc=$?
+  dt=$(( $(date +%s) - t0 ))
+  log "JOB $rel ddm refresh end rc=$rc (${dt} s)"
+  if [ $rc -eq 0 ]; then mark "$J" ddm "$dt"; fi
+  $PY -m snl report "$J" >> "$J/batch.log" 2>&1
+  status=$($PY -c "import json,sys; g=json.load(open(sys.argv[1])); print(g.get('status'), '|', '; '.join(g.get('reasons') or [])[:300])" "$J/complete_gate.json" 2>/dev/null)
+  $PY -c "import json,sys; d=json.load(open(sys.argv[1])); d.update(status=sys.argv[2], ddm_refresh=sys.argv[3]); json.dump(d, open(sys.argv[1],'w'))" "$J/batch_done.json" "${status%% |*}" "$DDM_CODE rc=$rc"
+  log "JOB $rel ddm refresh done: gate $status"
 done
 log "batch end"
