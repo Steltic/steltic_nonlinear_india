@@ -90,7 +90,7 @@ findings, section 3) are on `review-fix-2026-09`.
 - There is no India pushover 3-D viewer.
 - g is 386.4 vs 386.09 (0.08 %).
 
-## Commits (oldest first; subjects only)
+## Commits (oldest first; subjects only — hashes change when the branch is replayed onto GitHub)
 - USA-SYNC bd8ba3a: snl review + Feedback-tab reasoning box, 0.3.0, adapted for India: IS corpus, no verdict
 - USA-SYNC 402c61a: search reads /healthz, corpus gap, ladder, 0.3.1, adapted for India: IS stems
 - USA-SYNC 41a3e4d: NLRHA viewer paints hinges at the current frame, ported as-is
@@ -100,7 +100,7 @@ findings, section 3) are on `review-fix-2026-09`.
 - USA-SYNC 3629a4b: Collect passes exact lookups whole (EXACT_MAX_CHARS 60k), absent row asked once more, adapted for India
 - NL-1: re-vendor the shared India modules from steltic_india 3ec586a; check_vendored resolves the HR checkout like HR/CFS
 - NL-2: DDM load_plan tests follow the current steltic_india contract; Ex18 USA fixture tests need the USA engine
-- NL-3: IS 18168 in the India collection map; corpus root resolves like steltic_india (env, sibling corpus folder, fallback)
+- NL-3: IS 18168 in the India collection map; corpus root resolves like steltic_india (env, sibling checkout, fallback)
 - NL-4: read the HR package's sections and steel -- built-up BOX columns and per-member grade / fy
 - NL-5: convert the raw replayed elements of an N-mm HR model in the Stage-B bridge (EBF links, trusses, roof springs)
 - NL-6: India basis per direction (V-bar_B, R_x / R_y, Ta) and mass = the HR engine's W
@@ -122,8 +122,14 @@ findings, section 3) are on `review-fix-2026-09`.
 - NL-22: snl collect accepts decimals with trailing zeros (zone II Z = 0.10)
 - NL-23: scripts/run_gold_batch.sh -- resumable India gold NL batch, smallest job first
 - NL-24: DDM deck beams P-Delta (no catenary against the rigid diaphragm); solver ladder, arc-length rescue, SOLVER_FAILURE
+- Docs: NL-24 findings, gold NL status for IN_Ex11 (3 units COMPLETE), DDM re-run instructions, IN_Ex5 fillet decision
 - NL-25: IS 800 B-1.2 member forces interpolated to lambda = 1 exactly
 - NL-26: DDM fibre I-sections with root-fillet fibres -- A, Ix, Zp = IS 808 catalogue (IN_Ex5 transfer gate)
 - NL-27: gold batch re-runs DDM results that predate DDM_CODE (NL-26), refresh pass at the end, STOP_BATCH file
-- NL-28: gold batch honours $GOLD_NL/SKIP_JOBS (jobs offloaded to another machine are never started or DDM-refreshed); NLRHA index package paths use '/' separators (Windows)
-- NL-29: NLRHA India runs the records of BOTH levels in one worker pool (22 tasks; --parallel above 11 is used, no idle workers behind a level's longest record; per-record results unchanged) and logs "[nlrha] record done k/22"; gold batch: STEPS (step subset), NL_REV (marker stamp without .git), set-but-empty RAG_API_URL / INDIA_CORPUS_ROOT stay empty -- for the owner's PC package
+- Docs: NL-25..NL-27, IN_Ex5 fillet decision closed, batch switch to run_repo2 @ aa3009b, CHANGES closes the DDM robustness item
+- NL-28 (Windows): NLRHA index package paths use '/' separators
+- NL-28: gold batch honours $GOLD_NL/SKIP_JOBS (jobs offloaded to another machine are never started or DDM-refreshed)
+- NL-29: NLRHA pools the DBE + MCE records (22 tasks, per-record progress); gold batch STEPS / NL_REV / empty RAG_API_URL -- owner's PC package
+- Corpus: drop references to the private corpus repo; users build their own IS corpus in the Steltic hub
+- CORPUS_FIX_LLM_INSTRUCTIONS.md: the owner's instructions for the corpus fix pass (replaces the placeholder)
+- CORPUS_FIX_LLM_INSTRUCTIONS.md: final version (matches the hub's bundled corpus module: validate probes, optional scripts/*.json, Import fixed corpus tab)
