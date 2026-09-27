@@ -3,6 +3,7 @@ model_gmnia.py -- rebuild a Steltic elastic model as a GMNIA model in openseespy
 
   * every column / beam / brace -> `forceBeamColumn` (or `dispBeamColumn` with --fast), 3-D
     `Corotational` transform, `Lobatto` integration (5 points), FIBRE section from sections_fiber
+    (India, NL-24: horizontal beams inside one rigid diaphragm use `PDelta` -- see deck_beams())
   * members subdivided (default 4 elements/column, 4/beam, 6/brace) so member bows are representable
   * geometric imperfections: whole-building out-of-plumb psi (H/500) in +/-X or +/-Y, member
     out-of-straightness L/1000 (half-sine) in the weak-axis direction of columns and out-of-plane
@@ -23,6 +24,7 @@ Steltic orientation decoding (engine3d):
                               global X for Y-beams; minor release = global Z
 """
 import math
+import os
 import openseespy.opensees as ops
 from .ingest import decode_tag
 from .sections_fiber import FiberSectionBuilder, elastic_props
@@ -96,10 +98,46 @@ class GMNIAModel:
         if m.kind == "col":
             return m.transf if m.transf in (1, 2) else 1
         if m.kind == "beam":
-            return 3
+            return 6 if m.tag in getattr(self, "_deck_beams", ()) else 3
         # brace: out-of-plane vector
         i1, j1, _ = decode_tag(m.n1); i2, j2, _ = decode_tag(m.n2)
         return 4 if j1 == j2 else 5        # X-frame brace -> vecxz (0,1,0) ; Y-frame -> (1,0,0)
+
+    def deck_beams(self) -> set:
+        """NL-24 (India): tags of the horizontal beams whose two end nodes are slaves of the SAME rigid diaphragm (floor /
+        roof beams in the deck plane). The rigid-diaphragm constraint holds their end nodes at a fixed plan distance; with
+        the Corotational transformation the sag of a pinned gravity girder then becomes catenary tension -- an axial
+        restraint the fin-plate connections do not provide and the HR design model (Linear beams, P-Delta columns) and the
+        NL pushover / NLRHA models (the HR transformations) do not have. IN_Ex11 floor NPB700 girders: 1.5 MN tension,
+        first yield at lambda 0.95 and a numerical stop at 0.977 (HR elastic D/C 0.983); IN_Ex11 unitC_gym 17 m roof
+        girder: +335 kN at lambda 1 -> B-1.2 D/C 1.018 against the HR 0.960. Sloped rafters, beams between two
+        diaphragms and every column / brace keep `transf_type` (Corotational). Empty on the USA path."""
+        if not self._india():
+            return set()
+        slave_of = {}
+        for master, slaves in (self.nm.diaphragms or {}).items():
+            for sl in slaves:
+                slave_of[sl] = master
+        out = set()
+        for m in self.nm.members:
+            if m.kind != "beam":
+                continue
+            ma = slave_of.get(m.n1)
+            if ma is None or slave_of.get(m.n2) != ma:
+                continue
+            if abs(self.nm.nodes[m.n1][2] - self.nm.nodes[m.n2][2]) > 1e-6:
+                continue
+            out.add(m.tag)
+        return out
+
+    def deck_beam_transf(self) -> str:
+        """Transformation of the deck beams (tag 6): P-Delta on the India path -- second-order and fully plastic (fibres),
+        no large-displacement catenary against the diaphragm; `transf_type` otherwise. $SNL_DDM_BEAM_TRANSF overrides
+        (e.g. Corotational, for a sensitivity run)."""
+        env = os.environ.get("SNL_DDM_BEAM_TRANSF", "").strip()
+        if env:
+            return env
+        return "PDelta" if self._india() else self.transf_type
 
     def _is_hollow(self, m):
         try:
@@ -144,6 +182,8 @@ class GMNIAModel:
         ops.geomTransf(self.transf_type, 3, 0.0, 0.0, 1.0)
         ops.geomTransf(self.transf_type, 4, 0.0, 1.0, 0.0)
         ops.geomTransf(self.transf_type, 5, 1.0, 0.0, 0.0)
+        self._deck_beams = self.deck_beams()
+        ops.geomTransf(self.deck_beam_transf(), 6, 0.0, 0.0, 1.0)
         ops.uniaxialMaterial("Elastic", 1, K_TRANS)
         ops.uniaxialMaterial("Elastic", 2, K_ROT)
         self.builder = FiberSectionBuilder(ops, Fy=self.Fy, hardening=self.hardening,

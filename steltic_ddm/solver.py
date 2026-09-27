@@ -4,8 +4,10 @@ solver.py -- load-factor sweep to collapse (proportional loading), peak detectio
 sweep(model, combo, pres, ...) applies the factored combination at lambda = 1, probes the elastic
 response, picks the control DOF (largest displacement -- roof drift for lateral cases, a beam
 mid-span or column shortening for gravity cases), then drives the structure with adaptive
-DisplacementControl: Newton -> ModifiedNewton(-initial) -> KrylovNewton fallbacks, step halving on
-failure, step growth on recovery. lambda_u is the peak load factor; the run continues into the
+DisplacementControl: Newton, then (NL-24) an algorithm ladder at the same step -- KrylovNewton, NewtonLineSearch,
+ModifiedNewton(-initial) with up to 200 iterations, then relaxed tolerances 1e-5 / 1e-4 -- step halving on failure,
+step growth on recovery; when the displacement step is exhausted near the limit, arc-length control
+(MinUnbalDispNorm, -det) takes over. A numerical stop with the structure still stiff is SOLVER_FAILURE. lambda_u is the peak load factor; the run continues into the
 post-peak branch (to `post_peak` * lambda_u) to characterise ductility for the phi_s classification.
 
 Mechanism data recorded at the peak: per-integration-point yield ratio (max fibre strain / eps_y,
@@ -15,6 +17,43 @@ flags (compression + lateral mid-point offset beyond L/200), storey drifts.
 import math, time
 import openseespy.opensees as ops
 from .loads import lateral_direction
+
+
+LADDER = (("KrylovNewton", (), 1e-6, 40), ("NewtonLineSearch", ("-type", "Bisection"), 1e-6, 60),
+          ("ModifiedNewton", ("-initial",), 1e-6, 200), ("KrylovNewton", (), 1e-5, 80),
+          ("Newton", (), 1e-4, 100))
+
+
+def _ladder():
+    """NL-24: Newton failed -> KrylovNewton, NewtonLineSearch, ModifiedNewton (initial tangent), then the same with a
+    relaxed displacement-increment tolerance (1e-5, 1e-4: mm on the India N-mm model), same step. Returns (ok, rung)."""
+    ok = -1; used = None
+    for alg, extra, tol, iters in LADDER:
+        ops.algorithm(alg, *extra); ops.test("NormDispIncr", tol, iters, 0)
+        ok = ops.analyze(1)
+        if ok == 0:
+            used = "%s@%g" % (alg, tol); break
+    ops.algorithm("Newton"); ops.test("NormDispIncr", 1e-6, 25, 0)
+    return ok, used
+
+
+def _arc_integrator(dl):
+    """Minimum unbalanced displacement norm control (arc-length family; the load increment changes sign at a limit point
+    through the stiffness determinant), first increment `dl`, bounded to [dl/64, 2 dl]."""
+    ops.integrator("MinUnbalDispNorm", dl, 1, dl / 64.0, 2.0 * dl, "-det")
+
+
+def _arc_rescue(dl_ref):
+    """NL-24: from the last converged state try arc-length control at dl_ref, /4, /16 (Newton, then the ladder).
+    Returns (ok, dl)."""
+    for dl in (dl_ref, dl_ref / 4.0, dl_ref / 16.0):
+        _arc_integrator(dl)
+        if ops.analyze(1) == 0:
+            return 0, dl
+        ok, _ = _ladder()
+        if ok == 0:
+            return 0, dl
+    return -1, dl_ref / 16.0
 
 
 def _solver_settings(tol=1e-6, iters=25):
@@ -130,9 +169,27 @@ def storey_drifts(model, dirn):
 LIMIT_STATUSES = ("LIMIT_POINT", "PLASTIC_PLATEAU", "DUCTILITY_CAP")
 
 
-def limit_status(hist, hi_at_max, lam_max, plateau=False, capped=False):
+SOLVER_FAILURE_TERMS = ("step_exhausted", "too_many_failures")
+GENUINE_STOP_TANGENT = 0.10        # NL-24: a numerical stop with the tangent below 10 % of the elastic one is at a limit
+
+
+def stop_tangent_ratio(hist, k_el, n=3):
+    """Tangent stiffness (d lambda / |d u|) over the last `n` converged steps as a fraction of the elastic one; None when
+    there are too few steps."""
+    if len(hist) < n + 1 or not k_el:
+        return None
+    (l0, d0), (l1, d1) = hist[-n - 1], hist[-1]
+    return (l1 - l0) / max(abs(d1 - d0), 1e-12) / k_el
+
+
+def limit_status(hist, hi_at_max, lam_max, plateau=False, capped=False, termination=None, tangent_ratio=None):
     """(status, n_descending): LIMIT_POINT needs >= 2 converged steps after the peak with lambda below it and the last
-    step below it (negative tangent); a sweep still rising when it stopped is NO_LIMIT_POINT (WP4.9 / NLEX-X-06)."""
+    step below it (negative tangent); a sweep still rising when it stopped is NO_LIMIT_POINT (WP4.9 / NLEX-X-06).
+    NL-24: a sweep stopped by the equilibrium iterations (step exhausted / too many failures, after the algorithm ladder,
+    the tolerance fallback, every step cut and the arc-length rescue) is SOLVER_FAILURE -- a numerical stop, never a
+    structural result -- unless the structure was at a genuine limit when it stopped: tangent stiffness below
+    GENUINE_STOP_TANGENT x elastic (a developed mechanism / plateau the step rule had not yet confirmed), which stays
+    NO_LIMIT_POINT (lambda_u not reported, lambda_end = the limit reached)."""
     after = [lm for lm, _ in hist[hi_at_max + 1:]] if hi_at_max else []
     n_desc = sum(1 for lm in after if lm < lam_max * (1 - 1e-4))
     if plateau:
@@ -141,6 +198,10 @@ def limit_status(hist, hi_at_max, lam_max, plateau=False, capped=False):
         return "LIMIT_POINT", n_desc
     if capped:
         return "DUCTILITY_CAP", n_desc
+    if termination in SOLVER_FAILURE_TERMS and not (tangent_ratio is not None and tangent_ratio < GENUINE_STOP_TANGENT):
+        # NL-24: the equilibrium iterations failed while the structure still had stiffness -- a NUMERICAL stop, not a
+        # structural limit: never reported as a capacity or as the structure "not reaching" a load; the gate blocks
+        return "SOLVER_FAILURE", n_desc
     return "NO_LIMIT_POINT", n_desc
 
 
@@ -215,31 +276,55 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     snap = dict(yield_ratio={}, braces={}, drifts=None, disp=None, step=0)
     frames = []                                   # viewer frames every `frame_every` steps (+ the peak)
     disp_hist = {}                                # hist index -> master displacements (cheap; lets the peak frame be exact)
-    fails = 0; consecutive_fail = 0
+    fails = 0; consecutive_fail = 0; ladder_used = {}
+    mode = "disp"; dl0 = dl = None                # NL-24: "arc" after the arc-length rescue
     log = []; plateau = False; term = "max_steps"; capped = False; forces_at_1 = None
     for step in range(1, max_steps + 1):
         ok = ops.analyze(1)
         if ok != 0:
             consecutive_fail += 1; fails += 1
-            # cheap fallbacks first (failed steps are where the time goes): Krylov, then halve the step
-            ops.algorithm("KrylovNewton"); ops.test("NormDispIncr", 1e-5, 30, 0)
-            ok = ops.analyze(1)
-            ops.algorithm("Newton"); ops.test("NormDispIncr", 1e-6, 25, 0)
-            if ok != 0:
+            # NL-24: algorithm ladder before any step cut (failed steps are where the time goes, and a premature
+            # "step size exhausted" was reported as NO_LIMIT_POINT below lambda 1 on a girder that was only yielding)
+            ok, used = _ladder()
+            if ok == 0:
+                ladder_used[used] = ladder_used.get(used, 0) + 1
+            if ok != 0 and mode == "disp":
                 du *= 0.5
-                if abs(du) < abs(du0) / 64:
-                    log.append("step %d: step size exhausted -- stopping" % step); term = "step_exhausted"; break
-                ops.integrator("DisplacementControl", cnode, cdof, du)
-                log.append("step %d: halved step to %.3g" % (step, du))
+                if abs(du) >= abs(du0) / 64:
+                    ops.integrator("DisplacementControl", cnode, cdof, du)
+                    log.append("step %d: halved step to %.3g" % (step, du))
+                    if consecutive_fail > 12:
+                        log.append("too many failures"); term = "too_many_failures"; break
+                    continue
+                # NL-24: displacement control exhausted near the limit -> arc-length rescue (the control DOF may not be
+                # the one that governs: another member reaching its limit, or a snap-through the DOF cannot follow)
+                dlast = abs(hist[-1][0] - hist[-2][0]) if len(hist) >= 2 else dlam
+                ok, dl = _arc_rescue(max(dlast, dlam / 64.0))
+                if ok != 0:
+                    log.append("step %d: step size exhausted (displacement control, algorithm ladder and arc-length "
+                               "rescue) -- stopping" % step); term = "step_exhausted"; break
+                mode, dl0 = "arc", max(dlast, dlam / 64.0)
+                ladder_used["MinUnbalDispNorm"] = ladder_used.get("MinUnbalDispNorm", 0) + 1
+                log.append("step %d: displacement control exhausted -- switched to arc-length control "
+                           "(MinUnbalDispNorm, dlambda %.3g)" % (step, dl))
+            elif ok != 0:
+                dl *= 0.5
+                if dl < dl0 / 64:
+                    log.append("step %d: arc-length step exhausted -- stopping" % step); term = "step_exhausted"; break
+                _arc_integrator(dl)
+                log.append("step %d: halved arc-length step to dlambda %.3g" % (step, dl))
                 if consecutive_fail > 12:
                     log.append("too many failures"); term = "too_many_failures"; break
                 continue
         if step_at_max and step - step_at_max > post_peak_steps:
             log.append("post-peak budget (%d steps) used at step %d" % (post_peak_steps, step)); term = "post_peak_budget"; break
         consecutive_fail = 0
-        if abs(du) < abs(du0):
+        if mode == "disp" and abs(du) < abs(du0):
             du = min(abs(du) * 1.5, abs(du0)) * (1 if du0 > 0 else -1)
             ops.integrator("DisplacementControl", cnode, cdof, du)
+        elif mode == "arc" and dl < dl0:
+            dl = min(dl * 1.5, dl0)
+            _arc_integrator(dl)
         lam = ops.getLoadFactor(1); d = ops.nodeDisp(cnode, cdof)
         hist.append((lam, d))
         hi = len(hist) - 1                        # index of this converged step in hist (failed steps are not counted)
@@ -309,13 +394,16 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
         if abs(d) >= 1.25 * abs(d_at_max):
             lam_125 = lam; break
     # ---- WP4.9 limit-point classification
-    status, n_desc = limit_status(hist, hi_at_max, lam_max, plateau, capped)
+    k_el = lam_probe / max(abs(d_probe), 1e-12)
+    t_ratio = stop_tangent_ratio(hist, k_el)
+    status, n_desc = limit_status(hist, hi_at_max, lam_max, plateau, capped, termination=term, tangent_ratio=t_ratio)
     tangent_at_end = None
     if len(hist) >= 3:
         (l1, d1), (l2, d2) = hist[-2], hist[-1]
         tangent_at_end = (l2 - l1) / (abs(d2 - d1) or 1e-12)
     lam_reported = lam_max if status in LIMIT_STATUSES else None
-    return dict(label=label, lambda_u=lam_reported, lambda_end=lam_max, status=status, termination=term,
+    return dict(label=label, lambda_u=lam_reported, lambda_end=lam_max, status=status, termination=term, ladder_used=ladder_used,
+                control_mode=mode, stop_tangent_ratio=(round(t_ratio, 4) if t_ratio is not None else None),
                 n_descending_steps=n_desc, tangent_at_end=tangent_at_end, forces_at_1=forces_at_1,
                 step_at_max=step_at_max, d_at_max=d_at_max,
                 first_yield=first_yield, lam_at_1p25d=lam_125, hist=hist, control=(cnode, cdof),

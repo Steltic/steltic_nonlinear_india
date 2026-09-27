@@ -1241,7 +1241,7 @@ def artefact_gate(job_dir: str | None) -> dict:
       6 no spurious modes; participation sums <= 1;
       7 DDM: results exist, gravity transfer gate passed, every reported lambda_u is a detected limit point /
         plateau / ductility cap (NO_LIMIT_POINT runs are excluded; a gravity or wind NO_LIMIT_POINT below lambda 1
-        blocks); IS 800 B-1.2 section check at lambda = 1 present -- a B-1.2 failure gives
+        blocks; NL-24: a SOLVER_FAILURE -- numerical stop with the structure still stiff -- blocks, any kind); IS 800 B-1.2 section check at lambda = 1 present -- a B-1.2 failure gives
         complete_with_capacity_shortfall;
       8 summaries (snl_summary.json) are FRESH: the package hashes they recorded match the files on disk;
       9 validate_nl_plan has no ERROR;
@@ -1317,6 +1317,11 @@ def artefact_gate(job_dir: str | None) -> dict:
             stt = r.get("status")
             if stt is None:
                 reasons.append("DDM run %s has no limit-point status (pre-WP4.9 results)" % r.get("label")); continue
+            if stt == "SOLVER_FAILURE":                       # NL-24: a numerical stop blocks honestly, any kind
+                reasons.append("DDM %s: SOLVER FAILURE (equilibrium iterations failed after the algorithm ladder and all "
+                               "step cuts and the arc-length rescue; %s) at lambda %.3f -- a numerical stop, not a structural limit" % (
+                                   r.get("label"), r.get("termination"), r.get("lambda_end") or 0))
+                continue
             if stt == "NO_LIMIT_POINT" and r.get("kind") in ("gravity", "wind") and (r.get("lambda_end") or 0) < 1.0:
                 reasons.append("DDM %s: NO_LIMIT_POINT and terminated below lambda 1 (%.3f)" % (r.get("label"), r.get("lambda_end") or 0))
         o_ = ddm.get("options") or {}
