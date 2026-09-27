@@ -17,6 +17,9 @@
 # current DDM_CODE is stale: an unfinished job re-runs its DDM in the main loop; a finished job (batch_done.json)
 # re-runs `--only ddm` + report in the refresh pass at the END of the batch (old DDM kept in _ddm_before_<code>/).
 # Clean stop: `touch $GOLD_NL/STOP_BATCH` -> the batch exits before its next step (a running step completes).
+# NL-28: $GOLD_NL/SKIP_JOBS lists job folders (one per line, as in JOBS_DEFAULT; '#' comments) that this batch must not
+# run -- e.g. jobs offloaded to another machine. Read before every job and in the DDM refresh pass (edits take effect
+# at the next job without a restart).
 set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOLD_NL="${GOLD_NL:-/home/claude/nl/gold_nl}"
@@ -30,6 +33,7 @@ export MPLBACKEND=Agg
 PY="${PY:-python3}"
 DDM_CODE="NL-26"            # bump when a commit changes DDM results; stale DDM markers are re-run
 STOP="$GOLD_NL/STOP_BATCH"
+SKIPF="$GOLD_NL/SKIP_JOBS"
 
 # smallest first (elements in the HR model_opensees.py)
 JOBS_DEFAULT="IN_Ex11_SMF_3levels_Zplan_school_Chandigarh/unitC_gym
@@ -54,6 +58,7 @@ IN_Ex9_EBF_12levels_Tplan_Guwahati"
 JOBS="${ONLY_JOBS:-$JOBS_DEFAULT}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S %z')] $*" | tee -a "$LOG"; }
+skipped() { [ -f "$SKIPF" ] && sed 's/#.*//; s/[[:space:]]*$//; s/^[[:space:]]*//' "$SKIPF" | grep -qxF "$1"; }
 stop_check() { if [ -f "$STOP" ]; then log "STOP_BATCH found -- batch stopped cleanly before: $*"; exit 0; fi; }
 ddm_current() { [ -f "$1/.batch_step_ddm" ] && grep -q "\"ddm_code\": \"$DDM_CODE\"" "$1/.batch_step_ddm"; }
 mark() {   # mark <job> <step> <seconds>
@@ -66,6 +71,7 @@ log "batch start: repo $REPO @ $(git -C "$REPO" rev-parse --short HEAD 2>/dev/nu
 for rel in $JOBS; do
   J="$GOLD_NL/$rel"
   name="${rel//\//__}"
+  if skipped "$rel"; then log "SKIP $rel: listed in $SKIPF (not run here)"; continue; fi
   if [ ! -f "$J/cfg.py" ]; then log "SKIP $rel: no job folder at $J"; continue; fi
   if [ -f "$J/batch_done.json" ]; then log "SKIP $rel: already done ($(cat "$J/batch_done.json" | tr -d '\n' | cut -c1-120))$(ddm_current "$J" || echo " -- DDM refresh queued at the end")"; continue; fi
   t_job=$(date +%s)
@@ -106,6 +112,7 @@ done
 # 6 NL-27 DDM refresh: finished jobs whose DDM predates $DDM_CODE -> --only ddm + report (queued at the end)
 for rel in $JOBS; do
   J="$GOLD_NL/$rel"
+  skipped "$rel" && continue
   [ -f "$J/batch_done.json" ] || continue
   ddm_current "$J" && continue
   stop_check "$rel ddm refresh"

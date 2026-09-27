@@ -68,3 +68,16 @@ def test_stop_file_stops_before_the_next_step(tmp_path):
     g.joinpath("STOP_BATCH").write_text("")
     calls, log = _run(tmp_path, ["A"])
     assert not [c for c in calls if " run " in c] and "stopped cleanly" in log
+
+
+def test_skip_jobs_file_is_never_started(tmp_path):
+    """NL-28: jobs listed in $GOLD_NL/SKIP_JOBS (offloaded to the owner's PC) are neither run nor DDM-refreshed."""
+    g = tmp_path / "gold"
+    _job(g, "P_pc", ["pushover"])                                    # unfinished -> would run nlrha + ddm
+    _job(g, "Q_pc_done", ["pushover", "nlrha", "ddm"], done=True)    # stale DDM -> would be refreshed
+    _job(g, "R_here", ["pushover", "nlrha"])
+    g.joinpath("SKIP_JOBS").write_text("# offloaded\nP_pc\n  Q_pc_done   # also\n")
+    calls, log = _run(tmp_path, ["P_pc", "Q_pc_done", "R_here"])
+    runs = [c for c in calls if " run " in c]
+    assert runs and all(c.split()[3].endswith("R_here") for c in runs)
+    assert log.count("listed in") == 2
