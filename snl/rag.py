@@ -2,8 +2,9 @@
 
 Same wire contract as HR Steel's search tool: POST RAG_API_URL {"query", "collection", "top_k", "clause",
 "chapter"} -> {"results": [{"text", "source", "section", "title", "page", "score", "authoritative"}], "note"}.
-India fork: RAG_API_URL is the IS corpus bridge (engineering_rag_india's rag_server.py, started by the hub for
-the run as {server.engineering_rag_india}/query; standalone, the corpus's own scripts/serve_http.py). Only IS
+India fork: RAG_API_URL is the IS corpus bridge (the hub's IS corpus module, rag_server.py, started by the hub for
+the run and passed as RAG_API_URL; standalone, any server with the same wire contract). The corpus is the user's own,
+built in the hub from their licensed BIS PDFs. Only IS
 documents are searched (owner ruling D3: IS standards only, no foreign design basis); the collection names are
 the engineering_standards_IS* names of snl/india_collections.py. Never point this at the US corpus.
 Empty RAG_API_URL -> search() says so and the review goes on from the model's own knowledge, flagged.
@@ -133,7 +134,7 @@ def describe_corpus(cm: dict) -> str:
     pres = ", ".join("%s (%s)" % (TITLES[k], cm["present"][k]) for k in DOCUMENTS if k in cm["present"]) or "none of the IS documents"
     absn = ", ".join("%s (stem %s)" % (TITLES[k], STEMS[k]) for k in cm["absent"])
     other = ", ".join(cm["other"][:12]) + (" ..." if len(cm["other"]) > 12 else "")
-    return ("present: " + pres + ("; ABSENT: " + absn + " -- install / update the IS corpus module (engineering_rag_india) or convert it on its Convert tab, then Rebuild index" if absn else "")
+    return ("present: " + pres + ("; ABSENT: " + absn + " -- convert it in the hub's IS corpus module (Standards / Convert), then Rebuild index" if absn else "")
             + ("; also indexed: " + other if other else ""))
 
 
@@ -182,7 +183,7 @@ def _shape(data: dict, top_k: int, coll: str, max_chars: int = EXACT_MAX_CHARS) 
 
 # ---------------------------------------------------------------- the search, with its ladder
 # ---------------------------------------------------------------- the retrieval policy
-# the querying policy of the IS corpus bridge (engineering_rag_india rag_server), the one HR Steel (steltic_india) follows: ONE
+# the querying policy of the IS corpus bridge (the hub's IS corpus module rag_server), the one HR Steel (steltic_india) follows: ONE
 # document, an EXACT id when the provision is known, full text only to navigate to an id. The model is
 # told to write calls that way; because it will still type a sentence some of the time, the tool puts
 # every call into policy form itself and records the form it sent.

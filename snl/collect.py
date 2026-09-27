@@ -795,7 +795,7 @@ def run(job: str, out_name: str = OUT_NAME, emit: Emitter | None = None, conn: d
             em.log("standards corpus: %s absent on this PC -- a group whose table lives there cannot be collected"
                    % ", ".join(rag.TITLES[k] for k in cm["absent"]))
     else:
-        em.event(type="error", text="no standards server (RAG_API_URL is empty): nothing can be collected -- start the IS corpus module (engineering_rag_india) from the hub's Modules page")
+        em.event(type="error", text="no standards server (RAG_API_URL is empty): nothing can be collected -- start the hub's IS corpus module from the Modules page")
         return {"ok": False, "verified": False, "path": "", "missing": facts["needed"], "searches": [], "usage": {}}
 
     repeats: dict = {}                                       # normalised search -> times it was sent

@@ -6,7 +6,7 @@ Inputs are what a finished run left in the job folder (snl_summary.json, snl_run
 pushover/pushover_package.json, ddm_results.json, design/calc_package.json, seismic_calc.json, the design-criteria
 draft, any feedback loops) -- gathered here into one bounded evidence document, every number from a file, nothing
 invented. The model (the hub's connection, via STELTIC_LLM_*) grounds the clauses it cites through the IS corpus
-(snl/rag.py, RAG_API_URL -> engineering_rag_india) and writes review.md / review.html / review_transcript.json
+(snl/rag.py, RAG_API_URL -> the hub's IS corpus module) and writes review.md / review.html / review_transcript.json
 beside the analyses. India (D3 / D7): IS documents only, and no pass/fail verdict -- IS 1893 (Part 1):2016
 provides no acceptance criteria for nonlinear analysis; results are for information.
 
@@ -295,7 +295,7 @@ def run(job: str, focus: str = "", use_standards: bool = True, max_searches: int
             em.event(type="warning", text="standards server: %s -- searches may fail; clauses then come from memory, marked UNVERIFIED" % st["note"])
         em.event(type="milestone", text="standards corpus -- " + corpus_line)
         if cm.get("known") and cm.get("absent"):
-            em.log("standards corpus: %s absent on this PC -- the model is told not to search %s; install / update the IS corpus module (engineering_rag_india) or convert on its Convert tab (stems %s), then Rebuild index"
+            em.log("standards corpus: %s absent on this PC -- the model is told not to search %s; convert them in the hub's IS corpus module (Standards / Convert; stems %s), then Rebuild index"
                    % (", ".join(rag.TITLES[k] for k in cm["absent"]), "them" if len(cm["absent"]) > 1 else "it", ", ".join(rag.STEMS[k] for k in cm["absent"])))
     spent = {"n": 0}                                             # searches that reached a document the corpus holds
 

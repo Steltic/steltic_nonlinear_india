@@ -106,7 +106,7 @@ def test_no_standards_server_collects_nothing_and_says_so():
         r = collect.run(job, emit=collect.Emitter(buf))
         assert not r["ok"] and r["missing"] == ALL
         assert not os.path.exists(os.path.join(job, collect.OUT_NAME))            # the gate stays closed
-        assert any(e["type"] == "error" and "RAG_API_URL" in e["text"] and "engineering_rag_india" in e["text"] for e in _events(buf))
+        assert any(e["type"] == "error" and "RAG_API_URL" in e["text"] and "IS corpus module" in e["text"] for e in _events(buf))
     finally:
         os.environ.pop("STELTIC_LLM_MODEL", None)
 

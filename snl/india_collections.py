@@ -1,7 +1,8 @@
 """Map agent RAG collection names → India corpus document stems.
 
-Corpus root (NL-3): $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling engineering_rag_india checkout next
-to this repo, else the historical /workspace/engineering_rag_india -- the same resolution as steltic_india
+Corpus root (NL-3): $INDIA_CORPUS_ROOT (your IS corpus, built in the Steltic hub from your own licensed BIS PDFs --
+see CORPUS_FIX_LLM_INSTRUCTIONS.md), else a sibling corpus folder next to this repo, else the historical /workspace
+path -- the same resolution as steltic_india
 (india_omega_is18168.corpus_root, L-08). Stem files live under documents/standards/<STEM>/.
 Hosted rag_server may register collections as engineering_standards_IS*; this map is the
 canonical translation for local aliases, escalation, and docs. IS 18168:2023 (owner ruling D2) is in the map.
@@ -95,8 +96,8 @@ def _looks_like_corpus(path: str) -> bool:
 
 
 def corpus_root(root: str | None = None) -> str:
-    """Explicit root, else $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling engineering_rag_india checkout
-    (next to this repo or one level up), else the historical /workspace path (HR L-08 pattern)."""
+    """Explicit root, else $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling corpus folder named after the
+    hub's IS corpus module (next to this repo or one level up), else the historical /workspace path (HR L-08)."""
     env = root or os.environ.get("INDIA_CORPUS_ROOT") or os.environ.get("ENGINEERING_RAG_INDIA")
     if env:
         return env

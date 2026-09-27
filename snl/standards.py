@@ -1,6 +1,6 @@
 """standards.py -- what every SNL agent shares when it asks the IS corpus: the retrieval policy and the tool.
 
-The policy is the IS corpus bridge's (engineering_rag_india rag_server: `type`, `query`, `clause`,
+The policy is the IS corpus bridge's (the hub's IS corpus module rag_server: `type`, `query`, `clause`,
 `context_neighbors`), the one HR Steel's (steltic_india) search tool follows: ONE IS document per call, an
 EXACT id when the provision is known, full text only to navigate to an id. The tool applies it to whatever
 the model sends (snl/rag.py policy_plan) and records the form it sent. `review` writes the engineer's review
@@ -12,7 +12,7 @@ from __future__ import annotations
 from . import rag
 
 RETRIEVAL_POLICY = """===== RETRIEVAL POLICY (mandatory -- how every search_engineering_standards call is written) =====
-This is the query policy the IS corpus bridge is built for (engineering_rag_india's rag_server: `type`,
+This is the query policy the IS corpus bridge is built for (the hub's IS corpus module rag_server: `type`,
 `query`, `clause`, `context_neighbors`), the same policy HR Steel's (steltic_india) search tool follows. The
 tool applies it to whatever you send and records the form it sent; write it that way yourself.
 

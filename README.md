@@ -10,7 +10,7 @@ India fork of [`Steltic/steltic_nonlinear`](https://github.com/Steltic/steltic_n
 | **DDM** | `steltic_ddm/` | Combinations from **steltic_india `load_plan`** (IS 875 / IS 1893 RAG), not hardcoded ASCE 7 §2.3 | `ddm_*` |
 | **Comparison** | `snl/compare.py` | Same three-analysis + viewers architecture | `four_analyses.html`, hub |
 
-Corpus: **`/workspace/engineering_rag_india`** only. Gates: `nlrha/india_authority.py`, `contract/INDIA_START.md`.
+Corpus: **your IS corpus only** (built in the Steltic hub from your own licensed BIS PDFs; see [IS corpus](#is-corpus-standards-grounding)). Gates: `nlrha/india_authority.py`, `contract/INDIA_START.md`.
 
 > **Prototype. Not for construction.** ASCE §16.1.2 drift relief is **found:false** on this fork (feedback drift loop ineligible unless `nl_plan.drift_relief_analogue` is retrieved). Every result must be sealed by a licensed PE.
 
@@ -36,23 +36,39 @@ python -m snl inspect examples/Ex22_SMF                 # USA regression fixture
 python -m snl report  examples/Ex22_SMF                 # rebuild the four-analyses sheet from the shipped outputs (no analysis)
 ```
 
-## Engineering-standards RAG (required for India)
+## IS corpus (standards grounding)
 
-Point every retrieval at **`/workspace/engineering_rag_india`** (never USA `/workspace/engineering_rag`).
-`nl_plan` / acceptance / hazard gates live in `nlrha/india_authority.py` and `contract/INDIA_START.md`.
-DDM combinations come from the HR package `cfg['load_plan']` (IS 875 + IS 1893 LIVE RAG).
+Collect, Review and Revise ground every IS value and clause in **your IS corpus, built in the Steltic hub from your own
+licensed BIS PDFs** (see [`CORPUS_FIX_LLM_INSTRUCTIONS.md`](CORPUS_FIX_LLM_INSTRUCTIONS.md)). BIS standards are
+copyrighted: no corpus is published with Steltic, and each user builds their own. Recommended workflow:
 
-Local search / QFM JSON plans:
+1. In the Steltic hub, convert your licensed BIS PDFs (first pass, Docling): **Standards** / **Convert**, then
+   **Rebuild index** and **Validate**.
+2. Zip that first-pass corpus with your PDFs and `CORPUS_FIX_LLM_INSTRUCTIONS.md`, and give them to a frontier LLM
+   agent with code execution (the smarter the better). It fixes OCR, tables, figures and metadata, and returns a
+   fixed corpus.
+3. Replace the hub's corpus with it, then **Rebuild index** and **Validate**.
+4. Point the engines at it: the hub sets `RAG_API_URL` (and `INDIA_CORPUS_ROOT`) for every engine it starts;
+   standalone, set them yourself:
 
 ```bash
-cd /workspace/engineering_rag_india
-export PYTHONPATH=scripts
-.venv/bin/python scripts/search.py exact_section 7.7.4 --doc IS_1893_Part_1_2016 --limit 2
-.venv/bin/python scripts/search.py fts "Seismic Zone Factor" --doc IS_1893_Part_1_2016 --limit 2
-.venv/bin/python scripts/search.py exact_section 5.4 --doc IS_800_2007 --limit 1
+export RAG_API_URL=http://127.0.0.1:<port>/query      # the hub's IS corpus server (POST /query, GET /healthz)
+export INDIA_CORPUS_ROOT=/path/to/your/is_corpus       # the corpus folder (documents/, indexes/, scripts/)
 ```
 
-Set `RAG_API_URL` / `RAG_API_TOKEN` (and optionally `RAG_ALIASES_FILE=/workspace/engineering_rag_india/indexes/aliases.json`) to the India corpus server.
+**Without a corpus** the analyses still run (pushover, NLRHA and DDM read the HR package), but every standards
+retrieval comes back `found: false`, and no gate turns a miss into a value. `snl collect` cannot read the IS values,
+so `snl run` falls back to the repository's `pushover/hinge_params.json` and the COMPLETE gate refuses (IS values not
+collected; hinge parameters without collected values or an EOR record stay UNVERIFIED). `nl_plan` rows stay
+found:false and the value used must be an EOR record (value, source, cite); the Review and the reports mark every
+clause they cite UNVERIFIED. The results remain for information only.
+
+### Retrieval details
+
+`nl_plan` / acceptance / hazard gates live in `nlrha/india_authority.py` and `contract/INDIA_START.md`.
+DDM combinations come from the HR package `cfg['load_plan']` (IS 875 + IS 1893 LIVE RAG).
+Set `RAG_API_URL` / `RAG_API_TOKEN` (and optionally `RAG_ALIASES_FILE`, default
+`$INDIA_CORPUS_ROOT/indexes/aliases.json`) to your IS corpus server; never a USA (ASCE / AISC) corpus.
 
 ## Command line
 
@@ -104,7 +120,7 @@ retrieval log. Written as `design_criteria_16_1_4.docx` (for mark-up; no python-
 ## Collect specification values (before Run)
 
 `python -m snl collect <job>` — the **Collect specification values** button on the hub's Run tab — reads the IS
-values the analyses rely on out of the IS corpus (`RAG_API_URL`, `engineering_rag_india`) **before** the run, and
+values the analyses rely on out of the IS corpus (`RAG_API_URL`) **before** the run, and
 writes `hinge_params_collected.json`; `snl run` then uses that file as `--params` by default, and the hub keeps
 *Run analyses* closed until it exists. What an India NL run legitimately takes from the standards (D3 / D6 / D7):
 
@@ -143,7 +159,7 @@ basis (D3). `snl/review.py` gathers the evidence from the files in the job folde
 `ddm_results.json`, `design/calc_package.json`, `seismic_calc.json`, `load_plan.json`, the criteria draft, the
 COMPLETE gate's disclosures, any feedback loops) into one bounded document — every number from a file, nothing
 invented — and the model may call one tool, `search_engineering_standards`, which posts to `RAG_API_URL` (in the
-hub: the IS corpus bridge of `engineering_rag_india`, started for the run) with the `engineering_standards_IS*`
+hub: the hub's IS corpus module, started for the run) with the `engineering_standards_IS*`
 collections (IS 1893, IS 800, IS 18168, IS 2062, IS 808, IS 875), so the clauses it cites are read from the corpus
 and cited with their page; a clause it could not find is marked UNVERIFIED. Outputs: `review.md`, `review.html`,
 `review_transcript.json` (the evidence and every passage read).
@@ -161,7 +177,7 @@ The search carries the retrieval skill HR Steel's tool has (`snl/rag.py`), so a 
 for the model to interpret. Before the first search the server's `/healthz` says which documents the corpus on
 this PC actually holds; that list goes into the model's instructions (*DOCUMENTS IN THE CORPUS — present … ;
 ABSENT …*) and into the run log, and a search for an absent document is answered at once as a **corpus gap**
-(install / update the IS corpus module, `engineering_rag_india`, or convert the document on its Convert tab under its
+(convert the document in the hub's IS corpus module (Standards / Convert) under its
 canonical stem — `IS_1893_Part_1_2016`, `IS_800_2007`, `IS_18168_2023` … — then Rebuild index), is not counted
 against the budget, and makes one wide search across the IS documents that are present instead. A miss climbs a ladder before it may be a miss — as asked; without the
 clause / chapter filter; the id as an exact lookup; any IS document — and the result says which rung and which

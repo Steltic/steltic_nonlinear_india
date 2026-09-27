@@ -5,7 +5,7 @@ ASCE 7-22 Ch.16 NLRHA + DDM). On this fork:
 
   * Design packages come from **steltic_india** (IS 800 / IS 808 / load_plan), not
     AISC-only forever. Point STELTIC_ENGINE_DIR at steltic_india/steel_engine.
-  * Corpus: /workspace/engineering_rag_india only (stems IS_1893_Part_1_2016,
+  * Corpus: the user's IS corpus only, built in the Steltic hub from licensed BIS PDFs (stems IS_1893_Part_1_2016,
     IS_800_2007, IS_875_Part_* …). Never the USA engineering_rag.
   * ASCE 7 Ch.16 numeric rules in ch16_params.json are **scaffolding only** —
     not India authority. Job-level cfg['nl_plan'] (or job/nl_plan.json) must carry
@@ -31,11 +31,11 @@ import os
 from typing import Any
 
 JURISDICTION = "india"
-try:                                             # NL-3: $INDIA_CORPUS_ROOT, sibling checkout, else /workspace
+try:                                             # NL-3: $INDIA_CORPUS_ROOT, sibling corpus folder, else /workspace
     from snl.india_collections import corpus_root as _corpus_root
     CORPUS_ROOT = _corpus_root()
 except Exception:                                # pragma: no cover - snl always importable in this repo
-    CORPUS_ROOT = "/workspace/engineering_rag_india"
+    CORPUS_ROOT = "/workspace/engineering_rag_india"   # historical builder-box path (snl.india_collections)
 PRIMARY_STEM = "IS_1893_Part_1_2016"
 DESIGN_STEM = "IS_800_2007"
 

@@ -9,7 +9,7 @@ NOTE (integration, WP1.14): `sa_over_g` delegates to the vendored shared `india_
 (snl/vendor_steltic_india, byte-identical to steltic_india; scripts/check_vendored.py guards drift --
 do not fork india_seismic here).
 
-Built only from LIVE RAG / indexed excerpts under engineering_rag_india
+Built only from LIVE RAG / indexed excerpts of the IS corpus
 (stem IS_1893_Part_1_2016). Does NOT call USGS. USA site_hazard.build_site_hazard
 remains available as ASCE scaffolding for regression; on this fork India jobs must
 prefer build_india_site_hazard / cfg seismic fields.

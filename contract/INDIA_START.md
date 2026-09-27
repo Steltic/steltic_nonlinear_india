@@ -4,7 +4,8 @@ You take a finished **steltic_india** HR design package and run the three nonlin
 (pushover scaffolding · IS 1893-oriented NLRHA · DDM GMNIA), then the four-analyses comparison.
 
 > **Not for construction.** Every result must be checked and sealed by a licensed PE.
-> India corpus only: `/workspace/engineering_rag_india`. Never invent ASCE→IS mappings;
+> India corpus only: your IS corpus, built in the Steltic hub from your own licensed BIS PDFs
+> (see CORPUS_FIX_LLM_INSTRUCTIONS.md). Never invent ASCE→IS mappings;
 > `found:false` is honest.
 
 ## Authority
@@ -17,7 +18,7 @@ You take a finished **steltic_india** HR design package and run the three nonlin
 | Drift limit | Table 12.12-1 × 2 (Ch.16) | **IS 1893 §7.11.1.1** (0.004 h); no Cd/Ie |
 | Drift relief (§16.1.2) | RC I–III may waive 12.12.1 | **found:false** — feedback drift loop ineligible unless `nl_plan.drift_relief_analogue` retrieved |
 | DDM combinations | ASCE 7 §2.3 via `design_pipeline.combos` | **`cfg['load_plan']`** via steltic_india `india_loads` |
-| Corpus | `/workspace/engineering_rag` | **`/workspace/engineering_rag_india`** |
+| Corpus | the USA corpus (ASCE / AISC) | **your IS corpus** (BIS documents, built in the Steltic hub) |
 
 Canonical gates: `nlrha/india_authority.py`, `snl/india_collections.py`.
 Collection map: `contract/IS_COLLECTIONS.md`.
@@ -33,7 +34,8 @@ Set:
 
 ```bash
 export STELTIC_ENGINE_DIR=/path/to/steltic_india/steel_engine
-export RAG corpus root to engineering_rag_india (QFM / RAG_API_URL)
+export RAG_API_URL=http://127.0.0.1:<port>/query       # your IS corpus server (the hub sets it)
+export INDIA_CORPUS_ROOT=/path/to/your/is_corpus
 ```
 
 Do **not** assume AISC shape labels forever — India packages may use IS 808 designations

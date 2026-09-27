@@ -116,9 +116,10 @@ def normalize_sfrs(sfrs_type) -> Optional[str]:
 
 
 def corpus_root(root: Optional[str] = None) -> Path:
-    """L-08: explicit root, else $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling checkout
-    ``engineering_rag_india`` next to the repo (this file may sit in steel_engine/ or in a vendored copy
-    one level deeper), else the historical /workspace path."""
+    """L-08: explicit root, else $INDIA_CORPUS_ROOT / $ENGINEERING_RAG_INDIA, else a sibling corpus folder
+    (named after the hub's IS corpus module) next to the repo (this file may sit in steel_engine/ or in a vendored
+    copy one level deeper), else the historical /workspace path. The corpus is the user's own, built in the Steltic
+    hub from their licensed BIS PDFs."""
     env = os.environ.get("INDIA_CORPUS_ROOT") or os.environ.get("ENGINEERING_RAG_INDIA")
     if root or env:
         return Path(root or env)

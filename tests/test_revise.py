@@ -104,7 +104,7 @@ def test_the_groups_search_nothing_and_the_clauses_are_is_only():
 def test_without_a_standards_server_the_groups_are_still_labelled(monkeypatch):
     monkeypatch.delenv("RAG_API_URL", raising=False)
     ev = revise.probe(log=lambda *a: None)
-    assert "engineering_rag_india" in ev["note"] and ev["clauses"] == {}
+    assert "IS corpus module" in ev["note"] and ev["clauses"] == {}
 
 
 def test_revise_patches_the_india_reports_in_place_and_records_the_state(monkeypatch):

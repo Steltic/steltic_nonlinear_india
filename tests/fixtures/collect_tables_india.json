@@ -1,6 +1,6 @@
 {
  "_README": [
-  "Excerpts of the IS documents as the India corpus (engineering_rag_india) converted them, for the snl collect tests:",
+  "Excerpts of the IS documents as an IS corpus built in the Steltic hub converted them, for the snl collect tests:",
   "the table header and rows / the clause text each India group is read from, copied from the corpus's exact-lookup answers",
   "([...] marks where rows of another part of the table were left out). Pages as the corpus reports them: IS 2062 Table 3 p. 9,",
   "IS 18168 Table 1 p. 7, IS 800 12.8.1 p. 94, IS 1893 Table 3 p. 12, 6.4.2 p. 11, Table 8 p. 21, 7.2.4 p. 21."

@@ -19,7 +19,7 @@ This is a **stub**, not a runnable OpenSees job. It documents the package shape 
 
 ```bash
 export STELTIC_ENGINE_DIR=/path/to/steltic_india/steel_engine
-# RAG → /workspace/engineering_rag_india (never USA engineering_rag)
+# RAG_API_URL → your IS corpus server (built in the Steltic hub from your licensed BIS PDFs; never a USA corpus)
 ```
 
 ## Three-analysis architecture (unchanged)

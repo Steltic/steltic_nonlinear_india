@@ -1,8 +1,8 @@
 """Re-issue the nonlinear reports with the IS corpus behind them.
 
 `snl run` does the OpenSees work and never queries anything, so every clause its reports cite is
-marked UNVERIFIED. The Review tab does query -- live, against the licensed IS documents on this PC
-(engineering_rag_india) -- and writes review.md into the project folder. This step is the manual join
+marked UNVERIFIED. The Review tab does query -- live, against the IS corpus the user built on this PC from
+their licensed BIS PDFs -- and writes review.md into the project folder. This step is the manual join
 between the two: it re-asks the corpus for the IS clauses those reports depend on (IS 1893 (Part 1):2016
 7.7.4, 7.11.1.1, 6.4.2 and the IS 800:2007 Section 12 joint-rotation clause of the building's system),
 records every passage it got, and re-issues the documents that can be rebuilt from the job folder with
@@ -140,7 +140,7 @@ def probe(log=print, extra_clauses=()) -> dict:
     ev = {"asked": datetime.datetime.now().isoformat(timespec="seconds"),
           "rag_url": rag.url(), "groups": {}, "clauses": {}}
     if not rag.configured():
-        ev["note"] = ("no standards server (RAG_API_URL is empty) -- start the IS corpus module (engineering_rag_india) "
+        ev["note"] = ("no standards server (RAG_API_URL is empty) -- start the hub's IS corpus module "
                       "from the hub's Modules page, or run this from the hub")
         return ev
     st = rag.status(force=True)

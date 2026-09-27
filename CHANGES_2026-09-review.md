@@ -100,7 +100,7 @@ findings, section 3) are on `review-fix-2026-09`.
 - USA-SYNC 3629a4b: Collect passes exact lookups whole (EXACT_MAX_CHARS 60k), absent row asked once more, adapted for India
 - NL-1: re-vendor the shared India modules from steltic_india 3ec586a; check_vendored resolves the HR checkout like HR/CFS
 - NL-2: DDM load_plan tests follow the current steltic_india contract; Ex18 USA fixture tests need the USA engine
-- NL-3: IS 18168 in the India collection map; corpus root resolves like steltic_india (env, sibling checkout, fallback)
+- NL-3: IS 18168 in the India collection map; corpus root resolves like steltic_india (env, sibling corpus folder, fallback)
 - NL-4: read the HR package's sections and steel -- built-up BOX columns and per-member grade / fy
 - NL-5: convert the raw replayed elements of an N-mm HR model in the Stage-B bridge (EBF links, trusses, roof springs)
 - NL-6: India basis per direction (V-bar_B, R_x / R_y, Ta) and mass = the HR engine's W
