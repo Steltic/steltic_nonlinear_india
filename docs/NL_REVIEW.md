@@ -1,6 +1,6 @@
 # India nonlinear (steltic_nonlinear_india) -- first-pass review and fix, 2026-09-27
 
-Repo `/home/claude/nl/work/steltic_nonlinear_india`, branch `review-fix-2026-09` (from `usa-sync-2026-09`), commits NL-1 .. NL-23.
+Repo `/home/claude/nl/work/steltic_nonlinear_india`, branch `review-fix-2026-09` (from `usa-sync-2026-09`), commits NL-1 .. NL-24.
 HR engine reference: `/home/claude/work/steltic_india` fix/2026-09-review @ 3ec586a. Hub (`steltic_hub_india`) not touched -- no NL
 fix needed it (the NLRHA viewer it links now exists, NL-11).
 
@@ -58,3 +58,18 @@ no spurious modes (Ex5 after NL-18), T1 vs HR within 5.5 %, DDM gravity-transfer
 | 35 | Medium | pushover + elastic gravity | Beyond the NSP targets the gravity columns yield (Ex1: 48 members up to ratio 6 at the descending branch); an elastic-only check up to the target over-stated Vmax by 2.4 / 3.9 %. | Fixed NL-21: the pushover check covers the whole curve; promotion restores Vmax exactly. |
 | 36 | High | collect | Decimal values with trailing zeros in the quote (Z = 0.10, zone II) were rejected: 4 gold jobs could not collect. | Fixed NL-22. |
 | 37 | Info | batch | Resumable batch script, 19 folders, smallest first, agent-transcribed answers for all 19 (all collected ok). | NL-23; running. |
+
+## Gold batch findings (NL-24, 2026-09-27)
+
+| # | Sev | Area | Finding | Status |
+|---|-----|------|---------|--------|
+| 38 | Critical | DDM model | Horizontal beams inside a rigid diaphragm were Corotational: the constraint holds their ends at a fixed plan distance, so the sag of a pinned gravity girder became catenary tension (and, in Ex14, weak-axis bending) that the fin-plate connections, the HR design (Linear beams) and the NL pushover / NLRHA (HR transformations) do not have. Ex11 NPB700 floor girders (HR elastic D/C 0.983) yielded at lambda 0.95 and 1.5DL+1.5LL stopped at 0.977; gym NPB700 roof girder +335 kN -> B-1.2 D/C 1.018 (HR 0.960); Ex14 NPB750 roof B-1.2 1.08 (N 278 kN, M_minor 65 kN-m); after yield, catenary action inflated lateral-case lambdas (gym lambda 4-8.8). | Fixed NL-24: those beams use P-Delta (transf 6, India; `$SNL_DDM_BEAM_TRANSF` overrides). Ex11 1.5DL+1.5LL DUCTILITY_CAP 1.232 (first yield 1.049, 0 failed steps); gym NPB700 M = 996.7 kN-m vs HR 996.6, N 61 kN (post-yield centroid shift of the residual-stress section restrained by the diaphragm), B-1.2 0.975; Ex14 governing crane case NPB750 0.51, PLASTIC_PLATEAU 2.61. Changes every India DDM result (all 19 jobs have such beams). |
+| 39 | High | DDM solver / honesty | One KrylovNewton retry then six step cuts; a numerical stop was reported NO_LIMIT_POINT and only blocked below lambda 1 for gravity / wind. | Fixed NL-24: ladder at the failed step (KrylovNewton, NewtonLineSearch, ModifiedNewton -initial 200 it., tolerances 1e-5 / 1e-4), step cuts, then arc-length rescue (MinUnbalDispNorm -det); a numerical stop with tangent >= 10 % of elastic is SOLVER_FAILURE and blocks the COMPLETE gate (any kind, any lambda); at a near-zero tangent it stays NO_LIMIT_POINT. Runs record `ladder_used`, `control_mode`, `stop_tangent_ratio`. Only failing steps see the ladder -- converged sweeps are unchanged by this part. |
+| 40 | Info | DDM material | Checked: GMNIA fibres use the characteristic IS 2062 Table 3 fy by thickness band from the HR package (E250 NPB700 / BOX 25 mm 240 MPa, WPB200 250 MPa), expected-strength factor 1.0 (no nl_plan); gamma_m0 = 1.10 appears only in the B-1.2 capacities (Md = Zp fy / 1.10). | Confirmed (tested). |
+| 41 | High | DDM transfer gate | IN_Ex5 DDM refused: elastic roof displacement X GMNIA / HR 1.053 > 1.05 (fibre I-sections omit the root fillets: A 2.4-6 %, Ix 3-6 % low on NPB/WPB). | Open -- lead decision. Candidate on branch `wip/nl26-ddm-fillets` (fillet fibres, A and Ix = catalogue): Ex5 gate 1.001, T1-T3 1.000-1.008. DDM-only (pushover / NLRHA fibres stay plate-only) and changes every I-section DDM result; not on this branch, no test yet. |
+
+Gold NL after NL-24 (DDM re-run from `/home/claude/nl/run_repo2` @ c200e13, outputs copied into gold_nl, pre-fix DDM kept in
+`<job>/_ddm_df041ec/`): Ex11 COMPLETE (57 DUCTILITY_CAP + 4 PLASTIC_PLATEAU, 2 ladder steps, B-1.2 max 0.962), Ex11 unitB_link
+COMPLETE (B-1.2 0.930), Ex11 unitC_gym COMPLETE (B-1.2 0.975) -- no capacity shortfall remains. Every other batch job ran the
+DDM at df041ec and needs `--only ddm` again (runbook).
+
