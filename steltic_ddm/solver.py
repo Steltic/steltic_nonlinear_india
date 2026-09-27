@@ -278,7 +278,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     disp_hist = {}                                # hist index -> master displacements (cheap; lets the peak frame be exact)
     fails = 0; consecutive_fail = 0; ladder_used = {}
     mode = "disp"; dl0 = dl = None                # NL-24: "arc" after the arc-length rescue
-    log = []; plateau = False; term = "max_steps"; capped = False; forces_at_1 = None
+    log = []; plateau = False; term = "max_steps"; capped = False; forces_at_1 = None; prev_f = None
     for step in range(1, max_steps + 1):
         ok = ops.analyze(1)
         if ok != 0:
@@ -334,9 +334,15 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
             ys = yield_state(model, eps_y)
             if first_yield is None and max(ys.values(), default=0.0) >= 1.0:
                 first_yield = lam
-        if capture_lambda1 and forces_at_1 is None and lam >= 1.0:
-            from .india_checks import member_forces
-            forces_at_1 = member_forces(model)
+        if capture_lambda1 and forces_at_1 is None and lam >= 0.85:
+            # NL-25: the B-1.2 forces AT lambda = 1, interpolated between the converged steps either side (the first
+            # step past 1 can be up to one load step -- 5 % -- beyond it: gym NPB700 1008 vs 996.6 kN-m at lambda 1)
+            from .india_checks import member_forces, forces_at_lambda
+            cur_f = member_forces(model)
+            if lam >= 1.0:
+                forces_at_1 = forces_at_lambda(prev_f, (lam, cur_f), 1.0)
+            else:
+                prev_f = (lam, cur_f)
         if hi % frame_every == 0:
             frames.append(_frame(model, eps_y, hi, lam, d, ys=ys))
         if lam > lam_max:

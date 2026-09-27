@@ -174,3 +174,22 @@ def test_gold_ex11_gym_roof_girder_matches_hr_moment_without_catenary(tmp_path, 
     assert g["M_major_kNm"] == pytest.approx(M_hr, rel=0.01)
     assert g["N_kN"] < 100.0                                                 # was +335 kN catenary (Corotational)
     assert g["dc_max"] < 1.0 and g["Md_kNm"] == pytest.approx(1038.5, rel=0.002)
+
+
+# ---------------------------------------------------------------- NL-25: B-1.2 forces at lambda = 1 exactly
+def test_forces_interpolated_to_lambda_1():
+    from steltic_ddm.india_checks import forces_at_lambda
+    f = lambda M, N: {7: dict(kind="beam", role="roof", section="S", M_major=M, N_abs=N, _s_top=1)}
+    out = forces_at_lambda((0.98, f(980.0, 10.0)), (1.03, f(1030.0, 60.0)), 1.0)
+    assert out[7]["M_major"] == pytest.approx(1000.0) and out[7]["N_abs"] == pytest.approx(30.0)
+    assert out[7]["section"] == "S" and out["_lambda"] == dict(target=1.0, lower=0.98, upper=1.03)
+    only = forces_at_lambda(None, (1.05, f(1050.0, 0.0)), 1.0)            # no earlier state: scaled
+    assert only[7]["M_major"] == pytest.approx(1000.0)
+
+
+def test_b12_check_skips_the_lambda_record():
+    from steltic_ddm.india_checks import b12_check
+    r = b12_check({"_lambda": dict(target=1.0, lower=0.95, upper=1.0),
+                   3: dict(kind="beam", role="roof", section="NPB400X180X57.38", N_abs=0.0, M_major=99.75e6, M_minor=0.0, V=0.0)},
+                  lambda s, k=None: 250.0, 1.2, "c")
+    assert r["ok"] and r["groups"][0]["dc_max"] == pytest.approx(0.385, rel=0.03) and r["lambda_basis"]["lower"] == 0.95

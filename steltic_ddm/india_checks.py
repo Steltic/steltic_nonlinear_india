@@ -87,6 +87,32 @@ def member_forces(g, lam_scale=1.0):
     return out
 
 
+def forces_at_lambda(prev, cur, lam_target=1.0):
+    """NL-25: member forces at `lam_target` from two converged states (lam, member_forces) either side of it, linear in
+    lambda per member and quantity; with no earlier state the later one is scaled by lam_target / lam. The result
+    records the bracketing load factors under the key "_lambda"."""
+    lc, fc = cur
+    if prev is None or lc <= prev[0]:
+        t, fp, lp = None, None, None
+    else:
+        lp, fp = prev
+        t = (lam_target - lp) / (lc - lp)
+    out = {}
+    for tag, f in fc.items():
+        g = dict(f)
+        p = (fp or {}).get(tag)
+        for k, v in f.items():
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or k.startswith("_"):
+                continue
+            if t is not None and p is not None and isinstance(p.get(k), (int, float)):
+                g[k] = p[k] + t * (v - p[k])
+            else:
+                g[k] = v * lam_target / lc
+        out[tag] = g
+    out["_lambda"] = dict(target=lam_target, lower=lp, upper=lc)
+    return out
+
+
 def section_capacity_250(sec, quantity):
     """M_p = 250 Z_p (kN-m) for a moment quantity, P_y = 250 A (kN) otherwise; 0 when the section is unknown."""
     from pushover import india_materials as _IM
@@ -272,6 +298,8 @@ def b12_check(forces_at_1: dict | None, fy_fn, lam_reached: float | None, label:
                     note="lambda = 1 not reached by the GMNIA sweep -> B-1.2 not satisfied", groups=[], quote=B12_QUOTE)
     groups = {}
     for tag, f in forces_at_1.items():
+        if str(tag).startswith("_"):
+            continue
         cap = IM.section_capacity(f["section"], fy_fn(f["section"], f.get("role") or f["kind"]))
         r = IM.b12_interaction(f["N_abs"], f["M_major"], f["M_minor"], f["V"], cap)
         k = (f["role"], f["section"])
@@ -284,5 +312,5 @@ def b12_check(forces_at_1: dict | None, fy_fn, lam_reached: float | None, label:
         g["dc_shear_max"] = round(max(g["dc_shear_max"], r["dc_shear"]), 3)
     gl = sorted(groups.values(), key=lambda g: -g["dc_max"])
     ok = all(g["dc_max"] <= 1.0 and g["dc_shear_max"] <= 1.0 for g in gl)
-    return dict(combo=label, ok=ok, reached_lambda_1=True, groups=gl, quote=B12_QUOTE,
+    return dict(combo=label, ok=ok, reached_lambda_1=True, groups=gl, quote=B12_QUOTE, lambda_basis=forces_at_1.get("_lambda"),
                 clause="IS 800:2007 Annex B-1.2 -> 6.2, 7 (section), 8.2.1.2, 8.4, 9.3.1.1; gamma_m0 = 1.10")
