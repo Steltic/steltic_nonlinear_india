@@ -1,6 +1,6 @@
 # Vendored from steltic_india
 
-Commit: **6a1ac8f** (branch `fix/2026-09-review`: 0.3.0 release notes plus O1/O2/O3, GOLD-1..7, AUD-1..4,
+Commit: **69701f6070706e5d2adc6fefaea16b42c9f4e221** [steltic_india main] (branch `fix/2026-09-review`: 0.3.0 release notes plus O1/O2/O3, GOLD-1..7, AUD-1..4,
 GOLD-764, GOLD-COLL, AUD-1 Windows, and the corpus wording: no reference to a corpus repository).
 
 Files (byte-identical copies of `steltic_india/steel_engine/<file>`): india_loads.py, india_seismic.py,
