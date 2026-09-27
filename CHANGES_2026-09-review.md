@@ -90,6 +90,10 @@ findings, section 3) are on `review-fix-2026-09`.
 - There is no India pushover 3-D viewer.
 - g is 386.4 vs 386.09 (0.08 %).
 
+## IS corpus (not distributed)
+
+The BIS standards corpus is not published with this repo, because the standards are copyright BIS. Build your own from your licensed PDFs in the Steltic hub (first pass, Docling). Then have a frontier LLM fix it using `CORPUS_FIX_LLM_INSTRUCTIONS.md`, and import the result back into the hub. See README, "IS corpus (standards grounding)". Without a corpus the engine still runs: retrievals return found:false, and COMPLETE needs EOR records.
+
 ## Commits (oldest first; subjects only — hashes change when the branch is replayed onto GitHub)
 - USA-SYNC bd8ba3a: snl review + Feedback-tab reasoning box, 0.3.0, adapted for India: IS corpus, no verdict
 - USA-SYNC 402c61a: search reads /healthz, corpus gap, ladder, 0.3.1, adapted for India: IS stems
