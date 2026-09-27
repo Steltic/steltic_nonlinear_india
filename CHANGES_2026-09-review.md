@@ -1,6 +1,7 @@
 # steltic-nonlinear-india 0.3.1: USA sync and first-pass India review (2026-09-27)
 
-Branch `fix/2026-09-review`, based on the delivered zip (India 0.2.0, fork of USA 9607577).
+Branch `fix/2026-09-review`, based on the delivered zip (India 0.2.0, fork of USA 9607577). NL-24..NL-27 (gold-batch
+findings, section 3) are on `review-fix-2026-09`.
 
 ## 1. USA updates ported (USA-SYNC commits; full table in `docs/USA_SYNC_REPORT.md`)
 - **Review:** `snl review` with review.md and the Feedback reasoning box.
@@ -65,12 +66,29 @@ Branch `fix/2026-09-review`, based on the delivered zip (India 0.2.0, fork of US
 
 **Batch tooling:** `scripts/run_gold_batch.sh`, a resumable batch for the 15 India HR gold buildings (NL-23).
 
+## 3. Gold-batch findings (NL-24..NL-27; docs/NL_REVIEW.md #38-42)
+**Critical:**
+- DDM deck beams were Corotational inside the rigid diaphragm. The sag of a pinned girder became catenary tension:
+  - IN_Ex11 stopped at λ 0.977;
+  - the gym girder B-1.2 was 1.018, and Ex14's 1.08;
+  - after yield, lateral-case λ values were inflated (gym 4-8.8).
+
+  Those beams now use P-Delta, like the HR design and the NL pushover and NLRHA (NL-24). This changes every India DDM result.
+
+**High:**
+- DDM solver: an algorithm ladder, a tolerance fallback, step cuts and an arc-length rescue. A numerical stop with stiffness left is SOLVER_FAILURE and blocks COMPLETE; the old behaviour reported it as NO_LIMIT_POINT (NL-24). This closes the former open item "DDM solver robustness near first yield".
+- The B-1.2 member forces are now interpolated to λ = 1 exactly. Before, they came from the first step past 1, up to 5 % beyond it (NL-25).
+- GMNIA fibre I-sections now carry the root fillets, so A, Ix and Zp match IS 808 within 0.4 %. The plate model was 2-6 % low. IN_Ex5's DDM transfer gate goes from 1.053 (refused) to 1.001. This is DDM only; the pushover and NLRHA sections are unchanged (NL-26).
+
+**Batch:** step markers now record DDM_CODE. The batch re-runs any DDM that predates it: inline for unfinished jobs, and in a refresh pass at the end for finished ones. `STOP_BATCH` stops the batch cleanly (NL-27).
+
+**Checked:** the GMNIA fy is characteristic IS 2062 by thickness band, and γm0 is applied only in B-1.2.
+
 ## Open (see docs/NL_REVIEW.md)
 - Ground-motion selection and scaling use the ASCE 7 Ch.16 method, labelled as information. This is an EOR decision.
 - The NL model is rigid-diaphragm where HR declared the diaphragm flexible.
 - There is no India pushover 3-D viewer.
 - g is 386.4 vs 386.09 (0.08 %).
-- DDM solver robustness near first yield (work in progress with the gold NL batch).
 
 ## Commits (oldest first; subjects only)
 - USA-SYNC bd8ba3a: snl review + Feedback-tab reasoning box, 0.3.0, adapted for India: IS corpus, no verdict
@@ -103,3 +121,7 @@ Branch `fix/2026-09-review`, based on the delivered zip (India 0.2.0, fork of US
 - NL-21: elastic gravity members with a yield check, NLRHA records trimmed to 5-95 % Arias
 - NL-22: snl collect accepts decimals with trailing zeros (zone II Z = 0.10)
 - NL-23: scripts/run_gold_batch.sh -- resumable India gold NL batch, smallest job first
+- NL-24: DDM deck beams P-Delta (no catenary against the rigid diaphragm); solver ladder, arc-length rescue, SOLVER_FAILURE
+- NL-25: IS 800 B-1.2 member forces interpolated to lambda = 1 exactly
+- NL-26: DDM fibre I-sections with root-fillet fibres -- A, Ix, Zp = IS 808 catalogue (IN_Ex5 transfer gate)
+- NL-27: gold batch re-runs DDM results that predate DDM_CODE (NL-26), refresh pass at the end, STOP_BATCH file

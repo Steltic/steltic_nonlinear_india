@@ -1,6 +1,6 @@
 # India NL runbook -- producing a "gold NL solution" for an HR gold building
 
-Repo: `/home/claude/nl/work/steltic_nonlinear_india` branch `review-fix-2026-09` (NL-1..NL-24). For long runs use a frozen
+Repo: `/home/claude/nl/work/steltic_nonlinear_india` branch `review-fix-2026-09` (NL-1..NL-27). For long runs use a frozen
 worktree so edits cannot change code under a running job: `git -C <repo> worktree add --detach /home/claude/nl/run_repo review-fix-2026-09`
 (then `git -C /home/claude/nl/run_repo checkout --detach review-fix-2026-09` to refresh). All commands below run from that worktree.
 
@@ -146,20 +146,22 @@ Started 2026-09-27 06:38 (+07) at df041ec. Estimated durations (fast, 2 cores; +
 Per job the NLRHA dominates, then the DDM (61-sweep jobs: Ex1, Ex9, Ex10, Ex11, Ex14, Ex15); a pushover promotion
 round adds one pushover re-run.
 
-## NL-24 DDM re-run after the batch (the batch runs df041ec)
+## DDM results after NL-24..NL-26 (batch switch, NL-27)
 
-NL-24 (c200e13) changes the GMNIA for every India job (deck beams P-Delta) and the solver / status rules, so the DDM of
-every job the batch runs at df041ec is superseded. Ex11, Ex11 unitB_link and Ex11 unitC_gym are already re-run (COMPLETE;
-old DDM in `<job>/_ddm_df041ec/`). After the batch finishes, for each other job (Ex3, Ex5, Ex14, Ex8 workshop, Ex13, Ex15, Ex8,
-Ex9 stem, Ex12, Ex1, Ex2, Ex4, Ex10, Ex6, Ex7, Ex9):
+NL-24 (deck beams P-Delta, solver ladder / SOLVER_FAILURE), NL-25 (B-1.2 at lambda = 1 exactly) and NL-26 (fillet
+fibres) change every India DDM result; pushover and NLRHA are unaffected (no shared code path; the pushover fibre builder
+keeps fillets=False). The batch was stopped at 2026-09-27 09:45:43 (+07), after IN_Ex13's NLRHA ended (its df041ec DDM
+was killed at start), and restarted from `/home/claude/nl/run_repo2` @ aa3009b with the same progress log and markers:
+`nohup /home/claude/nl/run_repo2/scripts/run_gold_batch.sh >> /home/claude/nl/gold_nl/batch_nohup.out 2>&1 &`.
 
-```bash
-cd /home/claude/nl/run_repo2            # worktree at c200e13 (or: git -C /home/claude/nl/run_repo checkout --detach review-fix-2026-09 once the batch is done)
-python -m snl run $J --only ddm --parallel 2 --dt 0.01 && python -m snl report $J
-```
-Pushover and NLRHA results are not affected. DDM sweeps are faster with the fix (Ex11 575 s at 2 workers -> 285 s at 1).
-IN_Ex5 still stops at the elastic transfer gate (roof X 1.053 > 1.05) until the fillet decision (NL_REVIEW #41); options:
-merge `wip/nl26-ddm-fillets` (gate 1.001), or `python -m steltic_ddm run $J --gate-tol 0.06` / `--force` (disclose).
-A SOLVER_FAILURE row in `ddm_results.json` blocks COMPLETE; look at its `log`, `ladder_used`, `stop_tangent_ratio`; a
-sensitivity run with the old beam transformation: `SNL_DDM_BEAM_TRANSF=Corotational`.
+- Markers now carry `ddm_code` (`DDM_CODE="NL-26"` in the script). A DDM marker without it is stale: an unfinished job
+  re-runs its DDM in the main loop (Ex5, Ex13); a finished job (`batch_done.json`) gets `snl run --only ddm` +
+  `snl report` in the refresh pass after the last job -- queued: Ex11 unitC_gym, Ex3, Ex11 unitB_link, Ex11, Ex14,
+  Ex8 workshop. Previous DDM outputs are kept in `<job>/_ddm_before_NL-26/` (Ex11 also `_ddm_df041ec/`).
+- Clean stop: `touch /home/claude/nl/gold_nl/STOP_BATCH` (exits before the next step; remove the file to resume).
+- Bump `DDM_CODE` in a commit that changes DDM results again; the next batch start re-runs the stale DDMs only.
+- A SOLVER_FAILURE row in `ddm_results.json` blocks COMPLETE; see its `log`, `ladder_used`, `stop_tangent_ratio`.
+  Sensitivity switches: `SNL_DDM_BEAM_TRANSF=Corotational`, `SNL_DDM_FILLETS=0`.
 
+ETA at the switch: remaining jobs by the table above 51.9 h (-> 2026-09-29 ~13:40 +07); the jobs so far ran at ~0.7x
+their estimates -> about 2026-09-28 23:00 (+07). DDM sweeps are faster with NL-24 (Ex11 575 s at 2 workers -> 285 s at 1).
