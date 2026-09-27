@@ -130,6 +130,16 @@ class GMNIAModel:
             out.add(m.tag)
         return out
 
+    def _fillets(self) -> bool:
+        """NL-26: GMNIA I-sections with root-fillet fibres on the India path, so A, Ix and Zp equal the IS 808 catalogue
+        values the HR design uses (the plate model was 2-6 % low: IN_Ex5 elastic transfer gate roof X 1.053 > 1.05 ->
+        1.001). $SNL_DDM_FILLETS=0 switches it off. DDM only: the pushover / NLRHA fibre sections (same builder,
+        fillets=False by default) are unchanged."""
+        env = os.environ.get("SNL_DDM_FILLETS")
+        if env not in (None, ""):
+            return env.strip().lower() not in ("0", "off", "false", "no")
+        return self._india()
+
     def deck_beam_transf(self) -> str:
         """Transformation of the deck beams (tag 6): P-Delta on the India path -- second-order and fully plastic (fibres),
         no large-displacement catenary against the diaphragm; `transf_type` otherwise. $SNL_DDM_BEAM_TRANSF overrides
@@ -188,7 +198,7 @@ class GMNIAModel:
         ops.uniaxialMaterial("Elastic", 2, K_ROT)
         self.builder = FiberSectionBuilder(ops, Fy=self.Fy, hardening=self.hardening,
                                            residual=self.residual, elastic=self.elastic, mat_tag0=1000,
-                                           units=getattr(self, "_fibre_units", "kip-in"))
+                                           units=getattr(self, "_fibre_units", "kip-in"), fillets=self._fillets())
         self._builders = {}
         for m in nm.members:
             self._add_member(m)
@@ -260,7 +270,7 @@ class GMNIAModel:
                     if fy not in self._builders:
                         self._builders[fy] = FiberSectionBuilder(ops, Fy=fy, hardening=self.hardening, residual=self.residual,
                                                                  elastic=self.elastic, mat_tag0=100000 + 1000 * len(self._builders),
-                                                                 units=getattr(self, "_fibre_units", "kip-in"))
+                                                                 units=getattr(self, "_fibre_units", "kip-in"), fillets=self._fillets())
                     bld = self._builders[fy]
             props = bld.build(tag, m.section, m.kind, axis=axis)
             if bld is not self.builder:

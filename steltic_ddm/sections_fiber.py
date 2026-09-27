@@ -196,9 +196,10 @@ class FiberSectionBuilder:
     """Stateful builder: hands out unique material tags and records what it made."""
 
     def __init__(self, ops, Fy=None, E=None, hardening=0.002, residual="lehigh", sigma_rc=0.3,
-                 mat_tag0=1000, elastic=False, units="kip-in", G=None):
+                 mat_tag0=1000, elastic=False, units="kip-in", G=None, fillets=False):
         """units='kip-in' (default) or 'N-mm' (Stage C SI twin: E MPa, dims/areas mm)."""
         self.ops = ops
+        self.fillets = bool(fillets)          # NL-24: root-fillet fibres so A and Ix match the catalogue (w_shape)
         u = str(units or "kip-in").strip()
         self.units = "N-mm" if u.lower() in ("n-mm", "n-mm-s", "n-mm-sec", "si", "metric", "mm") else "kip-in"
         if self.units == "N-mm":
@@ -296,9 +297,39 @@ class FiberSectionBuilder:
                 else:
                     self.ops.fiber(zc, yc, dy * dzw, m)
                 nfib += 1
-        self.log.append((secTag, label, "W", nfib, "residual=%s axis=%s units=%s" % (res, axis, self.units)))
-        return dict(A=2 * Af + Aw, Ix=2 * (bf * tf ** 3 / 12 + Af * ((d - tf) / 2) ** 2) + tw * hw ** 3 / 12,
-                    Iy=2 * tf * bf ** 3 / 12 + hw * tw ** 3 / 12, d=d, bf=bf, tf=tf, tw=tw, nfib=nfib)
+        A_pl = 2 * Af + Aw
+        Ix_pl = 2 * (bf * tf ** 3 / 12 + Af * ((d - tf) / 2) ** 2) + tw * hw ** 3 / 12
+        fil = self.fillet_fibres(r, sc, A_pl, Ix_pl, hw) if self.fillets else None
+        if fil:
+            for yc in (+fil["y"], -fil["y"]):
+                if axis == "y":
+                    self.ops.fiber(yc, 0.0, fil["A"] / 2.0, m)
+                else:
+                    self.ops.fiber(0.0, yc, fil["A"] / 2.0, m)
+                nfib += 1
+        self.log.append((secTag, label, "W", nfib, "residual=%s axis=%s units=%s%s" % (
+            res, axis, self.units, (" fillets A+%.1f%% at y=%.1f" % (100 * fil["A"] / A_pl, fil["y"])) if fil else "")))
+        A_out = A_pl + (fil["A"] if fil else 0.0)
+        Ix_out = Ix_pl + (fil["A"] * fil["y"] ** 2 if fil else 0.0)
+        return dict(A=A_out, Ix=Ix_out, Iy=2 * tf * bf ** 3 / 12 + hw * tw ** 3 / 12, d=d, bf=bf, tf=tf, tw=tw, nfib=nfib,
+                    fillet=fil)
+
+    @staticmethod
+    def fillet_fibres(r, sc, A_pl, Ix_pl, hw):
+        """NL-24: the plate model of a rolled I-section omits the root fillets -- 2.4-6 % of A, 3-6 % of Ix and Zx for
+        the IS 808 NPB/WPB shapes (IN_Ex5 GMNIA roof drift 5.3 % above the HR model; fibre Mp 3-6 % below the HR
+        Zp fy). Two fibres (area A_cat - A_plate) at the web-flange junctions, at the lever arm that restores the
+        catalogue Ix (capped at the junction), make A and Ix equal to the catalogue and Zp close to it. None when the
+        catalogue row has no A / Ix or is not larger than the plate model."""
+        try:
+            A_cat = float(r["A"]) * sc ** 2; Ix_cat = float(r["Ix"]) * sc ** 4
+        except (KeyError, TypeError, ValueError):
+            return None
+        dA, dI = A_cat - A_pl, Ix_cat - Ix_pl
+        if dA <= 1e-9 * A_cat or dI <= 0:
+            return None
+        y = min((dI / dA) ** 0.5, hw / 2.0)
+        return dict(A=dA, y=y, A_cat=A_cat, Ix_cat=Ix_cat)
 
     # ---- rectangular HSS --------------------------------------------------------------------
     def hss_rect(self, secTag, label, t_design_factor=0.93, n_per_side=8, n_thick=2, residual=None):
