@@ -44,10 +44,13 @@ Do **not** assume AISC shape labels forever — India packages may use IS 808 de
 ## Per-job protocol (wave-1 minimum)
 
 1. `python -m snl inspect <package.zip>`
-2. One retrieval wave to Query file manager / India RAG:
-   - `IS_1893_Part_1_2016`: exact_section `7.7`, `7.7.4`, `7.11.1`, `7.11.1.2`; FTS time history / dynamic analysis
-   - `IS_800_2007`: Table 4 combinations (confirm load_plan cites)
-   - Component / hinge sources: if not in corpus → `found:false`, leave red UNVERIFIED banner
+2. One retrieval wave against your IS corpus (`search_engineering_standards`), written as
+   `contract/QUERYING_IS_CORPUS.md` says: one document per call, the exact id when known, `fts` only to navigate.
+   - `IS_1893_Part_1_2016`: exact_section `7.7`, `7.7.4`, `7.11.1`, `7.11.1.2`; `fts` "time history method" to navigate
+   - `IS_800_2007`: exact_table `Table 4` (combinations: confirm the load_plan cites), exact_section `12.2.3`
+   - Component / hinge sources: no IS document tabulates them → `found:false`, leave the red UNVERIFIED banner
+   - The IS values the analyses use (IS 2062 Table 3, IS 18168 Table 1, IS 1893 Table 3 / Table 8 / 6.4.2 / 7.2.4,
+     IS 800 Section 12) are fetched by `snl collect` itself (section 9 of that file); its transcriber only copies
 3. Write `nl_plan.json` (job root or `nlrha/`) with `jurisdiction`, `retrieval[]`, optional `rules{}`
 4. `python -m snl run … --steltic-engine $STELTIC_ENGINE_DIR`
 5. Judge with retrieved clauses only; never quote ASCE Ch.16 numbers as India law

@@ -63,6 +63,12 @@ collected; hinge parameters without collected values or an EOR record stay UNVER
 found:false and the value used must be an EOR record (value, source, cite); the Review and the reports mark every
 clause they cite UNVERIFIED. The results remain for information only.
 
+**How the corpus is queried:** [`contract/QUERYING_IS_CORPUS.md`](contract/QUERYING_IS_CORPUS.md) is part of the
+Review agent's prompt. The same file ships in `steltic_india` and `steltic_CFS_india`. It covers one document per call,
+an exact clause or table id when the provision is known, full text only to navigate, the IS id formats and traps, and
+what each kind of "not found" means. `snl collect` makes these exact lookups itself; its transcriber only copies from
+the passages it is given.
+
 ### Retrieval details
 
 `nl_plan` / acceptance / hazard gates live in `nlrha/india_authority.py` and `contract/INDIA_START.md`.

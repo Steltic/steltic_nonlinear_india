@@ -19,7 +19,7 @@ from __future__ import annotations
 import datetime, html, json, os, re, sys, time
 
 from . import llm, rag
-from .standards import RETRIEVAL_POLICY, TOOLS
+from .standards import QUERY_INSTRUCTIONS, RETRIEVAL_POLICY, TOOLS
 
 # Safety ceiling on the agent loop, not a search budget: a capped run stops at its budget long
 # before this, and an uncapped one searches until the review is written.
@@ -48,7 +48,7 @@ Rules:
 - Units are SI (kN, mm, MPa, rad) as the evidence gives them.
 - Be specific and short. No preamble, no closing pleasantries. Write in English.
 
-""" + RETRIEVAL_POLICY + """"""
+""" + RETRIEVAL_POLICY + "\n\n" + QUERY_INSTRUCTIONS
 
 
 # ---------------------------------------------------------------- evidence
