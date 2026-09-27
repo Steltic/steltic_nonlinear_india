@@ -134,6 +134,6 @@ The BIS standards corpus is not published with this repo, because the standards 
 - NL-28 (Windows): NLRHA index package paths use '/' separators
 - NL-28: gold batch honours $GOLD_NL/SKIP_JOBS (jobs offloaded to another machine are never started or DDM-refreshed)
 - NL-29: NLRHA pools the DBE + MCE records (22 tasks, per-record progress); gold batch STEPS / NL_REV / empty RAG_API_URL -- owner's PC package
-- Corpus: drop references to the private corpus repo; users build their own IS corpus in the Steltic hub
+- Corpus: the IS corpus is the user's own; users build it in the Steltic hub
 - CORPUS_FIX_LLM_INSTRUCTIONS.md: the owner's instructions for the corpus fix pass (replaces the placeholder)
 - CORPUS_FIX_LLM_INSTRUCTIONS.md: final version (matches the hub's bundled corpus module: validate probes, optional scripts/*.json, Import fixed corpus tab)
