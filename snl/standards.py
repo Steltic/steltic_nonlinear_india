@@ -9,7 +9,26 @@ India (owner ruling D3): IS standards only, no foreign design basis.
 """
 from __future__ import annotations
 
+import os
+
 from . import rag
+
+
+def query_instructions() -> str:
+    """contract/QUERYING_IS_CORPUS.md -- the query instructions HR Steel and CFS Steel carry too (the same file)."""
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "contract", "QUERYING_IS_CORPUS.md")
+    try:
+        return open(p, encoding="utf-8").read()
+    except OSError as e:
+        return "[missing contract/QUERYING_IS_CORPUS.md: %s]" % e
+
+
+# The Review agent's tool names the document in `document` by its short key (IS1893, IS800 ...); the canonical stem
+# the instructions use (IS_1893_Part_1_2016 ...) is accepted there too.
+QUERY_INSTRUCTIONS = ("===== HOW TO QUERY THE IS CORPUS (the full rules, id formats and traps) =====\n"
+                      "In this tool the document goes in `document`: the short key (" + ", ".join(rag.DOCUMENTS) + ") or the "
+                      "canonical stem the file below uses (" + ", ".join(rag.STEMS[k] for k in rag.DOCUMENTS) + "). Only these "
+                      "documents are searched here.\n\n" + query_instructions())
 
 RETRIEVAL_POLICY = """===== RETRIEVAL POLICY (mandatory -- how every search_engineering_standards call is written) =====
 This is the query policy the IS corpus bridge is built for (the hub's IS corpus module rag_server: `type`,
@@ -70,7 +89,7 @@ TOOLS = [{
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "The id alone for an exact type; otherwise the standard's own printed words, one idea"},
-                "document": {"type": "string", "enum": list(rag.DOCUMENTS), "description": "; ".join("%s = %s" % (k, d) for k, (_c, d) in rag.DOCUMENTS.items())},
+                "document": {"type": "string", "enum": list(rag.DOCUMENTS) + [rag.STEMS[k] for k in rag.DOCUMENTS], "description": "; ".join("%s = %s" % (k, d) for k, (_c, d) in rag.DOCUMENTS.items())},
                 "type": {"type": "string", "enum": ["exact_section", "exact_equation", "exact_table", "id", "fts", "keyword"],
                          "description": "How to look it up. Exact types take the id alone in `query`. fts/keyword navigate."},
                 "clause": {"type": "string", "description": "Exact clause / table id, when you did not put it in `query`"},

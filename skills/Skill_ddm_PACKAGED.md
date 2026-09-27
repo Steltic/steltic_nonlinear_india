@@ -18,6 +18,8 @@ description: >-
 
 > **PACKAGED** — distribution copy. Load this into the **DDM Steel App** Grok Bot together with
 > `Skill_querying_PACKAGED.md` (retrieval rules are unchanged). Contains no site-specific paths.
+> **India fork:** the retrieval rules are `contract/QUERYING_IS_CORPUS.md` (IS documents only); the AISC / ASCE
+> retrieval list below is the USA reference.
 
 # DDM system capacity (PACKAGED)
 

@@ -42,7 +42,8 @@ capacities the design is unfinished — hand it back.
    an "inelastic column instability" on a pinned gravity frame is real (no redistribution possible);
    a "beam plastic mechanism" claimed on a building whose beams are pinned is a bug. The check is
    φ_s·λ_u ≥ 1.0. Seismic-pattern cases on R > 3 systems get NO pass/fail — say so.
-7. **Retrieve provisions** through the Query file manager (JSON plan, one `doc` per query) BEFORE you
+7. **Retrieve provisions** (India: from your IS corpus as `contract/QUERYING_IS_CORPUS.md` says -- IS 800 Table 4 /
+   the package's load_plan, IS 800 B-1.2; the AISC / ASCE list below is the USA reference) BEFORE you
    quote any clause: `AISC_360_22` exact_section `1.3`, `1.3.2`, `1.3.3` (design by inelastic
    analysis), `C2.2a` / `C2.2b` (imperfections / notional loads), exact_table `B4.1b`; `ASCE7`
    exact_section `2.3.1` / `2.3.6`. φ_s is a LITERATURE value — cite the paper, never a clause.

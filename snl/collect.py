@@ -756,7 +756,9 @@ def write_request(job: str, facts: dict, fetched: dict) -> str:
         req["answers_template"]["answers"][gid] = {f: {"value": None, "quote": None} for f, _w, _k in fields_for(gid, facts)}
     p = os.path.join(job, REQUEST_NAME)
     json.dump(req, open(p, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
-    md = ["# snl collect -- transcription request (%s)" % facts["name"], "", TRANSCRIBE, ""]
+    md = ["# snl collect -- transcription request (%s)" % facts["name"], "", TRANSCRIBE, "",
+          "The passages below were fetched by the program with exact lookups (contract/QUERYING_IS_CORPUS.md, "
+          "section 9). Do not search the corpus and do not add passages: copy from these only.", ""]
     for gid, g in req["groups"].items():
         md += ["## %s" % gid, "", "TABLE AND ROW: " + g["table_and_row"], "", "FIELDS:"]
         md += ["- `%s`: %s" % (f["name"], f["what"]) for f in g["fields"]]

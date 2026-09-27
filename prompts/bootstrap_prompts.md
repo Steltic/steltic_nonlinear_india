@@ -1,5 +1,10 @@
 # Steltic Nonlinear (SNL) — Grok Bot set-up prompts
 
+> **India fork.** The prompts below are the USA set-up, kept for reference. On India the retrieval skill is
+> **`contract/QUERYING_IS_CORPUS.md` in this repository**, not `steltic_grokbot`'s `Skill_querying_PACKAGED.md`,
+> which is the USA (AISC / ASCE) skill. The corpus is your IS corpus, built in the Steltic hub. Start from
+> `contract/INDIA_START.md`.
+
 Same pattern as every other Steltic bot (`steltic_grokbot/README.md`): create the bot, paste two prompts, done.
 **Steltic Nonlinear (SNL)** replaces the three separate bots (Pushover Analyst, Non Linear Dynamic Bot, DDM Steel App)
 — one upload of the Steltic package zip, one command, all three nonlinear analyses plus the four-analyses comparison.
