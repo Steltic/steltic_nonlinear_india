@@ -138,3 +138,4 @@ The BIS standards corpus is not published with this repo, because the standards 
 - CORPUS_FIX_LLM_INSTRUCTIONS.md: the owner's instructions for the corpus fix pass (replaces the placeholder)
 - CORPUS_FIX_LLM_INSTRUCTIONS.md: final version (matches the hub's bundled corpus module: validate probes, optional scripts/*.json, Import fixed corpus tab)
 - Query instructions: contract/QUERYING_IS_CORPUS.md in the Review prompt; the tool takes the canonical stems; INDIA_START / bootstrap / DDM notes point to it
+- NL-30: DDM sweeps that stop numerically (SOLVER_FAILURE) are re-run with dlam/2 then dlam/4 before they can block the gate; `steltic_ddm retry <job>` re-runs only those combinations in an existing ddm_results.json
