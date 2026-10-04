@@ -506,6 +506,34 @@ def nsp_acceptance_tables_status(cfg_or_job=None, job_dir: str | None = None) ->
     }
 
 
+def ddm_solver_stop_disclosable(r) -> bool:
+    """NL-31: a DDM SOLVER_FAILURE that is DISCLOSED instead of blocking. All of: a seismic-pattern combination whose
+    phi class has no phi_s pass/fail (SEIS -- the run is informational whatever it reaches); lambda_end >= 1; and the
+    NL-30 retries spent (three attempts -- dlam, dlam/2, dlam/4 -- every one SOLVER_FAILURE). Gravity and wind numerical
+    stops, a stop below lambda 1 and an un-retried stop still block (NL-24)."""
+    if not isinstance(r, dict) or r.get("status") != "SOLVER_FAILURE" or r.get("kind") != "seismic":
+        return False
+    phi = r.get("phi") or {}
+    if str(phi.get("cls") or "").upper() != "SEIS" or phi.get("phi_s") is not None:
+        return False
+    if float(r.get("lambda_end") or 0.0) < 1.0:
+        return False
+    rt = r.get("retries") or []
+    return len(rt) >= 3 and all(isinstance(x, dict) and x.get("status") == "SOLVER_FAILURE" for x in rt)
+
+
+def ddm_solver_stop_rows(job_dir) -> list[dict]:
+    """NL-31 rows for the gate checks and the disclosure file: one per disclosed seismic numerical stop."""
+    ddm = _read_json(os.path.join(job_dir, "ddm_results.json")) if job_dir else None
+    out = []
+    for r in (ddm or {}).get("runs") or []:
+        if ddm_solver_stop_disclosable(r):
+            out.append(dict(label=r.get("label"), imp=r.get("imp"), lambda_end=round(float(r.get("lambda_end") or 0.0), 4),
+                            termination=r.get("termination"), stop_tangent_ratio=r.get("stop_tangent_ratio"),
+                            retries=[dict(dlam=x.get("dlam"), lambda_end=x.get("lambda_end")) for x in r["retries"]]))
+    return out
+
+
 def method_disclosures(job_dir) -> list[dict]:
     """NL-21 method choices read back from the analysis packages: elastic gravity members (with their yield check) and
     record trimming. Empty when the job has no packages yet."""
@@ -525,6 +553,13 @@ def method_disclosures(job_dir) -> list[dict]:
     if trims and trims[0].get("method") not in (None, "none"):
         rows.append(dict(id="record_trimming", found=True, disclosed=True, method=trims[0].get("method"),
                          free_vib_s=trims[0].get("free_vib_s"), note=trims[0].get("basis")))
+    stops = ddm_solver_stop_rows(job_dir)
+    if stops:
+        rows.append(dict(id="ddm_seismic_solver_stop", found=True, disclosed=True, runs=stops,
+                         note="NL-31: DDM numerical stop on a seismic-pattern combination with no phi_s pass/fail, "
+                              "after the NL-30 retries (dlam, dlam/2, dlam/4), at lambda_end >= 1. The structure carried "
+                              "the combination to lambda_end; capacity beyond it is not established. Informational, as "
+                              "every SEIS-class DDM result is; disclosed, not blocking."))
     return rows
 
 
@@ -1241,7 +1276,8 @@ def artefact_gate(job_dir: str | None) -> dict:
       6 no spurious modes; participation sums <= 1;
       7 DDM: results exist, gravity transfer gate passed, every reported lambda_u is a detected limit point /
         plateau / ductility cap (NO_LIMIT_POINT runs are excluded; a gravity or wind NO_LIMIT_POINT below lambda 1
-        blocks; NL-24: a SOLVER_FAILURE -- numerical stop with the structure still stiff -- blocks, any kind); IS 800 B-1.2 section check at lambda = 1 present -- a B-1.2 failure gives
+        blocks; NL-24: a SOLVER_FAILURE -- numerical stop with the structure still stiff -- blocks, except (NL-31) a seismic
+        no-phi-check combination stopped at lambda >= 1 after the NL-30 retries, which is disclosed); IS 800 B-1.2 section check at lambda = 1 present -- a B-1.2 failure gives
         complete_with_capacity_shortfall;
       8 summaries (snl_summary.json) are FRESH: the package hashes they recorded match the files on disk;
       9 validate_nl_plan has no ERROR;
@@ -1317,7 +1353,11 @@ def artefact_gate(job_dir: str | None) -> dict:
             stt = r.get("status")
             if stt is None:
                 reasons.append("DDM run %s has no limit-point status (pre-WP4.9 results)" % r.get("label")); continue
-            if stt == "SOLVER_FAILURE":                       # NL-24: a numerical stop blocks honestly, any kind
+            if stt == "SOLVER_FAILURE" and ddm_solver_stop_disclosable(r):   # NL-31: seismic, no phi check, retried, >= 1
+                checks.setdefault("ddm_solver_stops_disclosed", []).append(
+                    dict(label=r.get("label"), imp=r.get("imp"), lambda_end=r.get("lambda_end")))
+                continue
+            if stt == "SOLVER_FAILURE":                       # NL-24: a numerical stop blocks honestly (gravity / wind, < 1, un-retried)
                 reasons.append("DDM %s: SOLVER FAILURE (equilibrium iterations failed after the algorithm ladder and all "
                                "step cuts and the arc-length rescue; %s) at lambda %.3f -- a numerical stop, not a structural limit" % (
                                    r.get("label"), r.get("termination"), r.get("lambda_end") or 0))

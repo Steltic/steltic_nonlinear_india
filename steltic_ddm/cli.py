@@ -42,8 +42,10 @@ def _worker(args):
                    fy_fn=(_india_fy_fn(job) if india else None), bow_hollow=opts.get("bow_hollow"))
     buf = io.StringIO()
     with contextlib.redirect_stderr(buf):
-        res = solver.sweep(g, combo, pres, dlam=opts["dlam"], max_steps=opts["max_steps"], verbose=True, time_limit=opts["time_limit"],
-                           strain_cap=opts.get("strain_cap"), capture_lambda1=india)
+        res = sweep_with_retries(lambda dl, k: solver.sweep(g, combo, pres, dlam=dl, max_steps=int(opts["max_steps"] * k),
+                                                           verbose=True, time_limit=opts["time_limit"] * k,
+                                                           strain_cap=opts.get("strain_cap"), capture_lambda1=india),
+                                 opts["dlam"], opts.get("retry_factors", (2, 4)), "%s imp %s" % (combo_label[:40], imp["tag"]))
     cls = solver.classify(res, g)
     b12 = None
     if india:
@@ -79,6 +81,30 @@ def _worker(args):
                                 mem={str(m): [round(r, 2), round(fr, 2)] for m, (r, fr) in f["mem"].items()},
                                 buckled=[int(t) for t in f["buckled"]]) for f in res.get("frames", [])]
     return dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12)
+
+
+def sweep_with_retries(do_sweep, dlam, factors=(2, 4), what=""):
+    """NL-30: a sweep that ends in SOLVER_FAILURE (a numerical stop with the structure still stiff) is re-run from the
+    start with a smaller load step -- dlam/2, then dlam/4 (the caller scales max steps and the time limit with it). The
+    first sweep that ends in a structural status (LIMIT_POINT / PLASTIC_PLATEAU / DUCTILITY_CAP / NO_LIMIT_POINT) is
+    the result; if every retry still stops numerically the last one is kept and stays SOLVER_FAILURE (the gate blocks
+    it). With more than one attempt, res["retries"] records each: dlam, status, termination, lambda_end, steps, seconds.
+    `do_sweep(dlam, k)` runs one sweep (k = the step reduction factor)."""
+    retries = []
+    ks = (1,) + tuple(factors or ())
+    res = None
+    for i, k in enumerate(ks):
+        res = do_sweep(dlam / k, k)
+        retries.append(dict(dlam=dlam / k, status=res.get("status"), termination=res.get("termination"),
+                            lambda_end=round(res.get("lambda_end") or 0.0, 4), steps=res.get("steps"),
+                            seconds=round(res.get("seconds") or 0.0, 1)))
+        if res.get("status") != "SOLVER_FAILURE" or i == len(ks) - 1:
+            break
+        print("   retry %-50s SOLVER_FAILURE at lambda %.3f -> re-run with dlam %.4g" % (
+            what[:50], res.get("lambda_end") or 0, dlam / ks[i + 1]), flush=True)
+    if len(retries) > 1:
+        res["retries"] = retries
+    return res
 
 
 _FY_CACHE = {}
@@ -374,6 +400,7 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
                               lambda_end=r["res"].get("lambda_end"), status=r["res"].get("status"), termination=r["res"].get("termination"),
                               b12=r.get("b12"), stop_tangent_ratio=r["res"].get("stop_tangent_ratio"),
                               control_mode=r["res"].get("control_mode"), ladder_used=r["res"].get("ladder_used"),
+                              retries=r["res"].get("retries"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
                                                                    steps=r["res"]["steps"], fails=r["res"].get("fails"), lam_at_1p25d=r["res"].get("lam_at_1p25d"),
                                                                    seconds=r["res"]["seconds"], log=r["res"]["log"], state=r["state"],
@@ -391,7 +418,7 @@ def _runs_from_results(d):
                    termination=r.get("termination"), first_yield=r.get("first_yield"), hist=r["hist"], steps=r["steps"], fails=r.get("fails"), lam_at_1p25d=r.get("lam_at_1p25d"),
                    seconds=r["seconds"], snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
                    log=r.get("log", []), frames=r.get("frames", []), stop_tangent_ratio=r.get("stop_tangent_ratio"),
-                   control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"))
+                   control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"), retries=r.get("retries"))
         runs.append(dict(combo=(r["label"],), summary=dict(kind=r["kind"]), res=res, cls=r["cls"], phi=r["phi"], check=r["check"], imp=r["imp"], state=r["state"],
                          b12=r.get("b12")))
     return runs
@@ -431,6 +458,85 @@ def report(args):
         report_ddm.write_block(job, block)
     print(">> report:", rep)
     _viewer(out_dir, nm, d.get("gate", {}), runs)
+    return rep
+
+
+def retry(args):
+    """NL-30: re-run, with the smaller-step retry ladder, every combination whose stored result is SOLVER_FAILURE (all its
+    imperfection cases, as `run` does) and replace those runs in ddm_results.json; then rebuild the report, the
+    ddm_analysis block and the viewer. The other runs, the gates, the sensitivity and the B-1.2 rows of the other
+    combinations are kept as they are."""
+    t0 = time.time()
+    job = os.path.abspath(args.job_dir)
+    engine_dir = args.steltic_engine or os.environ.get("STELTIC_ENGINE_DIR")
+    out_dir = args.out or job
+    d = json.load(open(os.path.join(out_dir, "ddm_results.json")))
+    bad = [r["label"] for r in d.get("runs") or [] if r.get("status") == "SOLVER_FAILURE"]
+    if not bad:
+        print(">> no SOLVER_FAILURE run in %s -- nothing to retry" % out_dir)
+        return None
+    nm = ingest.load_package(job, engine_dir)
+    cfg = nm.cfg
+    india = _is_india_cfg(cfg)
+    o = dict(d.get("options") or {})
+    opts = dict(nsub=list(o.get("nsub") or (2, 2, 4)), residual=o.get("residual", "lehigh"), Fy=o.get("Fy") if not india else None,
+                hardening=o.get("hardening", 0.002), fast=bool(o.get("fast")), nip=o.get("nip", 5), bow=o.get("bow"), psi=o.get("psi"),
+                dlam=o.get("dlam", 0.05), max_steps=o.get("max_steps", 250), time_limit=o.get("time_limit", 2400.0),
+                rigid_end_offset=o.get("rigid_end_offset", False), india=india, strain_cap=o.get("strain_cap"),
+                bow_hollow=o.get("bow_hollow"))
+    cases = loads.steltic_combos(cfg, nm=nm)
+    by_combo = {c[0]: c for c in cases}
+    gdirs = {"+X only": "one", "+X and +Y": "two", "±X and ±Y": "all"}.get(o.get("gravity_dirs"), "two")
+    tasks = [(job, engine_dir, lab, imp, opts) for lab in bad for imp in imperfections.cases_for(by_combo[lab], gravity_dirs=gdirs, psi=opts["psi"])]
+    print(">> NL-30 retry: %d combination(s) with SOLVER_FAILURE (%s) -> %d sweep(s) on %d worker(s)" % (
+        len(bad), "; ".join(bad), len(tasks), args.workers), flush=True)
+    results = []
+    if args.workers > 1 and len(tasks) > 1:
+        with mp.get_context("spawn").Pool(min(args.workers, len(tasks))) as pool:
+            for r in pool.imap_unordered(_worker, tasks):
+                results.append(r); _print_done(r)
+    else:
+        for t in tasks:
+            r = _worker(t); results.append(r); _print_done(r)
+    gov = {}
+    for r in results:
+        if r["label"] not in gov or r["res"]["lambda_end"] < gov[r["label"]]["res"]["lambda_end"]:
+            gov[r["label"]] = r
+    R = cfg.get("seis", {}).get("R")
+    from pushover.india_materials import is_tube
+    from . import portal_adapter as PA
+    hss = any(is_tube(m.section) for m in nm.members if m.kind == "brace")
+    rc = None if india else _rc(cfg, o.get("risk_category"))
+    runs = _runs_from_results(d)
+    for i, old in enumerate(runs):
+        r = gov.get(old["combo"][0])
+        if not r:
+            continue
+        c = by_combo[r["label"]]
+        summ = loads.combo_summary(c)
+        gov_braces = bool(r["cls"]["buckled_braces"]) or (r["cls"]["mechanism"].startswith("brace"))
+        ph = phi_s.choose(summ["kind"], R, r["cls"]["cls"], governed_by_braces=gov_braces, hss_braces=hss,
+                          material=("CFS-P" if PA.is_portal(cfg) else "HR"), risk_category=rc)
+        runs[i] = dict(combo=c, summary=summ, res=r["res"], cls=r["cls"], phi=ph, check=_check(ph, r["res"], india),
+                       imp=r["imp"], state=r["state"], b12=r.get("b12"))
+        print("   replaced %-40s %s -> %s (lambda_end %.3f)" % (r["label"][:40], "SOLVER_FAILURE", r["res"].get("status"),
+                                                                r["res"]["lambda_end"]), flush=True)
+    opts_rep = dict(o)
+    opts_rep["nsub"] = tuple(opts_rep.get("nsub", (2, 2, 4)))
+    opts_rep["section_log"] = [tuple(x) for x in opts_rep.get("section_log", [])]
+    if opts_rep.get("Fy") is None: opts_rep["Fy"] = cfg.get("Fy", 50.0)
+    opts_rep["risk_category"] = rc; opts_rep["india"] = india
+    opts_rep["gravity_gate"] = d.get("gravity_gate"); opts_rep["b11"] = d.get("b11_preconditions")
+    opts_rep.setdefault("n_cases", len(cases))
+    opts_rep["ddm_retry"] = dict(code="NL-30", combos=bad, sweeps=len(tasks), seconds=round(time.time() - t0),
+                                 result={lab: gov[lab]["res"].get("status") for lab in gov})
+    rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
+                         d.get("member_table", []), None, elapsed=d.get("elapsed_s"))
+    if not args.no_block:
+        report_ddm.write_block(job, block)
+    print(">> report:", rep)
+    _viewer(out_dir, nm, d.get("gate", {}), runs)
+    print(">> retry elapsed %.0f s" % (time.time() - t0))
     return rep
 
 
@@ -492,12 +598,17 @@ def main(argv=None):
     p = sub.add_parser("report", help="rebuild ddm_report.html, the ddm_analysis block and the viewer from ddm_results.json with the current phi_s policy (no re-analysis)")
     p.add_argument("job_dir"); p.add_argument("--out", default=None); p.add_argument("--steltic-engine", default=None)
     p.add_argument("--risk-category", default=None, choices=["I", "II", "III", "IV"]); p.add_argument("--no-block", action="store_true")
+    t = sub.add_parser("retry", help="NL-30: re-run the SOLVER_FAILURE combinations with smaller load steps and replace them in ddm_results.json")
+    t.add_argument("job_dir"); t.add_argument("--out", default=None); t.add_argument("--steltic-engine", default=None)
+    t.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2)))); t.add_argument("--no-block", action="store_true")
     s = sub.add_parser("selftest", help="column-curve regression + small frame")
     a = ap.parse_args(argv)
     if a.cmd == "run":
         return run(a)
     if a.cmd == "report":
         return report(a)
+    if a.cmd == "retry":
+        return retry(a)
     if a.cmd == "viewer":
         return viewer(a)
     if a.cmd == "selftest":
