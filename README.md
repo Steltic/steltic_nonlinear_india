@@ -1,7 +1,24 @@
-# steltic_nonlinear_india (SNL-IN) — India nonlinear checks on a steltic_india design package
+# Steltic Non Linear India
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Steltic/steltic_nonlinear_india?color=orange)](https://github.com/Steltic/steltic_nonlinear_india/releases)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](pyproject.toml)
+
+![Steltic Non Linear India](docs/img/social_nl.png)
+
+Pushover, NLRHA with records scaled to the IS 1893 elastic spectrum at DBE and MCE, and the Direct Design Method on a Steltic India design. IS 1893 (Part 1):2016 gives no acceptance criteria for nonlinear analysis, so results are for information.
+
+- **Start with the Hub:** most people install this module through
+  [Steltic Hub India](https://github.com/Steltic/steltic_hub_india), which sets everything up.
+- **See the output first:** 19 nonlinear runs with reports and 3D models at
+  [stelticai.com/india.html](https://stelticai.com/india.html).
+- **Setup video:** [YouTube](https://www.youtube.com/watch?v=lcKjj9wLcno).
+
+> Steltic assists with structural design but does not replace a licensed professional engineer. All output
+> must be independently verified.
+
 
 India fork of [`Steltic/steltic_nonlinear`](https://github.com/Steltic/steltic_nonlinear) (USA ASCE 41 / ASCE 7 Ch.16).
-**Do not modify the USA repo from this worktree.** Target publish: `Steltic/steltic_nonlinear_india` (bundle → Git manager).
 
 | step | engine | India authority | outputs |
 |---|---|---|---|
@@ -166,7 +183,7 @@ basis (D3). `snl/review.py` gathers the evidence from the files in the job folde
 COMPLETE gate's disclosures, any feedback loops) into one bounded document — every number from a file, nothing
 invented — and the model may call one tool, `search_engineering_standards`, which posts to `RAG_API_URL` (in the
 hub: the hub's IS corpus module, started for the run) with the `engineering_standards_IS*`
-collections (IS 1893, IS 800, IS 18168, IS 2062, IS 808, IS 875), so the clauses it cites are read from the corpus
+collections (IS 1893, IS 800, IS 18168, IS 2062 (Part 1), IS 808, IS 875), so the clauses it cites are read from the corpus
 and cited with their page; a clause it could not find is marked UNVERIFIED. Outputs: `review.md`, `review.html`,
 `review_transcript.json` (the evidence and every passage read).
 
