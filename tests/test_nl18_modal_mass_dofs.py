@@ -1,5 +1,5 @@
 """NL-18: the modal analysis asks for no more modes than the model has real mass DOFs. The NL builders put a numerical
-mass (1e-8 x the smallest storey mass) on every DOF; asking 12 modes of the 2-level IN_Ex5 (6 real mass DOFs) went
+mass (1e-8 x the smallest storey mass) on every DOF; asking 12 modes of the 2-level IN_Ex6 (6 real mass DOFs) went
 into those local modes, ARPACK did not converge and returned zero-mass "modes" at T ~ 6e6 s that the spurious-mode
 check flagged, blocking COMPLETE on a sound model."""
 import os
@@ -27,9 +27,9 @@ def test_n_mass_dofs_ignores_numerical_mass():
 
 def test_gold_ex5_has_no_spurious_modes():
     eng = os.environ.get("STELTIC_ENGINE_DIR", "")
-    src = os.path.join(os.environ.get("STELTIC_GOLD_JOBS", "/home/claude/gold/jobs_hr"), "IN_Ex5_OMRF_warehouse_mezzanine_Hyderabad")
+    src = os.path.join(os.environ.get("STELTIC_GOLD_JOBS", "/home/claude/gold/jobs_hr"), "IN_Ex6_OMRF_warehouse_mezzanine_Hyderabad")
     if not (os.path.isdir(src) and os.path.exists(os.path.join(eng, "static_model.py"))):
-        pytest.skip("gold IN_Ex5 or $STELTIC_ENGINE_DIR not available")
+        pytest.skip("gold IN_Ex6 or $STELTIC_ENGINE_DIR not available")
     d = tempfile.mkdtemp(); job = os.path.join(d, "ex5")
     shutil.copytree(src, job, ignore=shutil.ignore_patterns("figs", "report.html", "viewer_3d.html"))
     try:

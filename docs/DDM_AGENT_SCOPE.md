@@ -1,5 +1,7 @@
 # Steltic DDM Agent — Scoping Document
 
+> **Numbering note (2026-10):** this is a dated record. Example brief numbers in it (IN_ExN, IN_CFS_ExN and short forms such as Ex9) use the numbering **before** the 2026-10 renumbering. Map: `steltic_india/test_buildings/RENUMBERING_2026-10.md`.
+
 > **INDIA FORK — read first (owner rulings D3/D6/D7, 2026-09-20).** For India jobs the governing documents are
 > IS 1893 (Part 1):2016 + Amd 1–2, IS 800:2007, IS 18168:2023, IS 875, IS 2062, IS 808 / IS 1161 (corpus stems
 > `IS_1893_Part_1_2016`, `IS_800_2007`, `IS_18168_2023`, `IS_2062_Part_1_2025`). The NL target is the IS 1893 **elastic**

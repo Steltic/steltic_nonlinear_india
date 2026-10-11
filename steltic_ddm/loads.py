@@ -230,7 +230,7 @@ def beam_udl(cfg, nm, pres, member, seg_index, nseg, fD, fL, fLr, span=None):
     pLr = (cfg.get("snow") if cfg.get("snow") is not None else snow_default) if roof else 0.0
     if roof and _india_roof_live(cfg) is not None:
         # India: roof imposed load (IS 875-2) from load_plan.gravity_summary.L_roof_kNm2 is the fLr term (WP4.9 gravity
-        # gate: the Ex1 roof beams were loaded with D only) -- plus snow when the plan has one
+        # gate: the IN_Ex13 roof beams were loaded with D only) -- plus snow when the plan has one
         pLr = _india_roof_live(cfg) + float(cfg.get("snow") or 0.0)
     p = fD * pD + fL * pL + fLr * pLr
     nb = _bays_adjacent(pres.get(k, set()), i, j, member.dirn)

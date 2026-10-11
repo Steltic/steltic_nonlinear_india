@@ -41,25 +41,25 @@ STOP="$GOLD_NL/STOP_BATCH"
 SKIPF="$GOLD_NL/SKIP_JOBS"
 
 # smallest first (elements in the HR model_opensees.py)
-JOBS_DEFAULT="IN_Ex11_SMF_3levels_Zplan_school_Chandigarh/unitC_gym
-IN_Ex3_SMF_portal_Chennai_wind
-IN_Ex11_SMF_3levels_Zplan_school_Chandigarh/unitB_link
-IN_Ex11_SMF_3levels_Zplan_school_Chandigarh
-IN_Ex5_OMRF_warehouse_mezzanine_Hyderabad
-IN_Ex14_Crane_bay_OMRF_OCBF_Vizag
-IN_Ex8_OCBF_4levels_splitlevel_Jaipur/units/workshop
-IN_Ex13_SCBF_bigbox_flexdiaphragm_Indore
-IN_Ex15_Gable_warehouse_SMF_SCBF_snow_Shimla
-IN_Ex8_OCBF_4levels_splitlevel_Jaipur
-IN_Ex9_EBF_12levels_Tplan_Guwahati/units/stem
-IN_Ex12_SMF_podium_11levels_Kochi
-IN_Ex1_SCBF_5levels_Delhi
-IN_Ex2_SMF_office_Mumbai
-IN_Ex4_SCBF_hospital_Kolkata
-IN_Ex10_SCBF_18levels_slender_Noida
-IN_Ex6_EBF_8levels_Lplan_Pune
-IN_Ex7_SCBF_10levels_Ahmedabad
-IN_Ex9_EBF_12levels_Tplan_Guwahati"
+JOBS_DEFAULT="IN_Ex12_SMF_3levels_Zplan_school_Chandigarh/unitC_gym
+IN_Ex8_SMF_portal_Chennai_wind
+IN_Ex12_SMF_3levels_Zplan_school_Chandigarh/unitB_link
+IN_Ex12_SMF_3levels_Zplan_school_Chandigarh
+IN_Ex6_OMRF_warehouse_mezzanine_Hyderabad
+IN_Ex7_Crane_bay_OMRF_OCBF_Vizag
+IN_Ex11_OCBF_4levels_splitlevel_Jaipur/units/workshop
+IN_Ex10_SCBF_bigbox_flexdiaphragm_Indore
+IN_Ex9_Gable_warehouse_SMF_SCBF_snow_Shimla
+IN_Ex11_OCBF_4levels_splitlevel_Jaipur
+IN_Ex19_EBF_12levels_Tplan_Guwahati/units/stem
+IN_Ex18_SMF_podium_11levels_Kochi
+IN_Ex13_SCBF_5levels_Delhi
+IN_Ex16_SMF_office_Mumbai
+IN_Ex14_SCBF_hospital_Kolkata
+IN_Ex20_SCBF_18levels_slender_Noida
+IN_Ex15_EBF_8levels_Lplan_Pune
+IN_Ex17_SCBF_10levels_Ahmedabad
+IN_Ex19_EBF_12levels_Tplan_Guwahati"
 JOBS="${ONLY_JOBS:-$JOBS_DEFAULT}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S %z')] $*" | tee -a "$LOG"; }

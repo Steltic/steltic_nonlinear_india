@@ -1,5 +1,7 @@
 # USA → India sync, 2026-09-26
 
+> **Numbering note (2026-10):** this is a dated record. Example brief numbers in it (IN_ExN, IN_CFS_ExN and short forms such as Ex9) use the numbering **before** the 2026-10 renumbering. Map: `steltic_india/test_buildings/RENUMBERING_2026-10.md`.
+
 Branches `usa-sync-2026-09` in `work/steltic_nonlinear_india` (8 commits) and `work/steltic_hub_india` (4 commits).
 Every commit message is `USA-SYNC <sha>: <what>, adapted for India: <how>`, with the requested trailer.
 

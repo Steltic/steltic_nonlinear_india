@@ -1,5 +1,7 @@
 # India nonlinear (steltic_nonlinear_india) -- first-pass review and fix, 2026-09-27
 
+> **Numbering note (2026-10):** this is a dated record. Example brief numbers in it (IN_ExN, IN_CFS_ExN and short forms such as Ex9) use the numbering **before** the 2026-10 renumbering. Map: `steltic_india/test_buildings/RENUMBERING_2026-10.md`.
+
 Repo `/home/claude/nl/work/steltic_nonlinear_india`, branch `review-fix-2026-09` (from `usa-sync-2026-09`), commits NL-1 .. NL-27.
 HR engine reference: `/home/claude/work/steltic_india` fix/2026-09-review @ 3ec586a. Hub (`steltic_hub_india`) not touched -- no NL
 fix needed it (the NLRHA viewer it links now exists, NL-11).

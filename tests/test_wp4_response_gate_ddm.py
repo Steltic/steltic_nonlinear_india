@@ -12,7 +12,7 @@ FIX = os.path.join(ROOT, "tests", "fixtures")
 
 def _pkg(system="SMF"):
     from pushover import package_reader as PR
-    pkg = PR.load(os.path.join(FIX, "IN_Ex2_pkg"))
+    pkg = PR.load(os.path.join(FIX, "IN_Ex16_pkg"))
     pkg.basis.system = system
     return pkg
 
@@ -78,7 +78,7 @@ def test_nsp_india_uses_elastic_spectrum_ex1_x_dbe():
     """Ex1 X (existing package curve and coefficients): Sa(Te)=0.300 g at DBE -> delta_t ~ 0.28 in (7 mm)."""
     from pushover import postprocess as PP, package_reader as PR, hinge_models as HM
     import csv
-    pkg = PR.load(os.path.join(FIX, "IN_Ex1_pkg"))
+    pkg = PR.load(os.path.join(FIX, "IN_Ex13_pkg"))
     u, V = [], []
     for row in csv.DictReader(open(os.path.join(FIX, "ex1_curve_X_shipped.csv"))):
         u.append(float(row["roof_disp_in"])); V.append(float(row["base_shear_kip"]))

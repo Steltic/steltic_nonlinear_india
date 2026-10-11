@@ -1,4 +1,4 @@
-"""Standalone OpenSeesPy model for IN_Ex1_SCBF_5levels_Delhi -- SCBF.
+"""Standalone OpenSeesPy model for IN_Ex13_SCBF_5levels_Delhi -- SCBF.
 Auto-generated from the design cfg; rebuilds the EXACT analysis model.
 Run:  python model_opensees.py   (prints node/element counts + modal periods)."""
 import math

@@ -3,6 +3,8 @@
 Commit: **69701f6070706e5d2adc6fefaea16b42c9f4e221** [steltic_india main] (branch `fix/2026-09-review`: 0.3.0 release notes plus O1/O2/O3, GOLD-1..7, AUD-1..4,
 GOLD-764, GOLD-COLL, AUD-1 Windows, and the corpus wording: no reference to a corpus repository).
 
+**2026-10 re-sync:** the vendored files were rewritten together with `steltic_india` branch `fix/2026-10-peb-briefs` (the 2026-10 renumbering of the example briefs: brief ids in comments, docstrings and one message string; no logic change). Merged steltic_india commit: **(record after the steltic_india PR merges)**.
+
 Files (byte-identical copies of `steltic_india/steel_engine/<file>`): india_loads.py, india_seismic.py,
 india_units.py, india_wind_tables.py, india_combos.py, india_is18168.py, india_seismic_gates.py,
 india_omega_is18168.py, preflight.py.

@@ -19,26 +19,26 @@ Deferred: full Ch.16-suite-numeric replacement (no IS analogue), full SI engine 
 
 ## DDM λu < 1 on wind/EQ (capacity finding, not a missing feature)
 
-IN_Ex1 SCBF Delhi NL reported governing **λu = 0.651** on `1.2DL+1.2LL+1.2W_X` after India combo
+IN_Ex13 SCBF Delhi NL reported governing **λu = 0.651** on `1.2DL+1.2LL+1.2W_X` after India combo
 prune + transfer-gate EQ_X/Y + CHS brace fibre patches. Treat as a **capacity finding** when the
 engine/transfer gate is correct — do **not** invent λu≥1 or silently drop the governing combo.
 Disclose φs·λu < 1.0 and hand back to HR for resize if the brief requires pass.
 
 ## NL polish Wave E (honesty emitters — confirm)
 
-On tip after Ex1 partial merge (`c689de0`+), COMPLETE gate disclosures are durable:
+On tip after IN_Ex13 partial merge (`c689de0`+), COMPLETE gate disclosures are durable:
 
 - `nlrha.india_authority.nsp_acceptance_tables_status()` → **found:false**; prefer fibre; hinge_params UNVERIFIED
 - `nlrha.india_authority.complete_gate_disclosures()` / `write_complete_gate_disclosures(out_dir)` → writes `complete_gate_disclosures.json` (pushover + nlrha out dirs)
 - `asce_16_1_2_drift_relief_analogue` → **found:false**; `feedback_drift_loop: ineligible` (`snl/feedback.py` `drift_plan`)
 - **No invent:** do not fabricate IS NSP IO/LS/CP tables or an IS waiver of 7.11.1.1 after time-history
 
-## Modal pattern T-floor (IN_Ex3 Y)
+## Modal pattern T-floor (IN_Ex8 Y)
 
 `pushover.nonlinear_model.modal_pattern` applies a **numerical** min period
-`DEFAULT_MIN_T_S = 0.02` s (~50 Hz) plus the Ex1 ≥5% mass / alignment pick.
+`DEFAULT_MIN_T_S = 0.02` s (~50 Hz) plus the IN_Ex13 ≥5% mass / alignment pick.
 This is an engineering sanity filter for spurious stiff eigenmodes — **not** an
-IS 1893 / ASCE approximate-period provision. IN_Ex3 Chennai Y previously selected
+IS 1893 / ASCE approximate-period provision. IN_Ex8 Chennai Y previously selected
 mode 10 at T≈0.0007 s with ~100% mass; re-run Y pushover after this tip.
 
 ## COMPLETE gate (Michael 2026-09-20)

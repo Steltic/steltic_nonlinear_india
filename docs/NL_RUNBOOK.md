@@ -1,5 +1,7 @@
 # India NL runbook -- producing a "gold NL solution" for an HR gold building
 
+> **Numbering note (2026-10):** this is a dated record. Example brief numbers in it (IN_ExN, IN_CFS_ExN and short forms such as Ex9) use the numbering **before** the 2026-10 renumbering. Map: `steltic_india/test_buildings/RENUMBERING_2026-10.md`.
+
 Repo: `/home/claude/nl/work/steltic_nonlinear_india` branch `review-fix-2026-09` (NL-1..NL-27). For long runs use a frozen
 worktree so edits cannot change code under a running job: `git -C <repo> worktree add --detach /home/claude/nl/run_repo review-fix-2026-09`
 (then `git -C /home/claude/nl/run_repo checkout --detach review-fix-2026-09` to refresh). All commands below run from that worktree.

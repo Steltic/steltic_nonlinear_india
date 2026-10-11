@@ -27,7 +27,7 @@ ALL = ["material", "overstrength", "deformation_capacity", "spectrum", "damping"
 
 
 def _job(tmp_path=None):
-    return india_nl_job.make(outputs=False)          # a fresh project: the IN_Ex1 package, nothing collected yet
+    return india_nl_job.make(outputs=False)          # a fresh project: the IN_Ex13 package, nothing collected yet
 
 
 def _events(buf):

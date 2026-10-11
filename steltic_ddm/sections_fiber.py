@@ -317,7 +317,7 @@ class FiberSectionBuilder:
     @staticmethod
     def fillet_fibres(r, sc, A_pl, Ix_pl, hw):
         """NL-24: the plate model of a rolled I-section omits the root fillets -- 2.4-6 % of A, 3-6 % of Ix and Zx for
-        the IS 808 NPB/WPB shapes (IN_Ex5 GMNIA roof drift 5.3 % above the HR model; fibre Mp 3-6 % below the HR
+        the IS 808 NPB/WPB shapes (IN_Ex6 GMNIA roof drift 5.3 % above the HR model; fibre Mp 3-6 % below the HR
         Zp fy). Two fibres (area A_cat - A_plate) at the web-flange junctions, at the lever arm that restores the
         catalogue Ix (capped at the junction), make A and Ix equal to the catalogue and Zp close to it. None when the
         catalogue row has no A / Ix or is not larger than the plate model."""

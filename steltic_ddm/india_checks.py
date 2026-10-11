@@ -223,7 +223,7 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
             rows.append(row)
             if worst is None or abs(ratio - 1) > abs(worst["ratio"] - 1):
                 worst = row
-    # NL-16: a noise floor. A +/-5 % ratio on a near-zero force is not a load-transfer test (IN_Ex9 stem floor beams:
+    # NL-16: a noise floor. A +/-5 % ratio on a near-zero force is not a load-transfer test (IN_Ex19 stem floor beams:
     # 8.0 vs 8.6 kN-m on a WPB320X300X126.66, M_p = 535 kN-m at 250 MPa). A row outside the ratio band still passes when the
     # absolute difference is <= abs_frac (2 %) of the member's own plastic capacity at 250 MPa (M_p = 250 Z_p for
     # beams, P_y = 250 A for columns -- the lowest IS 2062 grade, so the floor is never larger than 2 % of the real

@@ -74,9 +74,9 @@ def test_enabled_defaults(monkeypatch):
 
 def test_gold_ex1_classification_and_promotion(tmp_path, monkeypatch):
     import shutil
-    src = os.path.join(GOLD, "IN_Ex1_SCBF_5levels_Delhi")
+    src = os.path.join(GOLD, "IN_Ex13_SCBF_5levels_Delhi")
     if not os.path.isdir(src):
-        pytest.skip("gold IN_Ex1 not available")
+        pytest.skip("gold IN_Ex13 not available")
     monkeypatch.delenv("SNL_GRAVITY_ELASTIC", raising=False)
     job = tmp_path / "ex1"
     shutil.copytree(src, job, ignore=shutil.ignore_patterns("figs", "report.html", "viewer_3d.html"))

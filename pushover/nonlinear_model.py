@@ -562,7 +562,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
 
 
 # Numerical floor on building sway period (seconds). Not a code provision —
-# rejects spurious stiff eigenmodes (IN_Ex3 Chennai Y picked mode 10 at
+# rejects spurious stiff eigenmodes (IN_Ex8 Chennai Y picked mode 10 at
 # T≈0.0007 s with ~100% mass on a single-storey portal). Real industrial /
 # building sway modes sit well above ~0.02 s (f ≈ 50 Hz). Documented as an
 # engineering sanity filter only; do not cite as IS 1893 / ASCE Ta.
@@ -579,8 +579,8 @@ def select_modal_candidate(cands, min_meff_frac=0.05, min_T=DEFAULT_MIN_T_S):
       4. all candidates                                    (last-resort fallback)
 
     Covers:
-      - IN_Ex1 X: soft T≈64 s / ~0% mass skipped via mass gate
-      - IN_Ex3 Y: stiff T≈0.001 s / ~100% mass skipped via T-floor
+      - IN_Ex13 X: soft T≈64 s / ~0% mass skipped via mass gate
+      - IN_Ex8 Y: stiff T≈0.001 s / ~100% mass skipped via T-floor
     """
     if not cands:
         raise ValueError("select_modal_candidate: empty candidate list")
@@ -611,17 +611,17 @@ def modal_pattern(pkg, direction, nmodes=12, min_meff_frac=0.05, min_T=DEFAULT_M
     (default 0.02 s — numerical building-mode floor, not a code Ta).
 
     Spurious modes skipped:
-      - near-zero-mass soft modes (IN_Ex1 X: T≈64 s / ≈0% mass)
-      - unrealistically short stiff modes (IN_Ex3 Y: T≈0.001 s / ≈100% mass)
+      - near-zero-mass soft modes (IN_Ex13 X: T≈64 s / ≈0% mass)
+      - unrealistically short stiff modes (IN_Ex8 Y: T≈0.001 s / ≈100% mass)
 
-    Root cause of IN_Ex1 X anomaly (T1≈64 s, ≈0% mass): the previous selector
+    Root cause of IN_Ex13 X anomaly (T1≈64 s, ≈0% mass): the previous selector
     seeded `best` with mode 1 unconditionally (`best is None`), then required
     both higher meff *and* directional purity vs the *previous* candidate. A
     soft mode-1 with ~0% mass could stick when the true X fundamental sat past
     the old nmodes=6 window or failed the chained gate. Y happened to hit mode 6
     with 86% mass inside that window.
 
-    Root cause of IN_Ex3 Y anomaly (T1≈0.001 s, ≈100% mass): mass-only ranking
+    Root cause of IN_Ex8 Y anomaly (T1≈0.001 s, ≈100% mass): mass-only ranking
     preferred a high-frequency local/stiff eigenmode that projected onto the
     diaphragm master; a T-floor rejects it in favour of a real building sway mode.
     """
