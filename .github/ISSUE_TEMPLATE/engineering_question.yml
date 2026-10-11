@@ -1,0 +1,15 @@
+name: Engineering or code question
+description: A design result or IS clause interpretation looks wrong
+labels: [engineering]
+body:
+  - type: input
+    id: clause
+    attributes: {label: Standard and clause, placeholder: "IS 800:2007 cl. 12.11.3.2"}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: What the report says and what you expected, description: "Quote the report line and the clause text."}
+    validations: {required: true}
+  - type: textarea
+    id: job
+    attributes: {label: Job, description: "Example id or brief, and the governing member / connection."}
