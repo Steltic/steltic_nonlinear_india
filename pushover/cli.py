@@ -226,6 +226,7 @@ def _run_india(args, pkg, t0):
     print("[pushover] India: gravity = IS seismic weight %.1f kN; mass gate %s" % (
         sum(r["W_kN"] for r in gtable), (pkg.calc or {}).get("_is_mass_gate", {}).get("ok")))
     runs, results, stats = {}, {}, None
+    brace_dims = {}
 
     def estimator(pat):
         T = pat["T1"]; out_ = []
@@ -237,6 +238,7 @@ def _run_india(args, pkg, t0):
     for d in args.dirs:
         hinges, stats = NM.build_nonlinear(pkg, prm, PG)
         rec = MR.MemberRecorder(pkg, hinges, stats)
+        brace_dims.update({b["tag"]: (b["dc"], b["dT"]) for b in rec.braces})
         run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
                           tail_strategies=strategies, recorder=rec, target_estimator=estimator,
                           stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
@@ -262,6 +264,11 @@ def _run_india(args, pkg, t0):
             f.write("roof_disp_mm,base_shear_kN\n")
             for u, v in zip(run["rec"]["u"], run["rec"]["V"]):
                 f.write("%.3f,%.2f\n" % (u * 25.4, v * 4.4482216152605))
+    try:                                                         # NL-32: the India viewer (never hides the report)
+        from . import viewer3d_india as V3I
+        print("viewer", V3I.write_from_run(out, pkg, runs, results, brace_dims))
+    except Exception as ex:                                      # noqa: BLE001
+        print("viewer failed:", ex)
     _copy_params(args.params or HM.default_params_path("india"), os.path.join(out, "hinge_params_used.json"))
     print("wrote", html_path, "(%.0f s)" % (time.time() - t0))
     return results

@@ -168,6 +168,11 @@ def flagged_elastic(job, step) -> list:
 
 
 def _hub(job):
+    try:                                                         # NL-32: India pushover viewer (full data, else lite)
+        from pushover import viewer3d_india as V3I
+        V3I.ensure(job)
+    except Exception:
+        pass
     try:
         from pushover import viewer_core as VC
         VC.write_hub(job)
