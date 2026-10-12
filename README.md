@@ -43,15 +43,39 @@ Corpus: **your IS corpus only** (built in the Steltic hub from your own licensed
 
 ## Install
 
-```bash
-git clone <this repo> steltic_nonlinear_india && cd steltic_nonlinear_india
-python3.12 -m venv .venv && . .venv/bin/activate        # openseespy: Python 3.10–3.12 only
+Most people should start with [Steltic Hub](https://github.com/Steltic/steltic_hub_india), which sets this up with
+the design module it needs. To install it on its own (Python 3.10–3.12):
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/Steltic/steltic_nonlinear_india
+cd steltic_nonlinear_india
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -e .                                        # openseespy, numpy, scipy, matplotlib; ground motions ship in records/
+$env:STELTIC_ENGINE_DIR = "C:\path\to\steltic_india\steel_engine"   # India: load_plan combos via india_loads
+# First India job: start from examples/India_package_stub (interface) or a real steltic_india package zip
+python -m snl inspect examples/Ex22_SMF                 # USA regression fixture only (not India authority)
+python -m snl report  examples/Ex22_SMF
+```
+
+**macOS / Linux**
+
+```bash
+git clone https://github.com/Steltic/steltic_nonlinear_india
+cd steltic_nonlinear_india
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e .
 export STELTIC_ENGINE_DIR=/path/to/steltic_india/steel_engine  # India: load_plan combos via india_loads
 # First India job: start from examples/India_package_stub (interface) or a real steltic_india package zip
 python -m snl inspect examples/Ex22_SMF                 # USA regression fixture only (not India authority)
-python -m snl report  examples/Ex22_SMF                 # rebuild the four-analyses sheet from the shipped outputs (no analysis)
+python -m snl report  examples/Ex22_SMF
 ```
+
+`STELTIC_ENGINE_DIR` points at the `steel_engine` folder of a `git clone` of
+[steltic_india](https://github.com/Steltic/steltic_india).
 
 ## IS corpus (standards grounding)
 
