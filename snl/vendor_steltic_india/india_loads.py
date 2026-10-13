@@ -751,7 +751,7 @@ def resolve_building_length_m(cfg, *, bay_spacing_m=None, n_bays=None, n_frames=
         ],
         "brief_field_required": "building_length_m",
         "note": (
-            "Brief gave frame spacing but not building length (IN_Ex3 pattern). "
+            "Brief gave frame spacing but not building length (IN_Ex8 pattern). "
             "Do not silently assume L=36 m — set cfg building_length_m or document the assumption with cite."
         ),
     }

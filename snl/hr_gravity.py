@@ -2,7 +2,7 @@
 
 The NL models used private gravity idealisations: the pushover / NLRHA put each level's seismic weight W_i as equal
 point loads on the diaphragm nodes (no beam gravity moments, no tributary column axials), and the DDM re-derived
-two-way 45-degree tributary line loads from cfg pressures -- on IN_Ex3 (one-way portal roof) its rafter moments were
+two-way 45-degree tributary line loads from cfg pressures -- on IN_Ex8 (one-way portal roof) its rafter moments were
 27-35 % of the HR design values and its gravity-transfer gate failed. This module asks steltic_india itself
 (static_model.build_static + apply_gravity_state, the functions the HR design uses) for the element and nodal loads
 of unit load states and stores them in <job>/nl_hr_gravity.json:

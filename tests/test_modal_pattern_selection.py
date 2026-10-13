@@ -1,7 +1,7 @@
 """Pure unit test for modal_pattern selection policy (no OpenSees solve).
 
 Replicates / imports the ranking used in pushover.nonlinear_model so regressions
-like IN_Ex1 X (T≈64 s / ~0% mass) and IN_Ex3 Y (T≈0.001 s / ~100% mass) cannot
+like IN_Ex13 X (T≈64 s / ~0% mass) and IN_Ex8 Y (T≈0.001 s / ~100% mass) cannot
 return.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ def _select(cands, min_meff_frac=0.05, min_T=DEFAULT_MIN_T_S):
 
 
 def test_skips_spurious_soft_mode_zero_mass():
-    # Mode 1: soft, ~0% mass (IN_Ex1 X anomaly). Mode 3: real X, 78% mass.
+    # Mode 1: soft, ~0% mass (IN_Ex13 X anomaly). Mode 3: real X, 78% mass.
     cands = [
         dict(meff=1e-9, frac=0.0, T=64.2, mode=1, aligned=False),
         dict(meff=0.02, frac=0.02, T=1.1, mode=2, aligned=True),
@@ -47,7 +47,7 @@ def test_fallback_to_max_meff_when_none_clear_threshold():
 
 
 def test_rejects_near_zero_T_despite_full_mass():
-    # IN_Ex3 Chennai Y: mode 10 T≈0.0007 s / 100% mass beat real sway (~0.3 s).
+    # IN_Ex8 Chennai Y: mode 10 T≈0.0007 s / 100% mass beat real sway (~0.3 s).
     cands = [
         dict(meff=0.85, frac=0.85, T=0.32, mode=2, aligned=True),
         dict(meff=1.00, frac=1.00, T=0.0007, mode=10, aligned=True),

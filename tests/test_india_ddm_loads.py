@@ -1,7 +1,7 @@
 """Wave 1 / NL-2: DDM combination path prefers the India load_plan; refuses bare India jurisdiction.
 
 The fixtures follow the current steltic_india load_plan contract (india_loads.validate_load_plan): a load_plan with
-no IS 875-3 retrieval must say `no_wind` with a reason (S5/H2 wind gate), and the gold IN_Ex3 load_plan (IS 1893
+no IS 875-3 retrieval must say `no_wind` with a reason (S5/H2 wind gate), and the gold IN_Ex8 load_plan (IS 1893
 RSA combinations, 7.8.2 [ea]/[eb] torsion rows, IS 18168 [col] Omega rows) must validate and expand."""
 from __future__ import annotations
 import json, os, sys
@@ -16,7 +16,7 @@ if _ENG and _ENG not in sys.path:
 
 from steltic_ddm import loads  # noqa: E402
 
-FIX = os.path.join(ROOT, "tests", "fixtures", "IN_Ex3_gold", "load_plan.json")
+FIX = os.path.join(ROOT, "tests", "fixtures", "IN_Ex8_gold", "load_plan.json")
 
 
 def test_india_without_load_plan_raises():

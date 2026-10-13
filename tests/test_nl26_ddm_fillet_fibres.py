@@ -1,5 +1,5 @@
 """NL-26: DDM (GMNIA) fibre I-sections carry the root fillets, so A, Ix and Zp equal the IS 808 catalogue values the HR
-design uses. The plate model (d, tw, bf, tf only) was 2-6 % low on NPB / WPB shapes and IN_Ex5 failed the DDM elastic
+design uses. The plate model (d, tw, bf, tf only) was 2-6 % low on NPB / WPB shapes and IN_Ex6 failed the DDM elastic
 transfer gate (roof X 1.053 > 1.05; 1.001 with the fillets). The pushover / NLRHA fibre sections (same builder,
 fillets=False by default) are unchanged.
 """

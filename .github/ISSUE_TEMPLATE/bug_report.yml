@@ -15,7 +15,7 @@ body:
     attributes: {label: LLM and provider, placeholder: "e.g. model name via provider, or MOCK"}
   - type: textarea
     id: what
-    attributes: {label: What happened, description: "Steps, the brief or example (in1 … in15), and the error text."}
+    attributes: {label: What happened, description: "Steps, the brief or example (in1 … in20 on HR Steel, in1 … in15 on CFS), and the error text."}
     validations: {required: true}
   - type: textarea
     id: logs

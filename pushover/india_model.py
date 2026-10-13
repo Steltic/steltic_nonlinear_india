@@ -108,7 +108,7 @@ def is_gravity_loads(pkg):
     NL-14: the HR engine's own seismic-weight gravity state (snl.hr_gravity 'EV': dead incl. cladding line loads and
     member self-weight, Table 10 share of the floor imposed load, nodal dead loads -- element by element, as the HR
     design distributes it), topped up per level to the package's W_i with equal shares on the level's diaphragm
-    nodes (the HR EV state counts partitions in the imposed share, W at 100 %: IN_Ex1 360 kN / floor). Without the
+    nodes (the HR EV state counts partitions in the imposed share, W at 100 %: IN_Ex13 360 kN / floor). Without the
     HR engine the whole W_i goes on the diaphragm nodes (the former idealisation), and the table says so.
     Returns ({node: Pz kip, '_hr': HR loads}, table)."""
     from snl.india_units import KN_TO_KIP

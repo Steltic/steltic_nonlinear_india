@@ -276,7 +276,7 @@ be shipped alone; `tests/test_snl.py` asserts they match.
 (against `tests/fake_hr.py`, a stand-in HR Steel server), `test_site_hazard.py` (canned USGS responses, no network) and
 `test_design_criteria.py` cover the feedback loops, the site-specific hazard and the 16.1.4 document; `test_review.py` drives the
 review against a fake OpenAI-compatible server and a fake IS standards server (stdlib, no network, no model) on
-`tests/india_nl_job.py`, the IN_Ex1 package with synthetic outputs in the India package shapes. `test_snl.py` covers packaging, the
+`tests/india_nl_job.py`, the IN_Ex13 package with synthetic outputs in the India package shapes. `test_snl.py` covers packaging, the
 identical viewer cores, zip unpacking, `snl report`, the `snl run` step selection with stubbed engines, and the
 four-analyses sheet regenerated from both examples; `test_pushover.py`, `test_nlrha.py` and `test_ddm.py` are the three
 engines' own smoke tests pointed at the packaged examples (the DDM Ex18 ingest/gate test needs `STELTIC_ENGINE_DIR`);

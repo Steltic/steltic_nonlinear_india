@@ -1,9 +1,9 @@
-"""NL-24: DDM solver robustness and the deck-beam transformation (IN_Ex11 gate partial, IN_Ex11 unitC_gym shortfall).
+"""NL-24: DDM solver robustness and the deck-beam transformation (IN_Ex12 gate partial, IN_Ex12 unitC_gym shortfall).
 
-  * IN_Ex11 1.5DL+1.5LL stopped at lambda 0.977 ("step_exhausted", reported NO_LIMIT_POINT below lambda 1) on NPB700
+  * IN_Ex12 1.5DL+1.5LL stopped at lambda 0.977 ("step_exhausted", reported NO_LIMIT_POINT below lambda 1) on NPB700
     floor girders whose HR elastic D/C is 0.983: the Corotational girders inside the rigid diaphragm picked up catenary
     tension (1.5 MN) and yielded early; the solver then gave up after one KrylovNewton try and six step cuts.
-  * IN_Ex11 unitC_gym 1.5DL+1.5LL: B-1.2 D/C 1.018 on the 17 m NPB700 roof girder from +335 kN catenary tension
+  * IN_Ex12 unitC_gym 1.5DL+1.5LL: B-1.2 D/C 1.018 on the 17 m NPB700 roof girder from +335 kN catenary tension
     (HR: N = 0, M = 996.6 kN-m, D/C 0.960).
 Fixes: horizontal beams inside one rigid diaphragm use P-Delta (like the HR design and the NL pushover / NLRHA models);
 algorithm ladder + tolerance fallback + arc-length rescue; a numerical stop with the structure still stiff is
@@ -22,7 +22,7 @@ sys.path.insert(0, ROOT)
 
 GOLD = os.environ.get("STELTIC_GOLD_JOBS", "/home/claude/gold/jobs_hr")
 ENGINE = os.environ.get("STELTIC_ENGINE_DIR", "")
-EX11 = "IN_Ex11_SMF_3levels_Zplan_school_Chandigarh"
+EX11 = "IN_Ex12_SMF_3levels_Zplan_school_Chandigarh"
 
 
 # ---------------------------------------------------------------- status rules

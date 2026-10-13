@@ -1,14 +1,14 @@
 """A finished India NL job for the Review / Revise / Collect tests (stdlib only).
 
-The design package is the IN_Ex1 fixture (steltic_india IS 800 / IS 1893 SCBF, Delhi zone IV); the analysis
+The design package is the IN_Ex13 fixture (steltic_india IS 800 / IS 1893 SCBF, Delhi zone IV); the analysis
 outputs are SYNTHETIC -- small, hand-written, in the exact shapes steltic_nonlinear_india writes them
 (nlrha/report_india.py index + per-level packages, pushover/report_india.py, snl/compare.build_india,
-steltic_ddm India results). They exercise the readers; they are not an analysis result of IN_Ex1.
+steltic_ddm India results). They exercise the readers; they are not an analysis result of IN_Ex13.
 """
 import json, os, shutil, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PKG = os.path.join(ROOT, "tests", "fixtures", "IN_Ex1_pkg")
+PKG = os.path.join(ROOT, "tests", "fixtures", "IN_Ex13_pkg")
 STATEMENT = ("IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; "
              "results are for information.")
 REF = {"value": 0.04, "system": "SCBF / SBF CONCENTRIC BRACES",
@@ -48,8 +48,8 @@ def _level(lv, f):
             "max_mean_drift": f * 0.0046, "max_peak_drift": f * 0.0061}
 
 
-def make(name="IN_Ex1_SCBF", outputs=True):
-    """-> the job folder: the IN_Ex1 package, plus (outputs=True) a finished run's outputs."""
+def make(name="IN_Ex13_SCBF", outputs=True):
+    """-> the job folder: the IN_Ex13 package, plus (outputs=True) a finished run's outputs."""
     job = os.path.join(tempfile.mkdtemp(), name)
     shutil.copytree(PKG, job)
     if not outputs:

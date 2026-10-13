@@ -1,5 +1,5 @@
 """NL-16: the DDM gravity-transfer gate's +/-5 % ratio band gets a noise floor of 2 % of the member's plastic capacity
-at 250 MPa, so near-zero forces (IN_Ex9 stem floor beams, 8.0 vs 8.6 kN-m) do not fail the gate while a real load-
+at 250 MPa, so near-zero forces (IN_Ex19 stem floor beams, 8.0 vs 8.6 kN-m) do not fail the gate while a real load-
 transfer error on the same member still does."""
 import os
 import shutil
@@ -34,9 +34,9 @@ def test_small_force_passes_by_floor_but_real_error_does_not():
 def test_gold_ex9_stem_gate_passes():
     eng = os.environ.get("STELTIC_ENGINE_DIR", "")
     src = os.path.join(os.environ.get("STELTIC_GOLD_JOBS", "/home/claude/gold/jobs_hr"),
-                       "IN_Ex9_EBF_12levels_Tplan_Guwahati", "units", "stem")
+                       "IN_Ex19_EBF_12levels_Tplan_Guwahati", "units", "stem")
     if not (os.path.isdir(src) and os.path.exists(os.path.join(eng, "static_model.py"))):
-        pytest.skip("gold IN_Ex9 stem or $STELTIC_ENGINE_DIR not available")
+        pytest.skip("gold IN_Ex19 stem or $STELTIC_ENGINE_DIR not available")
     return _run(src, eng)
 
 

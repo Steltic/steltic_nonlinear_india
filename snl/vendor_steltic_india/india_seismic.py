@@ -280,9 +280,10 @@ def esm_summary(W_by_floor_N, heights_mm, Z, I, R, soil, zone, Ta) -> dict:
     return {"seismic_summary": out, "story_forces": sf, "story_forces_units": "N"}
 
 
-# NOTE (WP1.3 item 8, documented for the WP6 example rewrite): the example build scripts
-# IN_Ex7..Ex15 carry an ESM helper `_sa_g` that returns 1 + 15T for T <= 0.1 s -- that is the RSA
-# branch.  ESM uses 2.5 from T = 0 (6.4.2(a)); Ex13 VB_x 151.7 kN must be 161.2 kN.  Every job
+# NOTE (WP1.3 item 8, documented for the WP6 example rewrite): the example build scripts of
+# IN_Ex7, IN_Ex9-IN_Ex12 and IN_Ex17-IN_Ex20 (2026-10 numbering) carry an ESM helper `_sa_g` that
+# returns 1 + 15T for T <= 0.1 s -- that is the RSA branch.  ESM uses 2.5 from T = 0 (6.4.2(a));
+# IN_Ex10 VB_x 151.7 kN must be 161.2 kN.  Every job
 # must call india_seismic.sa_over_g(T, soil, "ESM") instead of a local helper.
 
 # --- authoritative clause anchors (found:true) ---------------------------------

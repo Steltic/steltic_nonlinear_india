@@ -1,6 +1,6 @@
 """NL-31: a DDM numerical stop (SOLVER_FAILURE) on a seismic-pattern combination with no phi_s pass/fail (SEIS class),
 reached at lambda >= 1 after the NL-30 retries (dlam, dlam/2, dlam/4), is disclosed instead of blocking the COMPLETE
-gate. Gravity / wind stops, stops below lambda 1 and un-retried stops still block (NL-24). Gold case: IN_Ex9 stem,
+gate. Gravity / wind stops, stops below lambda 1 and un-retried stops still block (NL-24). Gold case: IN_Ex19 stem,
 1.2DL+1.2LL-1.2EQ_Y[ea]+0.3EQ_Z, every attempt stopped at lambda 1.3377."""
 import json
 

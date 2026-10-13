@@ -17,7 +17,7 @@ STATEMENT = "IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear
 
 
 def _job():
-    """A finished India job (IN_Ex1 package + synthetic outputs in the India package shapes)."""
+    """A finished India job (IN_Ex13 package + synthetic outputs in the India package shapes)."""
     return india_nl_job.make()
 
 
@@ -123,7 +123,7 @@ def _env(llm_url, rag_url, model="fake-model"):
 
 def test_gather_reads_the_run_without_inventing():
     ev = review.gather(_job())
-    assert ev["job"] == "IN_Ex1_SCBF" and ev["files"]["snl_summary.json"] and ev["files"]["nlrha/nlrha_package.json"]
+    assert ev["job"] == "IN_Ex13_SCBF" and ev["files"]["snl_summary.json"] and ev["files"]["nlrha/nlrha_package.json"]
     assert ev["statement"] == STATEMENT and ev["nlrha"]["verdict"] is None and ev["summary"]["verdict"] is None
     assert set(ev["nlrha"]["levels"]) == {"DBE", "MCE"}
     mce = ev["nlrha"]["levels"]["MCE"]
@@ -190,7 +190,7 @@ def test_review_streams_events_grounds_a_clause_and_writes_the_files():
         h = open(os.path.join(job, "review.html"), encoding="utf-8").read()
         assert "<h2>1. Summary</h2>" in h and "fake-model" in h and "1 standards searches" in h and STATEMENT in h
         tr = json.load(open(os.path.join(job, "review_transcript.json"), encoding="utf-8"))
-        assert tr["searches"][0]["passages"][0].startswith("7.11.1.1 Storey drift") and tr["evidence"]["job"] == "IN_Ex1_SCBF"
+        assert tr["searches"][0]["passages"][0].startswith("7.11.1.1 Storey drift") and tr["evidence"]["job"] == "IN_Ex13_SCBF"
     finally:
         L.close(); R.close()
         for k in ("STELTIC_LLM_BASE_URL", "STELTIC_LLM_API_KEY", "STELTIC_LLM_MODEL", "RAG_API_URL"):

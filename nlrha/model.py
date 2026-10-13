@@ -106,7 +106,7 @@ def n_mass_dofs(rel=1e-4) -> int:
     """Number of REAL nodal mass entries in the current OpenSees domain: entries above `rel` x the largest
     translational (resp. rotational) entry. The NL builders put a numerical mass of 1e-8 x the smallest storey mass on every DOF (transient
     stability); those DOFs only add degenerate local modes (T ~ 1e-4 s) on which ARPACK stops converging and returns
-    garbage (T ~ 6e6 s, zero mass -- IN_Ex5 modes 11-12)."""
+    garbage (T ~ 6e6 s, zero mass -- IN_Ex6 modes 11-12)."""
     ms = [ops.nodeMass(t) for t in ops.getNodeTags()]
     ref_t = max((abs(v) for m in ms for v in m[:3]), default=0.0)          # translational reference (a storey mass)
     ref_r = max((abs(v) for m in ms for v in m[3:6]), default=0.0)         # rotational reference (a storey inertia)
@@ -120,7 +120,7 @@ def _participation(pkg, nmodes):
     ops.wipeAnalysis()
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
     # NL-18: never ask for more modes than the model has real mass DOFs. The HR models carry their mass on the
-    # diaphragm masters only (3 DOF per level): asking 12 modes of the 2-level IN_Ex5 went into the numerical-mass
+    # diaphragm masters only (3 DOF per level): asking 12 modes of the 2-level IN_Ex6 went into the numerical-mass
     # local modes, ARPACK did not converge and returned "modes" 11-12 at T = 6e6 s with no mass, which the
     # spurious-mode check flagged -- blocking COMPLETE on a sound model.
     nmodes = max(1, min(int(nmodes), n_mass_dofs()))

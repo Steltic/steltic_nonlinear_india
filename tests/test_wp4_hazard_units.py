@@ -69,7 +69,7 @@ def test_rot_mass_conversion():
 
 def test_package_reader_india_basis_no_sds():
     from pushover import package_reader as PR
-    pkg = PR.load(os.path.join(FIX, "IN_Ex1_pkg"))
+    pkg = PR.load(os.path.join(FIX, "IN_Ex13_pkg"))
     b = pkg.basis
     assert b.jurisdiction == "india"
     assert b.SDS is None and b.SD1 is None and b.Cd is None and b.Om0 is None
@@ -86,7 +86,7 @@ def test_package_reader_india_basis_no_sds():
 def test_ex2_modal_no_spurious_torsion_1p5s():
     from pushover import package_reader as PR, hinge_models as HM, nonlinear_model as NM
     from nlrha import model as MD
-    pkg = PR.load(os.path.join(FIX, "IN_Ex2_pkg"), apply_is_mass=False)     # HR mass, to compare with the HR modal
+    pkg = PR.load(os.path.join(FIX, "IN_Ex16_pkg"), apply_is_mass=False)     # HR mass, to compare with the HR modal
     NM.build_nonlinear(pkg, HM.load_params(), {}, verbose=False)
     m = MD.modal(pkg, 12)
     assert max(x["T"] for x in m["modes"]) < 10.0

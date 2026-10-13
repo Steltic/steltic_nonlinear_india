@@ -45,7 +45,7 @@ class GMNIAModel:
         self.nm, self.cfg = nm, cfg
         # NL-15: the gravity-transfer gate compares with the HR engine's P-Delta static model -- it builds with
         # "PDelta" so a long axially-restrained beam does not pick up catenary tension (large-displacement
-        # Corotational) that the HR model cannot have (IN_Ex13 15 m roof girders: -8 % midspan moment). The DDM
+        # Corotational) that the HR model cannot have (IN_Ex10 15 m roof girders: -8 % midspan moment). The DDM
         # sweeps keep Corotational (GMNIA = geometrically nonlinear).
         self.transf_type = transf_type
         # WP4.5 / WP4.9 India: fy per section (IS 2062 Table 3 band, same steel as pushover/NLRHA) and a separate
@@ -108,8 +108,8 @@ class GMNIAModel:
         roof beams in the deck plane). The rigid-diaphragm constraint holds their end nodes at a fixed plan distance; with
         the Corotational transformation the sag of a pinned gravity girder then becomes catenary tension -- an axial
         restraint the fin-plate connections do not provide and the HR design model (Linear beams, P-Delta columns) and the
-        NL pushover / NLRHA models (the HR transformations) do not have. IN_Ex11 floor NPB700 girders: 1.5 MN tension,
-        first yield at lambda 0.95 and a numerical stop at 0.977 (HR elastic D/C 0.983); IN_Ex11 unitC_gym 17 m roof
+        NL pushover / NLRHA models (the HR transformations) do not have. IN_Ex12 floor NPB700 girders: 1.5 MN tension,
+        first yield at lambda 0.95 and a numerical stop at 0.977 (HR elastic D/C 0.983); IN_Ex12 unitC_gym 17 m roof
         girder: +335 kN at lambda 1 -> B-1.2 D/C 1.018 against the HR 0.960. Sloped rafters, beams between two
         diaphragms and every column / brace keep `transf_type` (Corotational). Empty on the USA path."""
         if not self._india():
@@ -132,7 +132,7 @@ class GMNIAModel:
 
     def _fillets(self) -> bool:
         """NL-26: GMNIA I-sections with root-fillet fibres on the India path, so A, Ix and Zp equal the IS 808 catalogue
-        values the HR design uses (the plate model was 2-6 % low: IN_Ex5 elastic transfer gate roof X 1.053 > 1.05 ->
+        values the HR design uses (the plate model was 2-6 % low: IN_Ex6 elastic transfer gate roof X 1.053 > 1.05 ->
         1.001). $SNL_DDM_FILLETS=0 switches it off. DDM only: the pushover / NLRHA fibre sections (same builder,
         fillets=False by default) are unchanged."""
         env = os.environ.get("SNL_DDM_FILLETS")
@@ -492,7 +492,7 @@ class GMNIAModel:
             m = self.nm.by_tag()[e["mtag"]] if not hasattr(self, "_bt") else self._bt[e["mtag"]]
             # India: exact sub-element span along the member (stubs loaded too: the offset length was unloaded before), and
             # the two-way triangular tributary integrated with 3-point Gauss point loads (a sub-element UDL at the mid
-            # width under-states the midspan moment by ~6 % at 4 sub-elements -- gravity gate, Ex1 roof beams)
+            # width under-states the midspan moment by ~6 % at 4 sub-elements -- gravity gate, IN_Ex13 roof beams)
             if india and e.get("span") and not e.get("rigid_stub"):
                 s0, s1 = e["span"]; h = 0.5 * (s1 - s0)
                 for xg, wg in ((-0.7745966692414834, 5 / 9), (0.0, 8 / 9), (0.7745966692414834, 5 / 9)):

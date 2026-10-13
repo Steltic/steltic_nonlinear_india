@@ -1,5 +1,5 @@
-"""NL-15: HR packages with zeroLength springs (IN_Ex15 roof-plane springs), patterned gravity (IS 875-4 4.3 partial
-snow, crane positions / surge) and vertical earthquake terms, and long axially-restrained beams (IN_Ex13) --
+"""NL-15: HR packages with zeroLength springs (IN_Ex9 roof-plane springs), patterned gravity (IS 875-4 4.3 partial
+snow, crane positions / surge) and vertical earthquake terms, and long axially-restrained beams (IN_Ex10) --
 all of which broke the NL models or the DDM gravity-transfer gate on the gold set.
 
   * pushover.nonlinear_model.member_kind no longer divides by a zero length (zeroLength springs are passed through)
@@ -90,8 +90,8 @@ def _gold(name):
     return d
 
 
-@pytest.mark.parametrize("name", ["IN_Ex15_Gable_warehouse_SMF_SCBF_snow_Shimla", "IN_Ex13_SCBF_bigbox_flexdiaphragm_Indore",
-                                  "IN_Ex14_Crane_bay_OMRF_OCBF_Vizag"])
+@pytest.mark.parametrize("name", ["IN_Ex9_Gable_warehouse_SMF_SCBF_snow_Shimla", "IN_Ex10_SCBF_bigbox_flexdiaphragm_Indore",
+                                  "IN_Ex7_Crane_bay_OMRF_OCBF_Vizag"])
 def test_gold_gravity_gate_passes(name, tmp_path):
     import shutil
     src = _gold(name)

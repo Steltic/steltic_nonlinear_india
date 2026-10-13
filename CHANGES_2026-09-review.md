@@ -1,5 +1,7 @@
 # steltic-nonlinear-india 0.3.1: USA sync and first-pass India review (2026-09-27)
 
+> **Numbering note (2026-10):** this is a dated record. Example brief numbers in it (IN_ExN, IN_CFS_ExN and short forms such as Ex9) use the numbering **before** the 2026-10 renumbering. Map: `steltic_india/test_buildings/RENUMBERING_2026-10.md`.
+
 Branch `fix/2026-09-review`, based on the delivered zip (India 0.2.0, fork of USA 9607577). NL-24..NL-27 (gold-batch
 findings, section 3) are on `review-fix-2026-09`.
 

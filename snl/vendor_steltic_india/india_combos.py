@@ -551,6 +551,8 @@ def expand_combinations(plan, cfg, *, eccentricity=None, method=None) -> list:
                 c["member_wind"] = {k: pat.get(k) for k in ("name", "direction", "wind_axis", "roof_windward_kNm2",
                                                             "roof_leeward_kNm2", "wall_windward_kNm2",
                                                             "wall_leeward_kNm2", "Cpi", "sign")}
+                if pat.get("nodal_loads"):
+                    c["member_wind"]["nodal_loads"] = pat["nodal_loads"]        # PEB (2026-10): canopy wind
     # ---- serviceability (Table 4 cols 7-10): tagged, excluded from the strength envelope ----
     add("SLS:1.0DL+1.0LL", 1.0, 1.0, 1.0, family="T4 SLS DL+LL", cite=IS800_T4 + " serviceability", service=True,
         tags=["service"])

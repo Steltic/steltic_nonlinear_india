@@ -182,7 +182,7 @@ def load_package(job_dir, steltic_engine_dir=None):
             m_.role = "link"
             nm.members.append(m_)
         elif et == "zeroLength":
-            # NL-15: HR zeroLength springs (IN_Ex15 roof-plane springs 299xxx -> 2xxxxx). Dropping them left the
+            # NL-15: HR zeroLength springs (IN_Ex9 roof-plane springs 299xxx -> 2xxxxx). Dropping them left the
             # roof plane unconnected and every GMNIA gravity analysis failed; they are rebuilt verbatim (N-mm).
             nm.springs.append(list(a))
     nm.uni_materials = dict(getattr(parse_replay, "uni_materials", {}) or {})

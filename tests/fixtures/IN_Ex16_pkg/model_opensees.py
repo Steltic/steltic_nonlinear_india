@@ -1,4 +1,4 @@
-"""Standalone OpenSeesPy model for IN_Ex2_SMF_office_Mumbai -- SMF.
+"""Standalone OpenSeesPy model for IN_Ex16_SMF_office_Mumbai -- SMF.
 Auto-generated from the design cfg; rebuilds the EXACT analysis model.
 Run:  python model_opensees.py   (prints node/element counts + modal periods)."""
 import math

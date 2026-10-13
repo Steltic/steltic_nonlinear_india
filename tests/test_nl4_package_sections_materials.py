@@ -19,7 +19,7 @@ from pushover import india_sections as ISEC, sections_db as SDB, india_materials
 
 def test_box_matches_the_hr_formulae_and_model_export():
     p = ISEC.box_props_mm(400, 400, 25, 25)
-    # IN_Ex3 model_opensees.py column: A 37500, J 1318359375, I 882812500 (both axes)
+    # IN_Ex8 model_opensees.py column: A 37500, J 1318359375, I 882812500 (both axes)
     assert p["A"] == pytest.approx(37500.0)
     assert p["Ix"] == pytest.approx(882812500.0) and p["Iy"] == pytest.approx(882812500.0)
     assert p["J"] == pytest.approx(1318359375.0)
