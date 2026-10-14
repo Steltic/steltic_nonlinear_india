@@ -127,6 +127,8 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
             from . import india_sections as _ISEC
             if _ISEC.is_box(lab):
                 bld.box_plates(tag, lab, axis=axis)
+            elif _ISEC.is_welded_i(lab):                      # NL-33: welded plate I / tapered-I segment
+                bld.welded_i_plates(tag, lab, axis=axis, nf_flange=nf_flange, nf_web=nf_web)
             elif IMAT.is_tube(lab):
                 typ = str((IMAT.section_props_mm(lab) if india else {}).get("type") or "").upper()
                 if typ == "CHS" or lab.upper().startswith("CHS"):

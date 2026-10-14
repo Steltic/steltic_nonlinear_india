@@ -1,5 +1,6 @@
 #!/bin/bash
-# run_gold_batch.sh -- the India gold NL batch (NL-21): 19 job folders (15 gold buildings + 4 units), sequentially,
+# run_gold_batch.sh -- the India gold NL batch (NL-21): 24 job folders (20 gold buildings + 4 units; NL-33 added the five
+# PEB sheds IN_Ex1 ... IN_Ex5), sequentially,
 # smallest first, each: collect (agent-transcribed answers file) -> pushover -> NLRHA -> DDM -> report + gate.
 #
 #   nohup scripts/run_gold_batch.sh > /home/claude/nl/gold_nl/batch_nohup.out 2>&1 &
@@ -51,10 +52,15 @@ IN_Ex11_OCBF_4levels_splitlevel_Jaipur/units/workshop
 IN_Ex10_SCBF_bigbox_flexdiaphragm_Indore
 IN_Ex9_Gable_warehouse_SMF_SCBF_snow_Shimla
 IN_Ex11_OCBF_4levels_splitlevel_Jaipur
+IN_Ex3_PEB_crane_shed_10t_Nagpur
+IN_Ex1_PEB_factory_shed_tapered_Bengaluru
+IN_Ex5_PEB_rooftop_solar_check_Bengaluru
 IN_Ex19_EBF_12levels_Tplan_Guwahati/units/stem
+IN_Ex4_PEB_warehouse_SMRF_Zone4_NCR
 IN_Ex18_SMF_podium_11levels_Kochi
 IN_Ex13_SCBF_5levels_Delhi
 IN_Ex16_SMF_office_Mumbai
+IN_Ex2_PEB_GradeA_warehouse_multispan_Bhiwandi
 IN_Ex14_SCBF_hospital_Kolkata
 IN_Ex20_SCBF_18levels_slender_Noida
 IN_Ex15_EBF_8levels_Lplan_Pune

@@ -534,6 +534,37 @@ def ddm_solver_stop_rows(job_dir) -> list[dict]:
     return out
 
 
+def peb_disclosures(job_dir) -> list[dict]:
+    """NL-33: what the nonlinear models of a PEB shed (welded plate I / web-tapered I members) do not represent, and the
+    DDM restraint idealisation. Empty for a package without welded / tapered custom sections."""
+    if not job_dir:
+        return []
+    snap = _read_json(os.path.join(job_dir, "design", "cfg_snapshot.json")) or {}
+    cs = snap.get("custom_sections") or {}
+    welded = sorted(k for k, v in cs.items() if str((v or {}).get("type", "")).lower() in ("welded_i", "tapered_i"))
+    if not welded:
+        return []
+    rows = [dict(id="peb_welded_plate_fibres", found=True, disclosed=True, n_sections=len(welded),
+                 tapered=sorted(k for k in welded if str(cs[k].get("type", "")).lower() == "tapered_i"),
+                 note="NL-33: welded plate I and web-tapered I members (the tapered ones as the HR engine's stepped "
+                      "prismatic segments) are plate fibres in the pushover, NLRHA and DDM models: no residual-stress pattern "
+                      "for welded plates, and no local buckling -- slender (IS 800 Table 2 class 4) webs keep their gross "
+                      "plates in the fibres, while the DDM B-1.2 check uses the IS 800 3.7.2(d) effective section. Web "
+                      "local buckling and flange-induced web buckling at large rotations are therefore not captured.")]
+    ddm = _read_json(os.path.join(job_dir, "ddm_results.json")) or {}
+    pr = (ddm.get("options") or {}).get("peb_restraints")
+    if pr:
+        rows.append(dict(id="peb_ddm_restraints", found=True, disclosed=True, counts=pr.get("counts"),
+                         note="NL-33: the DDM GMNIA carries the purlin / girt / fly-brace restraints the HR design relies on "
+                              "(cfg['flange_braces'], read as peb_build, owner ruling D-T1), which the HR frame model does not "
+                              "have: %s. Lateral restraints tie to the roof diaphragm (rafters) or to the wall racking line "
+                              "(columns); torsional restraints are to ground. A centroid-line model cannot hold one flange, so "
+                              "purlin-only and girt-only stations are omitted (conservative). The pushover and NLRHA models use "
+                              "the HR transformations (P-Delta columns, linear beams) and need no such restraints."
+                              % (pr.get("summary") or "")))
+    return rows
+
+
 def method_disclosures(job_dir) -> list[dict]:
     """NL-21 method choices read back from the analysis packages: elastic gravity members (with their yield check) and
     record trimming. Empty when the job has no packages yet."""
@@ -553,6 +584,7 @@ def method_disclosures(job_dir) -> list[dict]:
     if trims and trims[0].get("method") not in (None, "none"):
         rows.append(dict(id="record_trimming", found=True, disclosed=True, method=trims[0].get("method"),
                          free_vib_s=trims[0].get("free_vib_s"), note=trims[0].get("basis")))
+    rows += peb_disclosures(job_dir)
     stops = ddm_solver_stop_rows(job_dir)
     if stops:
         rows.append(dict(id="ddm_seismic_solver_stop", found=True, disclosed=True, runs=stops,

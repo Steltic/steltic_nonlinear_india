@@ -86,10 +86,13 @@ def section_props_mm(section: str) -> dict:
     from . import sections_db as SDB
     from . import india_sections as ISEC
     bx = ISEC.get_mm(section)
-    if bx is not None:                     # NL-4: HR built-up box -- exact plate values (mm), not via inches
-        out = dict(label=bx["label"], type="BOX", box=True, tube=False)
+    if bx is not None:                     # NL-4 / NL-33: HR built-up box or welded plate I -- exact plate values (mm)
+        box = bx.get("section_type") == "box"
+        out = dict(label=bx["label"], type="BOX" if box else "WELDED_I", box=box, welded_i=not box, tube=False)
         for k in ("A", "rx", "ry", "d", "bf", "tf", "tw", "Zx", "Zy", "Sx", "Sy", "Ix", "Iy", "J", "Aw"):
             out[k] = float(bx[k])
+        if bx.get("Cw") is not None:
+            out["Cw"] = float(bx["Cw"])
         out["source"] = bx["source"]
         return out
     p = SDB.props(section)
@@ -302,6 +305,11 @@ def buckling_classes(sp: dict, hollow_forming: str = "hot_rolled") -> dict:
         # Table 10 welded box: 'generally b'; thick welds and b/tf < 30: c -- the conservative row c for every built-up
         # box, as steltic_india india_is800 does (WP6-fix)
         return {"zz": "c", "yy": "c", "basis": "Table 10 welded box (row c, as the HR engine)"}
+    if sp.get("welded_i"):
+        # NL-33: Table 10 welded I-section -- tf <= 40 mm: z-z b, y-y c; tf > 40 mm: z-z c, y-y d (as the HR engine)
+        if (sp.get("tf") or 0.0) <= 40.0:
+            return {"zz": "b", "yy": "c", "basis": "Table 10 welded I-section, tf<=40"}
+        return {"zz": "c", "yy": "d", "basis": "Table 10 welded I-section, tf>40"}
     if sp.get("tube"):
         c = "a" if str(hollow_forming).lower().startswith("hot") else "b"
         return {"zz": c, "yy": c, "basis": "Table 10 hollow section, %s" % hollow_forming}
@@ -363,15 +371,90 @@ def brace_strengths(section: str, L_mm: float, fye_MPa: float, K: float = 1.0, h
                 cite="IS 800:2007 7.1.2.1 curve (%s), no gamma_m0 (model strength)" % cls[ax])
 
 
+T2_CITE = "IS 800:2007 Table 2 (Limiting width to thickness ratio), eps = (250/fy)^0.5"
+EFF_CITE = ("IS 800:2007 3.7.2(d): slender (Class 4) cross-section -- effective section by deducting the width of each "
+            "compression plate element in excess of its semi-compact (Class 3) limit of Table 2")
+
+
+def welded_i_class(section: str, fy_MPa: float) -> dict:
+    """NL-33: IS 800 Table 2 class of a welded plate I in major-axis bending (the HR engine's welded rows): flange
+    outstand b = bf/2 over tf -- plastic 8.4 eps, compact 9.4 eps, semi-compact 13.6 eps; web d = D - 2 tf over tw with
+    the neutral axis at mid-depth -- 84 / 105 / 126 eps. The worse of the two governs."""
+    sp = section_props_mm(section)
+    eps = math.sqrt(250.0 / float(fy_MPa))
+    bt = (sp["bf"] / 2.0) / sp["tf"]
+    dtw = (sp["d"] - 2.0 * sp["tf"]) / sp["tw"]
+    order = ("plastic", "compact", "semi-compact", "slender")
+
+    def c(r, lim):
+        for name, L in zip(order, lim):
+            if r <= L * eps:
+                return name
+        return "slender"
+    cf, cw = c(bt, (8.4, 9.4, 13.6)), c(dtw, (84.0, 105.0, 126.0))
+    cls = order[max(order.index(cf), order.index(cw))]
+    return dict(section=sp["label"], cls=cls, flange=cf, web=cw, b_tf=round(bt, 2), d_tw=round(dtw, 1), eps=eps,
+                limits=dict(flange=(8.4 * eps, 9.4 * eps, 13.6 * eps), web=(84 * eps, 105 * eps, 126 * eps)), cite=T2_CITE)
+
+
+def welded_i_effective(section: str, fy_MPa: float) -> dict:
+    """NL-33: IS 800 3.7.2(d) effective section of a welded plate I, as steltic_india india_is800.effective_section_3_7_2d
+    (the HR design of the PEB members): axial -- flange outstands cut to 13.6 eps tf, web to 42 eps tw -> A_eff;
+    major-axis bending -- compression flange outstands cut to 13.6 eps tf, web keeps 126 eps tw (the excess deducted from
+    the middle of the compression half), elastic modulus about the shifted neutral axis -> Ze_eff (<= Ze); minor axis --
+    both flanges cut -> Ze_eff_minor. The member is then treated as semi-compact with these properties."""
+    sp = section_props_mm(section)
+    eps = math.sqrt(250.0 / float(fy_MPa))
+    D, B, tw, tf = sp["d"], sp["bf"], sp["tw"], sp["tf"]
+    d = D - 2.0 * tf
+    b_out = B / 2.0
+    b_eff = min(b_out, 13.6 * eps * tf)
+    d_ax = min(d, 42.0 * eps * tw)
+    A_ax = sp["A"] - 4.0 * (b_out - b_eff) * tf - (d - d_ax) * tw
+    d_bd = min(d, 126.0 * eps * tw)
+    comp_half = d / 2.0
+    excess = min(max(d - d_bd, 0.0), comp_half)
+    kept = (comp_half - excess) / 2.0
+    y0 = tf + d / 2.0
+    strips = [(0.0, tf, B), (tf, tf + d / 2.0, tw), (y0, y0 + kept, tw), (y0 + kept + excess, y0 + comp_half, tw),
+              (D - tf, D, 2.0 * b_eff)]
+    A_bd = sum((y1 - ya) * w for (ya, y1, w) in strips if y1 > ya)
+    yc = sum((y1 - ya) * w * (ya + y1) / 2.0 for (ya, y1, w) in strips if y1 > ya) / A_bd
+    I_bd = sum(w * (y1 - ya) ** 3 / 12.0 + (y1 - ya) * w * ((ya + y1) / 2.0 - yc) ** 2 for (ya, y1, w) in strips if y1 > ya)
+    Ze_eff = min(I_bd / max(yc, D - yc), sp["Sx"])
+    if b_eff < b_out:
+        Iy_eff = 2.0 * tf * (2.0 * b_eff) ** 3 / 12.0 + d * tw ** 3 / 12.0
+        Sy_eff = min(Iy_eff / max(b_eff, 1e-9), sp["Sy"])
+    else:
+        Sy_eff = sp["Sy"]
+    return dict(section=sp["label"], A_eff_mm2=A_ax, Ze_eff_mm3=Ze_eff, Ze_eff_minor_mm3=Sy_eff, A_gross_mm2=sp["A"],
+                Ze_gross_mm3=sp["Sx"], web_d_mm=d, web_d_eff_axial_mm=d_ax, web_d_eff_bending_mm=d_bd,
+                flange_outstand_eff_mm=b_eff, cite=EFF_CITE)
+
+
 def section_capacity(section: str, fy_MPa: float, gamma_m0: float = GAMMA_M0) -> dict:
     """IS 800 section capacities for Annex B-1.2 (instability / LTB / amplification excluded by B-1.2):
     Nd = A·fy/gamma_m0 (6.2 / 7 section), Mdz = Zpz·fy/gamma_m0 (8.2.1.2, plastic/compact, beta_b = 1),
-    Mdy = Zpy·fy/gamma_m0, Vd = Av·fy/(sqrt(3)·gamma_m0) (8.4.1)."""
+    Mdy = Zpy·fy/gamma_m0, Vd = Av·fy/(sqrt(3)·gamma_m0) (8.4.1).
+    NL-33, welded plate I (PEB): the IS 800 Table 2 welded class sets beta_b -- semi-compact: Ze (8.2.1.2 beta_b =
+    Ze/Zp); slender: the 3.7.2(d) effective section, Nd = A_eff fy/gamma_m0, Mdz = Ze_eff fy/gamma_m0, Mdy =
+    Ze_eff_minor fy/gamma_m0, as the HR design; shear on the web d tw (8.4.1.1 welded)."""
     sp = section_props_mm(section)
     A = sp["A"]
     Zpz = sp.get("Zx") or 0.0
     Zpy = sp.get("Zy") or 0.0
-    if sp.get("box"):
+    cls_rec = None
+    if sp.get("welded_i"):
+        cls_rec = welded_i_class(section, fy_MPa)
+        if cls_rec["cls"] == "semi-compact":
+            Zpz, Zpy = sp["Sx"], sp["Sy"]
+        elif cls_rec["cls"] == "slender":
+            eff = welded_i_effective(section, fy_MPa)
+            A, Zpz, Zpy = eff["A_eff_mm2"], eff["Ze_eff_mm3"], eff["Ze_eff_minor_mm3"]
+            cls_rec = dict(cls_rec, effective=eff)
+    if sp.get("welded_i"):
+        Av = sp.get("Aw") or (sp["d"] - 2 * sp["tf"]) * sp["tw"]
+    elif sp.get("box"):
         Av = sp.get("Aw") or 2.0 * (sp["d"] - 2 * sp["tf"]) * sp["tw"]      # two webs (8.4.1.1 welded plates, as HR)
     elif sp.get("tube"):
         Av = 2.0 * A / math.pi if str(sp.get("type")).upper() == "CHS" else A * 0.5
@@ -379,7 +462,7 @@ def section_capacity(section: str, fy_MPa: float, gamma_m0: float = GAMMA_M0) ->
         Av = (sp.get("d") or 0.0) * (sp.get("tw") or 0.0)
     return dict(section=sp["label"], A=A, Nd_N=A * fy_MPa / gamma_m0, Mdz_Nmm=Zpz * fy_MPa / gamma_m0,
                 Mdy_Nmm=Zpy * fy_MPa / gamma_m0, Vd_N=Av * fy_MPa / (math.sqrt(3.0) * gamma_m0), fy_MPa=fy_MPa,
-                gamma_m0=gamma_m0,
+                gamma_m0=gamma_m0, section_class=(cls_rec or {}).get("cls"), class_record=cls_rec,
                 cite="IS 800:2007 Annex B-1.2 -> 6.2 (Tdg), 7 (section A·fy/gamma_m0), 8.2.1.2 (Zp·fy/gamma_m0), "
                      "8.4 (Av·fy/(sqrt3·gamma_m0)), 9.3.1.1 (linear interaction)")
 

@@ -527,6 +527,48 @@ class FiberSectionBuilder:
                          "no residual stress" % (p["bf"], p["d"], p["tf"], p["tw"], "mm", axis, self.units)))
         return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib)
 
+    # ---- welded plate I (HR custom_sections welded_I / tapered_I segments, NL-33) --------------
+    def welded_i_plates(self, secTag, label, axis="y", nf_flange=(8, 2), nf_web=(12, 1), residual=None):
+        """Fibre welded plate I from its three plates (pushover.india_sections registry, mm): flanges bf x tf at
+        +/-(D - tf)/2 along the depth axis, web (D - 2 tf) x tw; no root fillets. axis="y": depth along local y
+        (column, as w_shape); "z": depth along local z (beam). No residual stress pattern (welded-section residual
+        stresses are not modelled, as for the NL-4 welded boxes -- disclosed in the section log). The fibres carry
+        the full plates: local buckling of slender (Class 4) webs and semi-compact flanges is not modelled."""
+        from pushover import india_sections as IS_
+        p = IS_.get_mm(label)
+        if p is None or p.get("section_type") != "welded_i":
+            raise ValueError("%s is not a declared welded plate I" % label)
+        sc = 1.0 if self.units == "N-mm" else 1.0 / MM_PER_IN
+        D, B, tf, tw = p["d"] * sc, p["bf"] * sc, p["tf"] * sc, p["tw"] * sc
+        J = p["J"] * sc ** 4
+        hw = D - 2 * tf
+        self.ops.section("Fiber", secTag, "-GJ", self.G * J)
+        m = self._mat(0.0)
+        nfib = 0
+
+        def put(yc, zc, a):
+            nonlocal nfib
+            if axis == "y":
+                self.ops.fiber(yc, zc, a, m)
+            else:
+                self.ops.fiber(zc, yc, a, m)
+            nfib += 1
+        nb, nt = nf_flange
+        for i in range(nb):                                      # flanges
+            zc = -B / 2 + (i + 0.5) * B / nb
+            for j in range(nt):
+                for sgn in (+1, -1):
+                    put(sgn * (D / 2 - (j + 0.5) * tf / nt), zc, (B / nb) * (tf / nt))
+        nwy, nwz = nf_web
+        for j in range(nwy):                                     # web between the flanges
+            yc = -hw / 2 + (j + 0.5) * hw / nwy
+            for q in range(nwz):
+                put(yc, -tw / 2 + (q + 0.5) * tw / nwz, (hw / nwy) * (tw / nwz))
+        self.log.append((secTag, label, "WI", nfib, "welded plate I D=%.1f bf=%.1f tf=%.1f tw=%.1f (mm) axis=%s units=%s; "
+                         "no residual stress; full plates (local buckling not modelled)" % (
+                             p["d"], p["bf"], p["tf"], p["tw"], axis, self.units)))
+        return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib)
+
     # ---- EBF shear link (NL-10) -------------------------------------------------------------
     def link_aggregator(self, aggTag, fibreTag, label, fy_MPa, box=False, hardening=0.005):
         """IS 18168:2023 11.2 shear yielding of an EBF link, added to the flexural fibre section `fibreTag`:
@@ -557,6 +599,8 @@ class FiberSectionBuilder:
         lab = str(label).upper().replace(" ", "")
         if lab.startswith("BOX"):
             return self.box_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
+        if lab.startswith("WI") or _custom_kind(lab) == "welded_i":
+            return self.welded_i_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
         if lab.startswith("HSS") and hss_dims(lab):
             return self.hss_rect(secTag, lab, residual=("none" if self.residual == "none" else "cf_hss_membrane"))
         # IS 1161 CHS / round HSS (no XxY rect dims)
@@ -572,7 +616,22 @@ class FiberSectionBuilder:
         raise ValueError("no fibre builder for section %s (kind %s)" % (label, kind))
 
 
+def _custom_kind(label):
+    """'box' / 'welded_i' when the label is an HR custom section (pushover.india_sections registry), else None."""
+    try:
+        from pushover import india_sections as IS_
+        p = IS_.get_mm(label)
+        return p.get("section_type") if p else None
+    except Exception:
+        return None
+
+
 def elastic_props(label):
-    """(A, Ix, Iy, J) from the CSV -- for gates and reporting."""
+    """(A, Ix, Iy, J) from the CSV -- for gates and reporting (inch units). HR custom sections (built-up box, welded
+    plate I) come from the registry (NL-33)."""
+    if _custom_kind(label):
+        from pushover import india_sections as IS_
+        r = IS_.props_in(label)
+        return r["A"], r["Ix"], r["Iy"], r["J"]
     r = shape(label)
     return _f(r["A"]), _f(r["Ix"]), _f(r["Iy"]), _f(r["J"])

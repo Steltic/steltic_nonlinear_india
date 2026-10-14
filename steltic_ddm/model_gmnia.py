@@ -22,6 +22,13 @@ Steltic orientation decoding (engine3d):
   transf 2: vecxz (0,1,0) -> column strong axis resists X (weak-axis bow in Y)
   transf 3: vecxz (0,0,1) -> beams; major release = rotation about local y = global Y for X-beams,
                               global X for Y-beams; minor release = global Z
+
+NL-33 (PEB): the releases are placed by the member's GEOMETRY, not by the grid-decoded direction. A PEB shed has
+off-grid nodes (eave / ridge strut nodes 198xxx), so the decoded dirn of an eave strut along X can read "Y"; its
+"major" pin then released global rotation 4 -- the strut's own torsion -- at both ends, and the stiffness matrix was
+singular. Horizontal axis-aligned beams keep the global pin (bit-identical to before); sloped / skew beams and
+released COLUMNS (PEB end-wall posts, interior pinned columns; no earlier gold has one) get a pin spring oriented on
+the element's local axes, releasing HR's local rotations exactly (-releasey -> local y, -releasez -> local z).
 """
 import math
 import os
@@ -200,11 +207,19 @@ class GMNIAModel:
                                            residual=self.residual, elastic=self.elastic, mat_tag0=1000,
                                            units=getattr(self, "_fibre_units", "kip-in"), fillets=self._fillets())
         self._builders = {}
+        if getattr(nm, "_peb_plan", "unset") == "unset":
+            from . import peb_restraints
+            nm._peb_plan = peb_restraints.plan(nm, self.cfg if isinstance(self.cfg, dict) else None)
+        self.peb = nm._peb_plan
+        self._frac_nodes = {}
         for m in nm.members:
             self._add_member(m)
         self._add_springs()
+        extra_slaves = self._add_peb_restraints() if self.peb else {}
         for master, slaves in nm.diaphragms.items():
             ops.rigidDiaphragm(3, master, *slaves)
+        for master, ties in extra_slaves.items():
+            ops.rigidDiaphragm(3, master, *ties)
         if with_mass:
             for t, mm in nm.masses.items():
                 ops.mass(t, *mm)
@@ -246,6 +261,94 @@ class GMNIAModel:
             ops.element("zeroLength", tag, a[2], a[3], "-mat", *new, "-dir", *dirs)
             self.springs.append(dict(tag=tag, hr_tag=a[1], n1=a[2], n2=a[3], dirs=dirs))
 
+    RESTRAINT_NODE0 = 50_000_000
+    RESTRAINT_ELE0 = 50_000_000
+    STUD_TRANSF = 7
+    STUD_PROPS = (1.0e6, 2.0e5, 7.7e4, 1.0e13, 1.0e13, 1.0e13)   # A E G J Iy Iz (N-mm): rigid next to any PEB column
+
+    def _add_peb_restraints(self):
+        """NL-33: the purlin / girt / fly-brace restraints of a PEB shed (peb_restraints.plan). Returns the roof tie
+        nodes per diaphragm master (rigidDiaphragm slaves, added by build()). Lateral: rafter -> zeroLength (mat 1,
+        K_TRANS) in the out-of-plane direction to a diaphragm slave at the master's elevation (as the HR eave ties);
+        column -> zeroLength to a rigid stud (pinned at the column base node position, free only to rotate in the out-of-plane
+        direction, tied to the column top -- stiff elastic segments, see below). Torsional: zeroLength on the member
+        axis (dir 4, mat 2, K_ROT) to a fixed node."""
+        p, nm = self.peb, self.nm
+        nxt = [self.RESTRAINT_NODE0]
+        etag = [self.RESTRAINT_ELE0]
+        bt = {int(m.tag): m for m in nm.members}
+
+        def new_node(xyz):
+            nxt[0] += 1
+            ops.node(nxt[0], *xyz)
+            return nxt[0]
+
+        def zl(n1, n2, mat, d, orient=None):
+            etag[0] += 1
+            args = ["-mat", mat, "-dir", d] + (["-orient", *orient[0], *orient[1]] if orient else [])
+            ops.element("zeroLength", etag[0], n1, n2, *args)
+            return etag[0]
+
+        def node_of(st):
+            t = st["target"]
+            return t[1] if t[0] == "node" else self._frac_nodes.get((t[1], round(t[2], 9)))
+
+        masters = {}
+        for mst, slaves in (nm.diaphragms or {}).items():
+            masters[mst] = self._coord(mst)[2]
+        ties, made = {}, dict(roof_ties=0, torsion=0, stud_ties=0, studs=0, missing=0)
+        st_nodes = []
+        for st in p["stations"]:
+            n = node_of(st)
+            st_nodes.append(n)
+            if n is None:
+                made["missing"] += 1
+                continue
+            xyz = ops.nodeCoord(n)
+            if "torsion" in st["kinds"]:
+                m = bt[st["mtag"]]
+                axis, yp = self.local_axes(self._coord(m.n1), self._coord(m.n2), self._transf_for(m))
+                g0 = new_node(xyz); ops.fix(g0, 1, 1, 1, 1, 1, 1)
+                zl(g0, n, 2, 4, orient=(axis, yp)); made["torsion"] += 1
+            if "lateral" in st["kinds"] and st["member_kind"] == "rafter":
+                if not masters:
+                    made["missing"] += 1
+                    continue
+                mst = min(masters, key=lambda k: abs(masters[k] - xyz[2]))
+                t = new_node((xyz[0], xyz[1], masters[mst]))
+                ops.fix(t, 0, 0, 1, 1, 1, 0)
+                ties.setdefault(mst, []).append(t)
+                zl(t, n, 1, st["dir"]); made["roof_ties"] += 1
+        if p["studs"]:
+            ops.geomTransf("Linear", self.STUD_TRANSF, 1.0, 0.0, 0.0)
+        for stud in p["studs"]:
+            # a rigid stud pinned at the column base, tied to the column top: its displacement in direction d is linear
+            # in height (the wall's racking line). Stiff elasticBeamColumn segments on nodes free only in d and in the
+            # rotation that moves them in d (no rigidLink: SP constraints on a rigidLink's retained node broke the
+            # DisplacementControl steps of the sweeps -- Transformation handler, IN_Ex1 2026-10-14).
+            d = stud["dir"]
+            free = (1, 5) if d == 1 else (2, 4)
+            fixity = [0 if q in free else 1 for q in range(1, 7)]
+            chain = [new_node(self._coord(stud["base"]))]
+            ops.fix(chain[0], *[0 if q == free[1] else 1 for q in range(1, 7)])
+            links = []
+            for i in stud["stations"]:
+                n = st_nodes[i]
+                if n is None:
+                    continue
+                sk = new_node(ops.nodeCoord(n)); ops.fix(sk, *fixity)
+                chain.append(sk); links.append((sk, n))
+            sT = new_node(self._coord(stud["top"])); ops.fix(sT, *fixity)
+            chain.append(sT); links.append((sT, stud["top"]))
+            for a, b in zip(chain, chain[1:]):
+                etag[0] += 1
+                ops.element("elasticBeamColumn", etag[0], a, b, *self.STUD_PROPS, self.STUD_TRANSF)
+            for sk, n in links:
+                zl(sk, n, 1, d); made["stud_ties"] += 1
+            made["studs"] += 1
+        self.peb_made = made
+        return ties
+
     def _is_secondary(self, m):
         """Purlins/girts/eave struts — keep elastic (fibre secondaries cause spurious local buckling)."""
         sec = str(m.section).upper().replace(" ", "")
@@ -285,25 +388,59 @@ class GMNIAModel:
             self.sec_props[tag] = dict(label=m.section, kind=m.kind, Fy=fy, **props)
         return self.secs[key]
 
-    def _pin(self, grid_node, dup_node, released, axis=None):
+    def _pin(self, grid_node, dup_node, released, axis=None, yp=None):
         """zeroLength from grid_node to dup_node: stiff on all DOFs except `released` (1..6).
         With `axis` (a unit vector) the spring's local x is aligned with the member so that dir 4 is the
         member's own torsion -- a brace pin releases bending (5, 6) but keeps torsion, otherwise the
-        brace would have a free rigid-body twist and a singular stiffness matrix."""
+        brace would have a free rigid-body twist and a singular stiffness matrix. `yp` (NL-33) sets the spring's
+        local y to the element's local y, so dirs 5 / 6 are the element's own local rotations."""
         dirs = [d for d in range(1, 7) if d not in released]
         mats = [1 if d <= 3 else 2 for d in dirs]
         tag = PIN_ELE0 + len(self.pins) + 1
         args = ["-mat", *mats, "-dir", *dirs]
         if axis is not None:
             ax, ay, az = axis
-            # any vector not parallel to the axis for the local y direction
-            ref = (0.0, 0.0, 1.0) if abs(az) < 0.9 else (1.0, 0.0, 0.0)
-            yx, yy, yz = (ref[1] * az - ref[2] * ay, ref[2] * ax - ref[0] * az, ref[0] * ay - ref[1] * ax)
+            if yp is not None:
+                yx, yy, yz = yp
+            else:
+                # any vector not parallel to the axis for the local y direction
+                ref = (0.0, 0.0, 1.0) if abs(az) < 0.9 else (1.0, 0.0, 0.0)
+                yx, yy, yz = (ref[1] * az - ref[2] * ay, ref[2] * ax - ref[0] * az, ref[0] * ay - ref[1] * ax)
             args += ["-orient", ax, ay, az, yx, yy, yz]
         ops.element("zeroLength", tag, grid_node, dup_node, *args)
         self.pins.append(tag)
         return tag
 
+
+    VECXZ = {1: (1.0, 0.0, 0.0), 2: (0.0, 1.0, 0.0), 3: (0.0, 0.0, 1.0), 4: (0.0, 1.0, 0.0), 5: (1.0, 0.0, 0.0),
+             6: (0.0, 0.0, 1.0)}                       # the geomTransf vectors build() registers
+
+    @staticmethod
+    def geometric_dirn(p1, p2, tol=1e-6):
+        """NL-33: "X" / "Y" for a horizontal member along a global axis, "Z" for a vertical one, "" otherwise
+        (sloped or skew). From the coordinates, so off-grid node tags cannot misread it."""
+        d = [p2[q] - p1[q] for q in range(3)]
+        L = math.sqrt(sum(v * v for v in d)) or 1.0
+        ax, ay, az = (abs(v) / L for v in d)
+        if az > tol:
+            return "Z" if ax <= tol and ay <= tol else ""
+        if ay <= tol:
+            return "X"
+        if ax <= tol:
+            return "Y"
+        return ""
+
+    def local_axes(self, p1, p2, tr):
+        """NL-33: the element's local x and local y (OpenSees: y = vecxz cross x) for geomTransf `tr`."""
+        d = [p2[q] - p1[q] for q in range(3)]
+        L = math.sqrt(sum(v * v for v in d))
+        x = tuple(v / L for v in d)
+        v = self.VECXZ[tr]
+        y = (v[1] * x[2] - v[2] * x[1], v[2] * x[0] - v[0] * x[2], v[0] * x[1] - v[1] * x[0])
+        n = math.sqrt(sum(c * c for c in y))
+        if n < 1e-9:
+            raise ValueError("geomTransf %s vecxz is parallel to the member axis %s" % (tr, x))
+        return x, tuple(c / n for c in y)
 
     def _offset_frac(self):
         """Return rigid-end offset fraction, or 0 if disabled."""
@@ -328,22 +465,29 @@ class GMNIAModel:
         # end nodes (with pins if released)
         end1, end2 = m.n1, m.n2
         rel1, rel2 = set(), set()
-        if m.kind == "beam":
-            major = 5 if m.dirn == "X" else 4
+        axis = yp = None
+        gdir = self.geometric_dirn(p1, p2)
+        if m.kind == "beam" and gdir in ("X", "Y"):  # horizontal, along a global axis: global pin (as before)
+            major = 5 if gdir == "X" else 4
             if m.relz in (1, 3): rel1.add(major)
             if m.relz in (2, 3): rel2.add(major)
             if m.rely in (1, 3): rel1.add(6)
             if m.rely in (2, 3): rel2.add(6)
-        axis = None
+        elif m.kind in ("beam", "col") and (m.relz or m.rely):   # NL-33: sloped / skew beam, released column
+            axis, yp = self.local_axes(p1, p2, tr)
+            if m.relz in (1, 3): rel1.add(5)
+            if m.relz in (2, 3): rel2.add(5)
+            if m.rely in (1, 3): rel1.add(6)
+            if m.rely in (2, 3): rel2.add(6)
         if m.kind == "brace" and self.brace_pins:
             rel1, rel2 = {5, 6}, {5, 6}                 # local: release bending, keep torsion (dir 4)
             axis = tuple((p2[q] - p1[q]) / L for q in range(3))
         if rel1:
             end1 = PIN_NODE0 + m.tag * 10 + 1
-            ops.node(end1, *p1); self._pin(m.n1, end1, rel1, axis)
+            ops.node(end1, *p1); self._pin(m.n1, end1, rel1, axis, yp)
         if rel2:
             end2 = PIN_NODE0 + m.tag * 10 + 2
-            ops.node(end2, *p2); self._pin(m.n2, end2, rel2, axis)
+            ops.node(end2, *p2); self._pin(m.n2, end2, rel2, axis, yp)
         if self._is_secondary(m):
             from .sections_fiber import cfs_section_props, G_KSI, E_KSI
             pr = cfs_section_props(m.section) or {}
@@ -420,9 +564,9 @@ class GMNIAModel:
             return
 
         secTag = self._section(m)
+        fr = self._fractions(m, nsub)
         chain = [end1]
-        for s in range(1, nsub):
-            f = s / nsub
+        for s, f in enumerate(fr[1:-1], start=1):
             off = bmag * L * math.sin(math.pi * f)
             x = p1[0] + (p2[0] - p1[0]) * f + bv[0] * off
             y = p1[1] + (p2[1] - p1[1]) * f + bv[1] * off
@@ -430,16 +574,35 @@ class GMNIAModel:
             t = SUB_NODE0 + m.tag * 100 + s
             ops.node(t, x, y, z)
             chain.append(t)
+            self.__dict__.setdefault("_frac_nodes", {})[(int(m.tag), round(f, 9))] = t
         chain.append(end2)
         self.sub_nodes[m.tag] = chain
         etype = "dispBeamColumn" if self.fast else "forceBeamColumn"
-        for s in range(nsub):
+        uniform = fr == [0.0] + [s / nsub for s in range(1, nsub)] + [1.0]   # no station: pre-NL-33 arithmetic
+        for s in range(len(fr) - 1):
             tag = SUB_ELE0 + m.tag * 100 + s
             extra = () if self.fast else ("-iter", 20, 1e-8)
             ops.element(etype, tag, chain[s], chain[s + 1], tr, secTag, *extra)
+            Ls, sp = ((L / nsub, (L * s / nsub, L * (s + 1) / nsub)) if uniform else
+                      (L * (fr[s + 1] - fr[s]), (L * fr[s], L * fr[s + 1])))
             self.elems.append(dict(tag=tag, mtag=m.tag, kind=m.kind, role=m.role, section=m.section,
-                                   secTag=secTag, s=s, n1=chain[s], n2=chain[s + 1], L=L / nsub, dirn=m.dirn,
-                                   span=(L * s / nsub, L * (s + 1) / nsub), Lm=L))
+                                   secTag=secTag, s=s, n1=chain[s], n2=chain[s + 1], L=Ls, dirn=m.dirn,
+                                   span=sp, Lm=L))
+
+    def _fractions(self, m, nsub):
+        """Sub-element node positions (fractions of the member, 0 and 1 included). Without a station: exactly s / nsub,
+        as before. With NL-33 PEB restraint stations inside this HR element: the stations, and every gap longer than
+        L / nsub split equally -- no sub-element longer than the uniform one, and no sliver next to a station."""
+        base = [s / nsub for s in range(1, nsub)]
+        st = list(((getattr(self, "peb", None) or {}).get("member_fracs") or {}).get(int(m.tag), ()))
+        if not st:
+            return [0.0] + base + [1.0]
+        pts = [0.0] + sorted(set(round(f, 9) for f in st if 0.0 < f < 1.0)) + [1.0]
+        out = [0.0]
+        for a, b in zip(pts, pts[1:]):                # gaps longer than L / nsub get equal intermediate nodes
+            k = max(1, math.ceil((b - a) * nsub - 1e-6))
+            out += [round(a + (b - a) * q / k, 9) for q in range(1, k)] + [b]
+        return out
 
     # ------------------------------------------------------------------ loads
     def apply_gravity(self, fD, fL, fLr, pres, fS=0.0, meta=None):

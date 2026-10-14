@@ -93,7 +93,7 @@ def props(section: str) -> dict:
     t = _table()
     key = section.strip().upper().replace(" ", "")
     from . import india_sections as _IS                     # NL-4: HR built-up boxes (design/cfg_snapshot.json)
-    box = _IS.props_in(key) if key.startswith("BOX") or key in _IS.CUSTOM else None
+    box = _IS.props_in(key) if key.startswith(("BOX", "WI")) or key in _IS.CUSTOM else None   # NL-33: welded I too
     if box is not None:
         return dict(box)
     if key in _CUSTOM:

@@ -33,11 +33,51 @@ def _replay(path):
                 exec(t, ns)
 
 
-def _periods(n=3):
+MAX_CONDENSED_DOFS = 60
+
+
+def _condensed_periods(n, masses):
+    """NL-33: exact periods when the whole mass sits on a few DOFs (a PEB shed's single roof master: ux, uy, rz).
+    ARPACK cannot return n >= 2 modes when the mass matrix has rank 3 and the dense LAPACK fallback is O(neq^3)
+    (4 600 - 7 000 equations for the PEB models). Static condensation is exact here, because every massless DOF is
+    condensed by the static solves: F (flexibility on the mass DOFs, one unit load each), then
+    eig(M^1/2 F M^1/2) = 1 / omega^2. None when the mass is spread over more than MAX_CONDENSED_DOFS DOFs."""
+    import numpy as np
+    dofs = [(int(t), k) for t, mm in sorted(masses.items()) for k, v in enumerate(mm) if float(v) > 0.0]
+    if not dofs or len(dofs) > MAX_CONDENSED_DOFS:
+        return None
+    F = np.zeros((len(dofs), len(dofs)))
+    for j, (t, k) in enumerate(dofs):
+        ops.wipeAnalysis()
+        ops.timeSeries("Constant", 9101 + j); ops.pattern("Plain", 9101 + j, 9101 + j)
+        load = [0.0] * 6; load[k] = 1.0
+        ops.load(t, *load)
+        ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
+        ops.test("NormDispIncr", 1e-12, 10, 0); ops.algorithm("Linear")
+        ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+        if ops.analyze(1) != 0:
+            return None
+        for i, (ti, ki) in enumerate(dofs):
+            F[i, j] = ops.nodeDisp(ti, ki + 1)
+        ops.remove("loadPattern", 9101 + j)
+        ops.setTime(0.0)                          # Linear algorithm: u = K^-1 P from any committed state
+    ops.wipeAnalysis()
+    m = np.sqrt(np.array([float(masses[t][k]) for t, k in dofs]))
+    lam = np.linalg.eigvalsh(0.5 * ((m[:, None] * F * m[None, :]) + (m[:, None] * F * m[None, :]).T))
+    lam = sorted((v for v in lam if v > 0), reverse=True)[:n]
+    return [2 * math.pi * math.sqrt(v) for v in lam]
+
+
+def _periods(n=3, masses=None):
     ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
     try:
         w2 = ops.eigen("-genBandArpack", n)
+        if len(w2) < n:
+            raise RuntimeError("ARPACK returned %d of %d modes" % (len(w2), n))
     except Exception:
+        T = _condensed_periods(n, masses) if masses else None
+        if T and len(T) >= n:
+            return T
         w2 = ops.eigen("-fullGenLapack", n)
     return [2 * math.pi / math.sqrt(max(w, 1e-12)) for w in w2]
 
@@ -61,7 +101,7 @@ def run(nm, cfg, lat_x, lat_y, tol=0.05, nsub=(2, 2, 2)):
     masters = sorted(t for t in nm.nodes if t % 100000 == 99999)
     # --- Steltic elastic model
     _replay(replay)
-    T_ref = _periods(3)
+    T_ref = _periods(3, masses=nm.masses)
     _replay(replay); okx, dx_ref = _lateral_disp(masters, lat_x, "X")
     _replay(replay); oky, dy_ref = _lateral_disp(masters, lat_y, "Y")
     # --- GMNIA topology, elastic

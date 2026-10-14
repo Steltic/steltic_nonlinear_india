@@ -217,6 +217,13 @@ def run(args):
                            "out-of-plumb psi = 1/200 (equivalence, EOR to confirm)" if india and args.psi is None else
                            ("EOR input psi = 1/%d" % round(1 / psi))),
                 bow_basis=("IS 800:2007 Table 34 straightness 0.001L (0.002L hollow sections)" if india else "L/1000"))
+    from . import peb_restraints as _PR                # NL-33: the PEB out-of-plane restraint system (None otherwise)
+    _pp = _PR.plan(nm, cfg)
+    if _pp:
+        nm._peb_plan = _pp
+        opts["peb_restraints"] = dict(summary=_PR.summary(_pp), counts=_pp["counts"], skipped=_pp["skipped"][:20],
+                                      basis="cfg['flange_braces'] read as steltic_india peb_build (owner ruling D-T1)")
+        print(">> " + _PR.summary(_pp), flush=True)
     ggate = None
     if india:
         from .india_checks import gravity_gate, b11_preconditions
