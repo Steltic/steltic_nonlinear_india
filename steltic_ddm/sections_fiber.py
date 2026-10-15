@@ -528,12 +528,15 @@ class FiberSectionBuilder:
         return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib)
 
     # ---- welded plate I (HR custom_sections welded_I / tapered_I segments, NL-33) --------------
-    def welded_i_plates(self, secTag, label, axis="y", nf_flange=(8, 2), nf_web=(12, 1), residual=None):
+    def welded_i_plates(self, secTag, label, axis="y", nf_flange=(8, 2), nf_web=(12, 1), residual=None,
+                        warping_length=None):
         """Fibre welded plate I from its three plates (pushover.india_sections registry, mm): flanges bf x tf at
         +/-(D - tf)/2 along the depth axis, web (D - 2 tf) x tw; no root fillets. axis="y": depth along local y
         (column, as w_shape); "z": depth along local z (beam). No residual stress pattern (welded-section residual
         stresses are not modelled, as for the NL-4 welded boxes -- disclosed in the section log). The fibres carry
-        the full plates: local buckling of slender (Class 4) webs and semi-compact flanges is not modelled."""
+        the full plates: local buckling of slender (Class 4) webs and semi-compact flanges is not modelled.
+        NL-33: with `warping_length` L_t (mm) the torsional stiffness is G J + pi^2 E Cw / L_t^2 -- the warping
+        resistance the beam-column has no degree of freedom for (peb_restraints)."""
         from pushover import india_sections as IS_
         p = IS_.get_mm(label)
         if p is None or p.get("section_type") != "welded_i":
@@ -542,7 +545,13 @@ class FiberSectionBuilder:
         D, B, tf, tw = p["d"] * sc, p["bf"] * sc, p["tf"] * sc, p["tw"] * sc
         J = p["J"] * sc ** 4
         hw = D - 2 * tf
-        self.ops.section("Fiber", secTag, "-GJ", self.G * J)
+        GJ = self.G * J
+        warp = ""
+        if warping_length:
+            Lt = float(warping_length) * sc
+            GJ += math.pi ** 2 * self.E * float(p.get("Cw") or 0.0) * sc ** 6 / Lt ** 2
+            warp = "; torsion G J + pi^2 E Cw / Lt^2 with Lt = %.0f mm (x%.1f)" % (float(warping_length), GJ / (self.G * J))
+        self.ops.section("Fiber", secTag, "-GJ", GJ)
         m = self._mat(0.0)
         nfib = 0
 
@@ -565,9 +574,10 @@ class FiberSectionBuilder:
             for q in range(nwz):
                 put(yc, -tw / 2 + (q + 0.5) * tw / nwz, (hw / nwy) * (tw / nwz))
         self.log.append((secTag, label, "WI", nfib, "welded plate I D=%.1f bf=%.1f tf=%.1f tw=%.1f (mm) axis=%s units=%s; "
-                         "no residual stress; full plates (local buckling not modelled)" % (
-                             p["d"], p["bf"], p["tf"], p["tw"], axis, self.units)))
-        return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib)
+                         "no residual stress; full plates (local buckling not modelled)%s" % (
+                             p["d"], p["bf"], p["tf"], p["tw"], axis, self.units, warp)))
+        return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=D, bf=B, tf=tf, tw=tw, nfib=nfib,
+                    GJ=GJ, warping_length=warping_length)
 
     # ---- EBF shear link (NL-10) -------------------------------------------------------------
     def link_aggregator(self, aggTag, fibreTag, label, fy_MPa, box=False, hardening=0.005):
@@ -595,12 +605,13 @@ class FiberSectionBuilder:
         self.log.append((aggTag, label, "LINK", 0, "shear Vp %.1f kN on Vz, fibre section %d" % (Vp_N / 1e3, fibreTag)))
         return rec
 
-    def build(self, secTag, label, kind, axis=None):
+    def build(self, secTag, label, kind, axis=None, warping_length=None):
         lab = str(label).upper().replace(" ", "")
         if lab.startswith("BOX"):
             return self.box_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
         if lab.startswith("WI") or _custom_kind(lab) == "welded_i":
-            return self.welded_i_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
+            return self.welded_i_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")),
+                                        warping_length=warping_length)
         if lab.startswith("HSS") and hss_dims(lab):
             return self.hss_rect(secTag, lab, residual=("none" if self.residual == "none" else "cf_hss_membrane"))
         # IS 1161 CHS / round HSS (no XxY rect dims)

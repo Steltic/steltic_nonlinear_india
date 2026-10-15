@@ -217,6 +217,9 @@ def test_restrained_peb_gravity_reaches_lambda_one_and_the_studs_follow_the_rack
             break
         lam = ops.getLoadFactor(1)
     assert lam >= 1.0 - 1e-9
+    # NL-33 warping-equivalent torsion: no spurious twist of the deep welded columns at lambda = 1
+    twist = max(abs(ops.nodeDisp(e["n2"], 6)) for e in g.elems if e["kind"] == "col")
+    assert twist < 2e-3
     # a stud: base at the column base, top tied to the column top; station ties on the line between them
     stud = g.peb["studs"][0]
     d = stud["dir"]
@@ -247,3 +250,53 @@ def test_peb_disclosures(tmp_path):
     assert [r["id"] for r in rows] == ["peb_welded_plate_fibres", "peb_ddm_restraints"]
     assert rows[1]["counts"] == {"studs": 28}
     assert any(r["id"] == "peb_welded_plate_fibres" for r in IA.method_disclosures(str(tmp_path)))
+
+
+def test_warping_equivalent_torsion_on_welded_i():
+    import math as _m
+    from pushover import india_sections as ISEC
+    from steltic_ddm.sections_fiber import FiberSectionBuilder
+
+    class _Ops:
+        def __init__(self):
+            self.sec = None
+
+        def uniaxialMaterial(self, *a):
+            pass
+
+        def section(self, *a):
+            self.sec = a
+
+        def fiber(self, *a):
+            pass
+    ISEC.register_welded_i("WI956X250X14X6", 956, 250, 14, 6)
+    p = ISEC.get_mm("WI956X250X14X6")
+    o = _Ops(); b = FiberSectionBuilder(o, Fy=350.0, units="N-mm")
+    out = b.build(1, "WI956X250X14X6", "col", axis="y")
+    assert o.sec[-1] == pytest.approx(b.G * p["J"]) and out["warping_length"] is None
+    o = _Ops(); b = FiberSectionBuilder(o, Fy=350.0, units="N-mm")
+    out = b.build(1, "WI956X250X14X6", "col", axis="y", warping_length=1500.0)
+    want = b.G * p["J"] + _m.pi ** 2 * b.E * p["Cw"] / 1500.0 ** 2
+    assert o.sec[-1] == pytest.approx(want) and want > 100 * b.G * p["J"]   # the warping term dominates a deep I
+    assert "Lt = 1500 mm" in b.log[-1][-1]
+
+
+def test_warping_lengths_between_torsional_restraints():
+    from steltic_ddm import peb_restraints as PR
+    job = _job(GOLD, "IN_Ex1_PEB_factory_shed*")
+    nm, cfg = _load(job)
+    p = PR.plan(nm, cfg)
+    wl = p["warping_length"]
+    bt = {m.tag: m for m in nm.members}
+    # a portal column top segment (8.75-10 m): last fly brace at 8.5 m, the knee at 10 m -> 1.5 m
+    tops = [t for t, m in bt.items() if m.kind == "col" and str(m.section).startswith("WI956")]
+    assert tops and all(wl[t] == pytest.approx(1500.0, abs=1.0) for t in tops)
+    # a rafter segment next to the knee: fly braces at 1.5 m plan from the eave, 1:10 slope -> 1.5 m x 1.005
+    knee = [t for t, m in bt.items() if m.kind == "beam" and str(m.section).startswith("WI972")]
+    assert any(wl.get(t) == pytest.approx(1500.0 * _hyp10(), rel=1e-3) for t in knee)
+    assert p["counts"]["warping_length_mm"][0] > 0
+
+
+def _hyp10():
+    import math as _m
+    return _m.sqrt(1 + 0.1 ** 2)

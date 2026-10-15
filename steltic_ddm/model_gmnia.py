@@ -364,6 +364,13 @@ class GMNIAModel:
         axis = "y" if m.kind == "col" else "z"
         link = (getattr(m, "role", "") == "link")
         key = (m.section.upper(), "link" if link else m.kind, axis)
+        # NL-33: a welded I between torsional restraints carries the warping term in its torsional stiffness
+        wl = ((getattr(self, "peb", None) or {}).get("warping_length") or {}).get(int(m.tag))
+        if wl and str(m.section).upper().startswith("WI"):
+            wl = round(float(wl) / 10.0) * 10.0
+            key = key + (wl,)
+        else:
+            wl = None
         if key not in self.secs:
             tag = len(self.secs) + 1
             bld, fy = self.builder, self.Fy
@@ -375,7 +382,7 @@ class GMNIAModel:
                                                                  elastic=self.elastic, mat_tag0=100000 + 1000 * len(self._builders),
                                                                  units=getattr(self, "_fibre_units", "kip-in"), fillets=self._fillets())
                     bld = self._builders[fy]
-            props = bld.build(tag, m.section, m.kind, axis=axis)
+            props = bld.build(tag, m.section, m.kind, axis=axis, warping_length=wl)
             if bld is not self.builder:
                 self.builder.log.extend(bld.log[-1:])
             if link:                                  # NL-10: IS 18168 11.2 shear yielding aggregated on the fibres

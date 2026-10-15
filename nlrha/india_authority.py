@@ -559,8 +559,12 @@ def peb_disclosures(job_dir) -> list[dict]:
                               "(cfg['flange_braces'], read as peb_build, owner ruling D-T1), which the HR frame model does not "
                               "have: %s. Lateral restraints tie to the roof diaphragm (rafters) or to the wall racking line "
                               "(columns); torsional restraints are to ground. A centroid-line model cannot hold one flange, so "
-                              "purlin-only and girt-only stations are omitted (conservative). The pushover and NLRHA models use "
-                              "the HR transformations (P-Delta columns, linear beams) and need no such restraints."
+                              "purlin-only and girt-only stations are omitted (conservative). The fibre beam-columns have no "
+                              "warping degree of freedom: the welded I sections carry G J + pi^2 E Cw / L_t^2 as their "
+                              "torsional stiffness, L_t the spacing of the torsional restraints (the warping term of the elastic "
+                              "LTB moment), so a deep section does not twist at a fraction of its LTB resistance. The pushover and "
+                              "NLRHA models use the HR transformations (P-Delta columns, linear beams) and need no such "
+                              "restraints."
                               % (pr.get("summary") or "")))
     return rows
 

@@ -24,6 +24,14 @@ stations and with the same reading as peb_build:
            and tied to the column top, so the restraint follows the wall's racking (base 0, eave as the frame moves)
            and adds no stiffness to the building's own sway.
   torsion  a zeroLength on the member's own axis (dir 4, the element's local frame) to a fixed node.
+  warping  the fibre beam-columns have no warping degree of freedom, so a deep welded I between torsional restraints
+           twisted under its own major-axis moment at a fraction of its lateral-torsional buckling resistance (IN_Ex1
+           1.5DL+1.5LL: 0.03 rad of twist and a 19 kN-m minor moment in the 1.5 m column top between the last fly brace
+           and the knee; St Venant-only Mcr 1 100 kN-m against ~15 000 kN-m with warping). warping_length[mtag] is the
+           length along the member between the torsional restraints bounding each HR element (fly-brace stations, the
+           base, the knee, the apex and the interior supports -- the restraints peb_build counts); model_gmnia gives
+           the welded I sections the equivalent torsional stiffness G J + pi^2 E Cw / L_t^2 (the warping term of the
+           elastic LTB moment, exact for a fork-supported segment).
 
 Stations inside an HR element become GMNIA sub-element nodes (model_gmnia splits the member there); the member ends,
 the eaves and the apex already carry the HR ties and joints (no torsional restraint is added at a joint). Returns
@@ -66,6 +74,24 @@ def _station_on_chain(ms, nodes, pos, a):
     return None, None
 
 
+def _warping_lengths(ms, nodes, pos, points, out):
+    """NL-33: per HR element, the length along the member between the torsional restraints that bound it (`points`:
+    chain coordinates -- height above the base or plan distance -- of the fly-brace stations and the chain's joints)."""
+    pts = sorted(set(round(float(p), 3) for p in points))
+    for m in ms:
+        a1, a2 = pos(nodes[m.n1]), pos(nodes[m.n2])
+        mid = 0.5 * (a1 + a2)
+        gap = None
+        for p0, p1 in zip(pts, pts[1:]):
+            if p0 - 1e-6 <= mid <= p1 + 1e-6:
+                gap = p1 - p0
+                break
+        if gap is None or abs(a2 - a1) < 1e-9:
+            continue
+        L = math.dist(nodes[m.n1], nodes[m.n2])
+        out[int(m.tag)] = round(gap * L / abs(a2 - a1), 1)       # chain coordinate -> length along the member
+
+
 def plan(nm, cfg=None):
     cfg = cfg if cfg is not None else (getattr(nm, "cfg", None) or {})
     peb = (getattr(nm, "calc_package", None) or {}).get("peb") or {}
@@ -78,7 +104,7 @@ def plan(nm, cfg=None):
     hr_ties = _springs_by_node(nm)
     both = bool(cfg.get("column_lateral_support_both_flanges"))
     col_tops = {int(ch["top"]) for ch in chains.values() if ch.get("kind") == "column" and ch.get("top") is not None}
-    out = dict(stations=[], member_fracs={}, studs=[], skipped=[], counts={})
+    out = dict(stations=[], member_fracs={}, studs=[], skipped=[], counts={}, warping_length={})
     one_flange = [0]
 
     def add(chain, kind, a, kinds, d, target, m):
@@ -121,6 +147,9 @@ def plan(nm, cfg=None):
                 s = add(cid, "column", h, kinds, d, target, m)
                 if s:
                     rec.append(s)
+            _warping_lengths(ms, nodes, lambda p: p[2] - zb,
+                             [0.0, H] + [h for h, k in st.items() if "torsion" in k and END_TOL_MM < h < H - END_TOL_MM],
+                             out["warping_length"])
             if any("lateral" in s["kinds"] for s in rec):
                 out["studs"].append(dict(chain=cid, base=base, top=top, dir=d,
                                          stations=[i for i, s in enumerate(out["stations"]) if s in rec and "lateral" in s["kinds"]]))
@@ -157,6 +186,11 @@ def plan(nm, cfg=None):
             for a in purl_only:
                 if _station_on_chain(ms, nodes, lambda p: p[ax], a)[0] is not None:
                     one_flange[0] += 1
+            c_lo = min(min(nodes[m.n1][ax], nodes[m.n2][ax]) for m in ms)
+            c_hi = max(max(nodes[m.n1][ax], nodes[m.n2][ax]) for m in ms)
+            tors = [c_lo, c_hi] + [nodes[n][ax] for n in chain_nodes & col_tops]
+            tors += [a for a, k in st.items() if "torsion" in k and c_lo + END_TOL_MM < a < c_hi - END_TOL_MM]
+            _warping_lengths(ms, nodes, lambda p: p[ax], tors, out["warping_length"])
             for a, kinds in sorted(st.items()):
                 target, m = _station_on_chain(ms, nodes, lambda p: p[ax], a)
                 if target is None:
@@ -196,6 +230,8 @@ def plan(nm, cfg=None):
     c["studs"] = len(out["studs"])
     c["split_elements"] = len(out["member_fracs"])
     c["not_modelled_one_flange"] = one_flange[0]
+    wl = list(out["warping_length"].values())
+    c["warping_length_mm"] = [min(wl), max(wl)] if wl else None
     return out
 
 

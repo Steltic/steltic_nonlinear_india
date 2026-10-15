@@ -44,10 +44,20 @@ building is unchanged (the new code paths need a welded / tapered custom section
   - Purlin-only and girt-only stations hold one flange. A centroid-line model cannot represent that, so they are not
     modelled (conservative). The count is recorded.
   - Stations inside an HR element become sub-element nodes (no sub-element longer than L / nsub).
+  - **Warping.** The fibre beam-columns have no warping degree of freedom. A deep welded I between torsional
+    restraints therefore twisted under its own major-axis moment at a fraction of its LTB resistance. In IN_Ex1
+    under 1.5DL + 1.5LL, the 1.5 m column top between the last fly brace and the knee twisted 0.03 rad and carried a
+    19 kN·m minor moment. That gave a false B-1.2 shortfall of 1.13. The St Venant-only Mcr is about 1 100 kN·m,
+    against about 15 000 kN·m with warping.
+    - Every welded I element now carries G J + π² E Cw / L_t² as its torsional stiffness, the warping term of the
+      elastic LTB moment, where L_t is the spacing of the torsional restraints bounding it (`warping_length`). With
+      it the twist is under 2·10⁻⁴ rad and the minor moment 0.2 kN·m.
+    - The IN_Ex3 crane gravity sweep that stopped numerically at λ 1.538 (three attempts, about 30 min) now reaches
+      its ductility cap at λ 1.72 in 20 s.
   - Recorded in `ddm_results.json` `options.peb_restraints`, the DDM report (section 2) and the COMPLETE-gate
     disclosures.
 - Gates on the five sheds with the restraints:
-  - Transfer gate: T1 within 0.1 %, T2 / T3 within 2 %, roof displacements within 4 %.
+  - Transfer gate: T1 within 0.1 %, T2 / T3 within 2.1 %, roof displacements within 4 %.
   - Gravity transfer gate: 0 members outside ±5 %.
   - IN_Ex1 1.5DL + 1.5LL now passes λ = 1 (λ 1.2, 0.5 s per step). Before the restraints it was limited at 0.26.
 

@@ -368,7 +368,10 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
                  'segments) as plate fibres, without a residual-stress pattern and without local buckling (slender webs: the '
                  'B-1.2 check uses the IS 800 3.7.2(d) effective section, the fibres the gross plates). %s. Lateral restraints '
                  'tie the member to the roof diaphragm (rafters) or to a rigid stud pinned at the column base and tied to its top '
-                 '(columns, the wall racking line); torsional restraints act on the member axis.</li>' % _h(pr.get("summary") or ""))
+                 '(columns, the wall racking line); torsional restraints act on the member axis. The beam-columns have no warping '
+                 'degree of freedom, so the welded I sections carry G J + π² E C<sub>w</sub> / L<sub>t</sub>² as their torsional '
+                 'stiffness (L<sub>t</sub> the torsional-restraint spacing, %s mm).</li>' % (
+                     _h(pr.get("summary") or ""), "–".join("%.0f" % v for v in ((pr.get("counts") or {}).get("warping_length_mm") or []))))
     P.append('<li>Out-of-plumb ψ = 1/%d — %s. Member bow %s (hollow sections 1/%d).</li>' % (
         round(1 / o.get("psi", 1 / 200)), _h(o.get("psi_basis") or ""), _h(o.get("bow_basis") or ""),
         round(1 / (o.get("bow_hollow") or o.get("bow", 1 / 1000)))))
