@@ -370,7 +370,8 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
                  'tie the member to the roof diaphragm (rafters) or to a rigid stud pinned at the column base and tied to its top '
                  '(columns, the wall racking line); torsional restraints act on the member axis. The beam-columns have no warping '
                  'degree of freedom, so the welded I sections carry G J + π² E C<sub>w</sub> / L<sub>t</sub>² as their torsional '
-                 'stiffness (L<sub>t</sub> the torsional-restraint spacing, %s mm).</li>' % (
+                 'stiffness (L<sub>t</sub> the spacing of the modelled torsional restraints, twice the gap next to a joint without '
+                 'one; %s mm).</li>' % (
                      _h(pr.get("summary") or ""), "–".join("%.0f" % v for v in ((pr.get("counts") or {}).get("warping_length_mm") or []))))
     P.append('<li>Out-of-plumb ψ = 1/%d — %s. Member bow %s (hollow sections 1/%d).</li>' % (
         round(1 / o.get("psi", 1 / 200)), _h(o.get("psi_basis") or ""), _h(o.get("bow_basis") or ""),
@@ -451,7 +452,7 @@ def ddm_block_india(nm, gate, runs, sensitivity, options, member_table):
         "model": {"material": "Steel01 fy per section (IS 2062 Table 3) E=200000 MPa b=%.3f" % options.get("hardening", 0.002),
                   "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), options.get("psi_basis")),
                   "out_of_straightness": options.get("bow_basis"), "units": "N, mm, MPa",
-                  "peb_restraints": (options.get("peb_restraints") or {}).get("summary")},
+                  **({"peb_restraints": options["peb_restraints"].get("summary")} if options.get("peb_restraints") else {})},
         "gravity_gate": {k: v for k, v in (options.get("gravity_gate") or {}).items() if k in ("ok", "summary", "tol", "n_compared", "n_bad")},
         "combinations": [
             {"label": r["combo"][0], "kind": r["summary"]["kind"], "imperfection": r["imp"],

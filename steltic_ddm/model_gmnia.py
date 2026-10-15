@@ -264,6 +264,8 @@ class GMNIAModel:
     RESTRAINT_NODE0 = 50_000_000
     RESTRAINT_ELE0 = 50_000_000
     STUD_TRANSF = 7
+    TORSION_MAT = 3
+    K_TORSION = 1.0e12   # N-mm/rad: rigid against G J + pi^2 E Cw / L_t (up to ~5e9 per 1.5 m) -- the fork the L_t term assumes
     STUD_PROPS = (1.0e6, 2.0e5, 7.7e4, 1.0e13, 1.0e13, 1.0e13)   # A E G J Iy Iz (N-mm): rigid next to any PEB column
 
     def _add_peb_restraints(self):
@@ -293,6 +295,7 @@ class GMNIAModel:
             t = st["target"]
             return t[1] if t[0] == "node" else self._frac_nodes.get((t[1], round(t[2], 9)))
 
+        ops.uniaxialMaterial("Elastic", self.TORSION_MAT, self.K_TORSION)
         masters = {}
         for mst, slaves in (nm.diaphragms or {}).items():
             masters[mst] = self._coord(mst)[2]
@@ -309,7 +312,7 @@ class GMNIAModel:
                 m = bt[st["mtag"]]
                 axis, yp = self.local_axes(self._coord(m.n1), self._coord(m.n2), self._transf_for(m))
                 g0 = new_node(xyz); ops.fix(g0, 1, 1, 1, 1, 1, 1)
-                zl(g0, n, 2, 4, orient=(axis, yp)); made["torsion"] += 1
+                zl(g0, n, self.TORSION_MAT, 4, orient=(axis, yp)); made["torsion"] += 1
             if "lateral" in st["kinds"] and st["member_kind"] == "rafter":
                 if not masters:
                     made["missing"] += 1
@@ -328,7 +331,9 @@ class GMNIAModel:
             # DisplacementControl steps of the sweeps -- Transformation handler, IN_Ex1 2026-10-14).
             d = stud["dir"]
             free = (1, 5) if d == 1 else (2, 4)
-            fixity = [0 if q in free else 1 for q in range(1, 7)]
+            # uz free on every stud node but the base: the stud follows the column's imperfect (tilted, bowed) geometry,
+            # and a tilted stiff bar on vertical rollers would resist the building's sway (k ~ EA psi^2 / H)
+            fixity = [0 if q in free or q == 3 else 1 for q in range(1, 7)]
             chain = [new_node(self._coord(stud["base"]))]
             ops.fix(chain[0], *[0 if q == free[1] else 1 for q in range(1, 7)])
             links = []
@@ -347,6 +352,9 @@ class GMNIAModel:
                 zl(sk, n, 1, d); made["stud_ties"] += 1
             made["studs"] += 1
         self.peb_made = made
+        if made["missing"]:
+            print("[gmnia] WARNING NL-33: %d PEB restraint station(s) not built (no node / no roof diaphragm)" % made["missing"],
+                  flush=True)
         return ties
 
     def _is_secondary(self, m):
@@ -360,15 +368,26 @@ class GMNIAModel:
                 return True
         return False
 
-    def _section(self, m):
+    def _wl_at(self, m, f):
+        """NL-33: the warping length L_t of HR element m at member fraction f (peb_restraints warping_intervals)."""
+        ivs = ((getattr(self, "peb", None) or {}).get("warping_intervals") or {}).get(int(m.tag))
+        for f0, f1, lt in ivs or ():
+            if f0 - 1e-9 <= f <= f1 + 1e-9:
+                return lt
+        return None
+
+    def _section(self, m, wl=None):
         axis = "y" if m.kind == "col" else "z"
         link = (getattr(m, "role", "") == "link")
         key = (m.section.upper(), "link" if link else m.kind, axis)
         # NL-33: a welded I between torsional restraints carries the warping term in its torsional stiffness
-        wl = ((getattr(self, "peb", None) or {}).get("warping_length") or {}).get(int(m.tag))
-        if wl and str(m.section).upper().startswith("WI"):
-            wl = round(float(wl) / 10.0) * 10.0
-            key = key + (wl,)
+        if wl:
+            from pushover import india_sections as _ISEC
+            if _ISEC.is_welded_i(m.section):
+                wl = round(float(wl) / 10.0) * 10.0
+                key = key + (wl,)
+            else:
+                wl = None
         else:
             wl = None
         if key not in self.secs:
@@ -481,7 +500,16 @@ class GMNIAModel:
             if m.rely in (1, 3): rel1.add(6)
             if m.rely in (2, 3): rel2.add(6)
         elif m.kind in ("beam", "col") and (m.relz or m.rely):   # NL-33: sloped / skew beam, released column
-            axis, yp = self.local_axes(p1, p2, tr)
+            try:
+                axis, yp = self.local_axes(p1, p2, tr)
+            except ValueError:                        # vecxz parallel to the member (a vertical "beam"): global pin
+                axis = yp = None
+                major = 5 if m.dirn == "X" else 4
+                if m.relz in (1, 3): rel1.add(major)
+                if m.relz in (2, 3): rel2.add(major)
+                if m.rely in (1, 3): rel1.add(6)
+                if m.rely in (2, 3): rel2.add(6)
+        if axis is not None and m.kind in ("beam", "col") and (m.relz or m.rely):
             if m.relz in (1, 3): rel1.add(5)
             if m.relz in (2, 3): rel2.add(5)
             if m.rely in (1, 3): rel1.add(6)
@@ -513,6 +541,9 @@ class GMNIAModel:
 
         # Optional rigid end offsets on primary beams (continuous FR joint continuity).
         off_frac = self._offset_frac() if (m.kind == "beam" and not self._is_secondary(m)) else 0.0
+        if off_frac > 0 and getattr(self, "peb", None):
+            raise ValueError("rigid end offsets are not supported with the NL-33 PEB restraint system (stations and "
+                             "warping lengths would be lost); run the PEB DDM without --rigid-end-offset")
         if off_frac > 0:
             from .sections_fiber import elastic_props, E_KSI, G_KSI, E_MPA, G_MPA, MM_PER_IN
             nmm = getattr(self, "_fibre_units", "kip-in") == "N-mm"
@@ -570,8 +601,8 @@ class GMNIAModel:
                                        span=(off + s * L_fib / nsub, off + (s + 1) * L_fib / nsub), Lm=L))
             return
 
-        secTag = self._section(m)
         fr = self._fractions(m, nsub)
+        secTags = [self._section(m, self._wl_at(m, 0.5 * (fr[q] + fr[q + 1]))) for q in range(len(fr) - 1)]
         chain = [end1]
         for s, f in enumerate(fr[1:-1], start=1):
             off = bmag * L * math.sin(math.pi * f)
@@ -589,11 +620,11 @@ class GMNIAModel:
         for s in range(len(fr) - 1):
             tag = SUB_ELE0 + m.tag * 100 + s
             extra = () if self.fast else ("-iter", 20, 1e-8)
-            ops.element(etype, tag, chain[s], chain[s + 1], tr, secTag, *extra)
+            ops.element(etype, tag, chain[s], chain[s + 1], tr, secTags[s], *extra)
             Ls, sp = ((L / nsub, (L * s / nsub, L * (s + 1) / nsub)) if uniform else
                       (L * (fr[s + 1] - fr[s]), (L * fr[s], L * fr[s + 1])))
             self.elems.append(dict(tag=tag, mtag=m.tag, kind=m.kind, role=m.role, section=m.section,
-                                   secTag=secTag, s=s, n1=chain[s], n2=chain[s + 1], L=Ls, dirn=m.dirn,
+                                   secTag=secTags[s], s=s, n1=chain[s], n2=chain[s + 1], L=Ls, dirn=m.dirn,
                                    span=sp, Lm=L))
 
     def _fractions(self, m, nsub):

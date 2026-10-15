@@ -49,9 +49,18 @@ building is unchanged (the new code paths need a welded / tapered custom section
     under 1.5DL + 1.5LL, the 1.5 m column top between the last fly brace and the knee twisted 0.03 rad and carried a
     19 kN·m minor moment. That gave a false B-1.2 shortfall of 1.13. The St Venant-only Mcr is about 1 100 kN·m,
     against about 15 000 kN·m with warping.
-    - Every welded I element now carries G J + π² E Cw / L_t² as its torsional stiffness, the warping term of the
-      elastic LTB moment, where L_t is the spacing of the torsional restraints bounding it (`warping_length`). With
-      it the twist is under 2·10⁻⁴ rad and the minor moment 0.2 kN·m.
+    - Every welded I sub-element now carries G J + π² E Cw / L_t² as its torsional stiffness, the warping term of the
+      elastic LTB moment (`warping_intervals`). L_t is the gap between the modelled torsional springs (fly braces)
+      that bound the sub-element. A gap ending at a joint without a spring (base, knee, apex, interior support,
+      cantilever root or tip) takes twice its length. That is conservative against the design basis, which counts
+      those joints as restraints of both flanges. With it the twist is under 2·10⁻⁴ rad and the minor moment
+      0.4 kN·m.
+    - The torsional springs are stiff (1e12 N·mm/rad, against G J_eq / L up to about 5e9), which is the fork the
+      L_t term assumes.
+    - Attached canopy cantilevers (IN_Ex2) get torsional restraints at their `flange_braces['canopy']` fly braces.
+    - The studs leave uz free, so on the imperfect (tilted, bowed) geometry they add no sway stiffness. Before this,
+      uz was fixed and a tilted stud resisted sway with k ≈ EA ψ²/H.
+    - Found by an independent review of the diff.
     - The IN_Ex3 crane gravity sweep that stopped numerically at λ 1.538 (three attempts, about 30 min) now reaches
       its ductility cap at λ 1.72 in 20 s.
   - Recorded in `ddm_results.json` `options.peb_restraints`, the DDM report (section 2) and the COMPLETE-gate

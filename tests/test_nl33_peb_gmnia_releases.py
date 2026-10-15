@@ -282,19 +282,55 @@ def test_warping_equivalent_torsion_on_welded_i():
 
 
 def test_warping_lengths_between_torsional_restraints():
+    """L_t per gap between the MODELLED torsional springs (fly braces); a gap ending at a joint without one (base,
+    knee, apex) takes twice its length; an element split by a station has one L_t per part."""
     from steltic_ddm import peb_restraints as PR
     job = _job(GOLD, "IN_Ex1_PEB_factory_shed*")
     nm, cfg = _load(job)
     p = PR.plan(nm, cfg)
-    wl = p["warping_length"]
+    wi = p["warping_intervals"]
     bt = {m.tag: m for m in nm.members}
-    # a portal column top segment (8.75-10 m): last fly brace at 8.5 m, the knee at 10 m -> 1.5 m
+    # portal column top segment (8.75-10 m): last fly brace 8.5 m, the knee (no spring) at 10 m -> 2 x 1.5 m
     tops = [t for t, m in bt.items() if m.kind == "col" and str(m.section).startswith("WI956")]
-    assert tops and all(wl[t] == pytest.approx(1500.0, abs=1.0) for t in tops)
-    # a rafter segment next to the knee: fly braces at 1.5 m plan from the eave, 1:10 slope -> 1.5 m x 1.005
+    assert tops and all(wi[t] == [(0.0, 1.0, pytest.approx(3000.0, abs=1.0))] for t in tops)
+    # the 2.5-3.75 m segment is split by the 3.1 m fly brace: below it the base gap (2 x 3.1 m), above it 4.9 - 3.1 m
+    seg = [t for t, m in bt.items() if m.kind == "col" and abs(nm.nodes[m.n1][2] - 2500.0) < 1 and
+           abs(nm.nodes[m.n2][2] - 3750.0) < 1 and str(m.section).startswith("WI")]
+    assert seg
+    ivs = wi[seg[0]]
+    assert [round(iv[1], 3) for iv in ivs] == [0.48, 1.0]
+    assert ivs[0][2] == pytest.approx(6200.0, abs=1.0) and ivs[1][2] == pytest.approx(1800.0, abs=1.0)
+    # rafter segment next to the knee: eave (no spring) to the 1.5 m fly brace, 1:10 slope -> 2 x 1.5 m x 1.005
     knee = [t for t, m in bt.items() if m.kind == "beam" and str(m.section).startswith("WI972")]
-    assert any(wl.get(t) == pytest.approx(1500.0 * _hyp10(), rel=1e-3) for t in knee)
+    assert any(wi.get(t) and wi[t][0][2] == pytest.approx(3000.0 * _hyp10(), rel=1e-3) for t in knee)
     assert p["counts"]["warping_length_mm"][0] > 0
+
+
+def test_studs_add_no_sway_stiffness_with_imperfections():
+    """With out-of-plumb and bows, the studs (uz free) leave the lateral stiffness of the building as it is."""
+    job = _job(GOLD, "IN_Ex3_PEB_crane_shed*")
+    from steltic_ddm import peb_restraints as PR
+    out = {}
+    for mode in ("plan", "studs_only_off"):
+        nm, cfg = _load(job)
+        p = PR.plan(nm, cfg)
+        if mode == "studs_only_off":
+            p["studs"] = []
+        nm._peb_plan = p
+        g = GMNIAModel(nm, cfg, nsub=(2, 2, 2), elastic=True, residual="none", out_of_plumb=("Y", 0.005), bow=0.001,
+                       brace_bow=0.001)
+        with contextlib.redirect_stdout(io.StringIO()):
+            g.build()
+        master = max(t for t in nm.nodes if t % 100000 == 99999)
+        ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        ops.load(master, 0.0, 1.0e5, 0.0, 0.0, 0.0, 0.0)
+        ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
+        ops.test("NormDispIncr", 1e-8, 10, 0); ops.algorithm("Linear"); ops.integrator("LoadControl", 1.0)
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        out[mode] = ops.nodeDisp(master, 2)
+        ops.wipe()
+    assert out["plan"] == pytest.approx(out["studs_only_off"], rel=0.02)
 
 
 def _hyp10():
