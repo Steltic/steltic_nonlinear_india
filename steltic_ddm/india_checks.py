@@ -259,6 +259,12 @@ def section_class(section: str, fy: float) -> dict:
     from pushover import india_materials as IM
     sp = IM.section_props_mm(section)
     eps = math.sqrt(250.0 / fy)
+    if sp.get("welded_i"):                                    # NL-33: welded plate I -- the welded rows of Table 2
+        r = IM.welded_i_class(section, fy)
+        return dict(section=r["section"], cls=r["cls"], b_tf=r["b_tf"], d_tw=r["d_tw"],
+                    limits=dict(flange_plastic=8.4 * eps, flange_compact=9.4 * eps, flange_semi_compact=13.6 * eps,
+                                web_plastic=84 * eps, web_compact=105 * eps, web_semi_compact=126 * eps),
+                    basis="welded I rows")
     if sp.get("tube") and str(sp.get("type")).upper() == "CHS":
         r = (sp.get("D") or 0) / (sp.get("t") or 1)
         cls = "plastic" if r <= 42 * eps * eps else ("compact" if r <= 52 * eps * eps else "semi-compact")

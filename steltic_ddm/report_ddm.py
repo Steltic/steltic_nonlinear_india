@@ -362,6 +362,17 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
     P.append('<li>Steel01, E = 200 000 MPa, hardening b = %.3f; f<sub>y</sub> per section from IS 2062 (Part 1):2025 Table 3 by thickness band '
              '(expected-strength factor 1.0 unless the EOR sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
     P.append('<li>Residual stress pattern: %s.</li>' % _h(o.get("residual")))
+    pr = o.get("peb_restraints") or {}
+    if pr:
+        P.append('<li>PEB shed (NL-33): welded plate I and web-tapered I members (the tapered ones as the HR stepped prismatic '
+                 'segments) as plate fibres, without a residual-stress pattern and without local buckling (slender webs: the '
+                 'B-1.2 check uses the IS 800 3.7.2(d) effective section, the fibres the gross plates). %s. Lateral restraints '
+                 'tie the member to the roof diaphragm (rafters) or to a rigid stud pinned at the column base and tied to its top '
+                 '(columns, the wall racking line); torsional restraints act on the member axis. The beam-columns have no warping '
+                 'degree of freedom, so the welded I sections carry G J + π² E C<sub>w</sub> / L<sub>t</sub>² as their torsional '
+                 'stiffness (L<sub>t</sub> the spacing of the modelled torsional restraints, twice the gap next to a joint without '
+                 'one; %s mm).</li>' % (
+                     _h(pr.get("summary") or ""), "–".join("%.0f" % v for v in ((pr.get("counts") or {}).get("warping_length_mm") or []))))
     P.append('<li>Out-of-plumb ψ = 1/%d — %s. Member bow %s (hollow sections 1/%d).</li>' % (
         round(1 / o.get("psi", 1 / 200)), _h(o.get("psi_basis") or ""), _h(o.get("bow_basis") or ""),
         round(1 / (o.get("bow_hollow") or o.get("bow", 1 / 1000)))))
@@ -440,7 +451,8 @@ def ddm_block_india(nm, gate, runs, sensitivity, options, member_table):
                   "phi_s: literature (Zhang, Shayan, Rasmussen & Ellingwood 2016) -- information only, not calibrated for IS 800 Table 4"],
         "model": {"material": "Steel01 fy per section (IS 2062 Table 3) E=200000 MPa b=%.3f" % options.get("hardening", 0.002),
                   "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), options.get("psi_basis")),
-                  "out_of_straightness": options.get("bow_basis"), "units": "N, mm, MPa"},
+                  "out_of_straightness": options.get("bow_basis"), "units": "N, mm, MPa",
+                  **({"peb_restraints": options["peb_restraints"].get("summary")} if options.get("peb_restraints") else {})},
         "gravity_gate": {k: v for k, v in (options.get("gravity_gate") or {}).items() if k in ("ok", "summary", "tol", "n_compared", "n_bad")},
         "combinations": [
             {"label": r["combo"][0], "kind": r["summary"]["kind"], "imperfection": r["imp"],

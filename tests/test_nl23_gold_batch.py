@@ -1,5 +1,5 @@
-"""NL-23: the gold batch script (scripts/run_gold_batch.sh) is syntactically valid and lists the 19 job folders
-(15 gold buildings + 4 units) smallest first."""
+"""NL-23: the gold batch script (scripts/run_gold_batch.sh) is syntactically valid and lists the 24 job folders
+(20 gold buildings, the five NL-33 PEB sheds among them, + 4 units) smallest first."""
 import os
 import re
 import subprocess
@@ -18,7 +18,7 @@ def test_batch_script_syntax_and_jobs():
     r = subprocess.run(["bash", "-n", os.path.join(ROOT, "scripts", "run_gold_batch.sh")], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     jobs = _jobs()
-    assert len(jobs) == 19 and len(set(jobs)) == 19
+    assert len(jobs) == 24 and len(set(jobs)) == 24
 
 
 def test_batch_order_is_smallest_first():
