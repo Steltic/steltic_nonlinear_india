@@ -33,6 +33,9 @@ def _copy_repo_skeleton(tmp_path, name="repo"):
     shutil.copy(SCRIPT, repo / "scripts" / "check_vendored.py")
     for f in CV.FILES:
         (repo / "snl" / "vendor_steltic_india" / f).write_text("x = 1\n")
+    (repo / "steltic_ddm" / "data").mkdir(parents=True)
+    for f in CV.DATA_FILES:
+        (repo / "steltic_ddm" / "data" / f).write_text("label,A\n")
     return repo
 
 
@@ -49,6 +52,8 @@ def test_sibling_checkout_is_found_and_drift_fails(tmp_path):
     eng.mkdir(parents=True)
     for f in CV.FILES:
         (eng / f).write_text("x = 1\n")
+    for f in CV.DATA_FILES:
+        (eng / f).write_text("label,A\n")
     env = _env_without_hr()
     r = subprocess.run([sys.executable, str(repo / "scripts" / "check_vendored.py")], capture_output=True, text=True, env=env)
     assert r.returncode == 0 and "byte-identical" in r.stdout, r.stdout
@@ -57,6 +62,39 @@ def test_sibling_checkout_is_found_and_drift_fails(tmp_path):
     assert r.returncode == 1 and "DRIFT india_seismic.py" in r.stdout
     r = subprocess.run([sys.executable, str(repo / "scripts" / "check_vendored.py"), "--sync"], capture_output=True, text=True, env=env)
     assert r.returncode == 0 and r.stdout.strip().startswith("cp ") and "india_seismic.py" in r.stdout
+
+
+def test_section_table_drift_fails(tmp_path):
+    """NL-35: the bundled steltic_ddm/data tables are checked like the vendored modules."""
+    repo = _copy_repo_skeleton(tmp_path)
+    eng = tmp_path / "steltic_india" / "steel_engine"
+    eng.mkdir(parents=True)
+    for f in CV.FILES:
+        (eng / f).write_text("x = 1\n")
+    for f in CV.DATA_FILES:
+        (eng / f).write_text("label,A\n")
+    (eng / "is808_shapes.csv").write_text("label,A\nNPB750X270X145.29,28.6751\n")
+    r = subprocess.run([sys.executable, str(repo / "scripts" / "check_vendored.py")], capture_output=True, text=True,
+                       env=_env_without_hr())
+    assert r.returncode == 1 and "DRIFT is808_shapes.csv" in r.stdout, r.stdout
+    r = subprocess.run([sys.executable, str(repo / "scripts" / "check_vendored.py"), "--sync"], capture_output=True,
+                       text=True, env=_env_without_hr())
+    assert os.path.join("steltic_ddm", "data", "is808_shapes.csv") in r.stdout
+
+
+def test_bundled_is808_table_without_engine_dir(monkeypatch):
+    """NL-35: with no $STELTIC_ENGINE_DIR the bundled table is used. Its NPB750X270X145.29, WPB500X300X187.34 and
+    WPB650X300X224.78 rows had shifted columns (Zx = the minor elastic modulus, Sx ~ 0); now they are the HR values."""
+    for k in ("STELTIC_ENGINE_DIR", "IS808_CSV"):
+        monkeypatch.delenv(k, raising=False)
+    sys.path.insert(0, ROOT)
+    from pushover import india_materials as IM
+    sp = IM.section_props_mm("NPB750X270X145.29")
+    assert sp["Zx"] == pytest.approx(5.0e6, rel=0.01)            # IS 808: Zp,major 5 000 cm3
+    assert sp["Sx"] == pytest.approx(4.31e6, rel=0.01)           # Ze,major 4 310 cm3
+    for lab in ("NPB750X270X145.29", "WPB500X300X187.34", "WPB650X300X224.78"):
+        p = IM.section_props_mm(lab)
+        assert p["Zx"] > p["Sx"] > p["Zy"] > p["Sy"] > 0, lab
 
 
 def test_env_var_wins_and_no_home_paths():

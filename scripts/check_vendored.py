@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""WP1.14 CI check: the vendored shared India modules must be byte-identical to steltic_india/steel_engine.
+"""WP1.14 CI check: the vendored shared India modules and the bundled IS 808 / IS 1161 section tables
+(steltic_ddm/data, the fallback when $STELTIC_ENGINE_DIR is not set) must be byte-identical to steltic_india/steel_engine.
 
     python scripts/check_vendored.py [--hr /path/to/steltic_india]   # sha256 compare; exit 1 on any drift
     python scripts/check_vendored.py --sync                          # print the cp commands (never copies)
@@ -20,6 +21,14 @@ NL_ROOT = os.path.dirname(HERE)
 NL_VENDOR = os.path.join(NL_ROOT, "snl", "vendor_steltic_india")
 FILES = ("india_loads.py", "india_seismic.py", "india_units.py", "india_wind_tables.py", "india_combos.py",
          "india_is18168.py", "india_seismic_gates.py", "india_omega_is18168.py", "preflight.py")
+NL_DATA = os.path.join(NL_ROOT, "steltic_ddm", "data")
+DATA_FILES = ("is808_shapes.csv", "is1161_tubes.csv")      # NL-35: the bundled tables had drifted (shifted NPB / WPB rows)
+
+
+def _pairs(src):
+    """(name, HR path, NL path) for every file the NL keeps a copy of."""
+    return ([(f, os.path.join(src, f), os.path.join(NL_VENDOR, f)) for f in FILES] +
+            [(f, os.path.join(src, f), os.path.join(NL_DATA, f)) for f in DATA_FILES])
 
 
 def _is_hr(root):
@@ -56,8 +65,8 @@ def main(argv=None):
         return 0
     src = os.path.join(hr, "steel_engine")
     bad = 0
-    for f in FILES:
-        p_hr, p_nl = os.path.join(src, f), os.path.join(NL_VENDOR, f)
+    pairs = _pairs(src)
+    for f, p_hr, p_nl in pairs:
         if not os.path.exists(p_hr):
             print("MISSING in HR:", f); bad += 1; continue
         if not os.path.exists(p_nl):
@@ -74,7 +83,8 @@ def main(argv=None):
     if bad:
         print("check_vendored: %d file(s) drift from steltic_india -- re-vendor (cp) from %s" % (bad, src))
         return 1
-    print("check_vendored: all %d shared modules byte-identical to steltic_india (%s)" % (len(FILES), hr))
+    print("check_vendored: all %d shared modules and %d section tables byte-identical to steltic_india (%s)"
+          % (len(FILES), len(DATA_FILES), hr))
     return 0
 
 
