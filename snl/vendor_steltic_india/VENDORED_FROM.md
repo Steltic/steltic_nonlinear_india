@@ -11,6 +11,13 @@ Files (byte-identical copies of `steltic_india/steel_engine/<file>`): india_load
 india_units.py, india_wind_tables.py, india_combos.py, india_is18168.py, india_seismic_gates.py,
 india_omega_is18168.py, preflight.py.
 
+**Section tables (NL-35, 2026-10-16):** `steltic_ddm/data/is808_shapes.csv` and `steltic_ddm/data/is1161_tubes.csv` are
+byte-identical copies of the same files in `steltic_india/steel_engine` (steltic_india main **e340df8**). They are
+the fallback when `$STELTIC_ENGINE_DIR` is not set; with it set (every documented run) the HR tables are read
+directly. The bundled copies dated from the install-from-git merge and had drifted: the NPB750X270X145.29,
+WPB500X300X187.34 and WPB650X300X224.78 rows had their J / Zx / Zy / Sx / Sy columns shifted, and later HR
+corrections (rx / ry, Cw, one renamed WPB) were missing. `check_vendored.py` now checks them too.
+
 Not vendored (the NL repo does not build frames from JSON and does not run the X01 deck):
 frame_build.py, roof_geometry.py, india_flexible_diaphragm.py, multi_unit.py, package_finalize.py,
 example_build_ebf.py. The NL reads the HR package (model_opensees.py, design/*.json/csv) instead.
