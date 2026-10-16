@@ -30,7 +30,8 @@ RIGHT = """
 <div id="gateTable"></div>
 """
 MODULE_JS = r"""
-const D = DATA.ddm; const RUNS = D.runs; let ci = D.default_index||0, step = 0, colorMode = 'state';
+const D = DATA.ddm; const RUNS = D.runs; const U = D.units || {len:'in', force:'kip', fscale:1, moment:'k-ft'};
+const LAM = (r,n)=> r.lambda_u===null||r.lambda_u===undefined ? 'no limit point' : r.lambda_u.toFixed(n); let ci = D.default_index||0, step = 0, colorMode = 'state';
 const eleByTag = {}; meshes.forEach(m => eleByTag[m.userData.tag] = m);
 const SECS = [...new Set(M.elements.map(e=>e.sec))]; const SEC_PAL = [0x5b8dd9,0x2ecc71,0xe67e22,0x9b59b6,0xf1c40f,0x1abc9c,0xe74c3c,0x95a5a6,0xd35400,0x3498db,0x27ae60,0xc0392b];
 const SEC_COL = {}; SECS.forEach((s,i)=>SEC_COL[s]=SEC_PAL[i%SEC_PAL.length]);
@@ -60,7 +61,7 @@ function update(){
   document.getElementById('step').max = FR.length-1; document.getElementById('step').value = step;
   const f = FR[step];
   document.getElementById('stepL').textContent = `λ = ${f.lam.toFixed(3)}`;
-  document.getElementById('stepD').textContent = `${run.control_label} = ${f.d.toFixed(2)} in${step===run.peak_frame?' · λu':''}`;
+  document.getElementById('stepD').textContent = `${run.control_label} = ${f.d.toFixed(2)} ${U.len}${step===run.peak_frame?' · λu':''}`;
   applyDeformation(floorsOf(f)); paint();
   const cnt = (pred) => M.elements.filter(e=>pred(e, f.mem[e.tag]?f.mem[e.tag][0]:0)).length;
   const worst = Math.max(0, ...Object.values(f.mem).map(m=>m[0]));
@@ -71,8 +72,8 @@ function update(){
 function show(){
   const run = C();
   const lat = run.lateral; showDirection(lat && lat[0] ? (lat[0]==='X'?[lat[1],0,0]:[0,lat[1],0]) : null, 0xe0b341);
-  const chk = run.check_ok===null ? '<span class="badge">n/a</span>' : (run.check_ok ? '<span class="badge ok">PASS</span>' : '<span class="badge ng">FAIL</span>');
-  document.getElementById('capTable').innerHTML = rows([['Combination', `${run.label} <span style="color:#8b95a3">(${run.kind})</span>`], ['Imperfection case', run.imp], ['λu (system capacity)', `<b>${run.lambda_u.toFixed(3)}</b>`], ['First yield λ', fmt(run.first_yield,3)], ['λ at 1.25 Δu (post-peak)', fmt(run.lam_125,3)],
+  const chk = run.check_ok===null ? '<span class="badge">' + (run.check_info ? 'information' : 'n/a') + '</span>' : (run.check_ok ? '<span class="badge ok">PASS</span>' : '<span class="badge ng">FAIL</span>');
+  document.getElementById('capTable').innerHTML = rows([['Combination', `${run.label} <span style="color:#8b95a3">(${run.kind})</span>`], ['Imperfection case', run.imp], ['λu (system capacity)', `<b>${LAM(run,3)}</b>`], ['First yield λ', fmt(run.first_yield,3)], ['λ at 1.25 Δu (post-peak)', fmt(run.lam_125,3)],
     ['φs · class', `${run.phi_s===null?'n/a':run.phi_s.toFixed(2)} · ${run.phi_cls}${run.beta_T?' · βT '+Number(run.beta_T).toFixed(2):''}${run.provisional?' <span class="badge ng">PROVISIONAL</span>':(run.phi_status?' <span class="badge ok">'+run.phi_status+'</span>':'')}`], ['φs · λu ≥ 1.0', `${fmt(run.phi_lam,3)} ${chk}`], ['Classification', run.cls], ['Mechanism', run.mechanism],
     ['Control DOF', run.control_label], ['Sweep', `${run.steps} steps · ${run.seconds.toFixed(0)} s${run.plateau?' · plateau':''}${run.frames.length>1?' · '+run.frames.length+' frames':' · peak snapshot only'}`]]);
   const dr = run.snapshot.drifts;
@@ -89,12 +90,12 @@ function redrawChart(){
   ser.push({pts:absH(H), color:'#e0b341', width:2.2});
   const xmax = Math.max(...RUNS.filter(r=>r.kind===run.kind).map(r=>Math.max(...r.hist.map(p=>Math.abs(p[1])))))*1.05;
   const ymax = Math.max(1.2, ...RUNS.filter(r=>r.kind===run.kind).map(r=>r.lambda_u))*1.12;
-  const hl = [{y:1.0, color:'#8b95a3', label:'λ = 1.0 (ASCE 7 factored loads)', align:'left'}, {y:run.lambda_u, color:'#e0b341', label:`λu ${run.lambda_u.toFixed(3)}`}];
-  if (run.phi_lam!==null) hl.push({y:run.phi_lam, color: run.check_ok?'#3fc1a0':'#d13b3b', label:`φs λu ${run.phi_lam.toFixed(3)}`, dy: Math.abs(run.phi_lam-run.lambda_u)<0.08*ymax?12:0});
+  const hl = [{y:1.0, color:'#8b95a3', label:'λ = 1.0 (' + (D.loads_label || 'ASCE 7 factored loads') + ')', align:'left'}].concat(run.lambda_u===null ? [] : [{y:run.lambda_u, color:'#e0b341', label:`λu ${run.lambda_u.toFixed(3)}`}]);
+  if (run.phi_lam!==null) hl.push({y:run.phi_lam, color: run.check_ok===null?'#8b95a3':(run.check_ok?'#3fc1a0':'#d13b3b'), label:`φs λu ${run.phi_lam.toFixed(3)}`, dy: Math.abs(run.phi_lam-(run.lambda_u||0))<0.08*ymax?12:0});
   if (run.first_yield!==null) hl.push({y:run.first_yield, color:'#f2c14e', label:`first yield λ ${run.first_yield.toFixed(2)}`, align:'left', dy: Math.abs(run.first_yield-1.0)<0.08*ymax?12:0});
   const f = F();
-  drawChart({xmin:0, xmax, ymin:0, ymax, series:ser, hlines:hl, vlines:[{x:Math.abs(run.d_at_max), color:'#e0b341', label:`Δu ${Math.abs(run.d_at_max).toFixed(2)} in`, dy:12}], cursor:[Math.abs(f.d), f.lam], cursorColor:'#e0b341',
-    title:`λ–Δ · ${run.label} · ${run.kind}`, xlabel:`${run.control_label} (in)`, ylabel:'λ', yfmt:v=>v.toFixed(2), xfmt:v=>v.toFixed(1)});
+  drawChart({xmin:0, xmax, ymin:0, ymax, series:ser, hlines:hl, vlines:[{x:Math.abs(run.d_at_max), color:'#e0b341', label:`Δu ${Math.abs(run.d_at_max).toFixed(2)} ${U.len}`, dy:12}], cursor:[Math.abs(f.d), f.lam], cursorColor:'#e0b341',
+    title:`λ–Δ · ${run.label} · ${run.kind}`, xlabel:`${run.control_label} (${U.len})`, ylabel:'λ', yfmt:v=>v.toFixed(2), xfmt:v=>v.toFixed(1)});
 }
 function onChartSeek(x){ const FR=C().frames; let best=0,bd=1e9; FR.forEach((f,i)=>{const dd=Math.abs(Math.abs(f.d)-x); if(dd<bd){bd=dd;best=i;}}); step=best; update(); }
 function onDeformed(){} function onVisibility(){ paint(); }
@@ -102,15 +103,15 @@ let playing=false, acc=0; function onSpace(){ playing=!playing; }
 function onTick(dt){ if(!playing) return; acc+=dt; if(acc>0.12){ acc=0; step++; if(step>=C().frames.length){ step=0; playing=false; } update(); } }
 function memberInfo(e){
   const run = C(); const f = F(); const m = f.mem[e.tag]; const r = m?m[0]:0; const b = run.snapshot.braces[e.tag]; const st = fibState(e.tag, f);
-  const lines = [['Length', `${e.L?e.L.toFixed(0):'—'} in`], ['Level', e._lvl], ['Role', D.roles[e.tag]||'—'], [`ε / εy at λ = ${f.lam.toFixed(3)}`, `${r.toFixed(2)} · ${FIB_LABEL[st]}`]];
+  const lines = [['Length', `${e.L?e.L.toFixed(0):'—'} ${U.len}`], ['Level', e._lvl], ['Role', D.roles[e.tag]||'—'], [`ε / εy at λ = ${f.lam.toFixed(3)}`, `${r.toFixed(2)} · ${FIB_LABEL[st]}`]];
   if (m && r>=1) lines.push(['Worst section along member', `${(100*m[1]).toFixed(0)} % from end 1`]);
   const rp = run.snapshot.member_ratio[e.tag]; if (rp!==undefined) lines.push(['ε / εy at λu', rp.toFixed(2)]);
-  if (b) lines.push(['Brace N at λu (+tens)', `${b.N.toFixed(1)} kip`], ['Mid-length offset at λu', `${b.offset.toFixed(3)} in (L/${b.offset>0?(e.L/b.offset).toFixed(0):'∞'})`]);
-  const row = D.schedule[e.tag]; if (row) lines.push(['Steltic governing combo', row.combo], ['Steltic demand P / Mx', `${row.P} kip / ${row.Mx} k-ft`]);
+  if (b) lines.push(['Brace N at λu (+tens)', `${(b.N*U.fscale).toFixed(1)} ${U.force}`], ['Mid-length offset at λu', `${b.offset.toFixed(U.len==='mm'?1:3)} ${U.len} (L/${b.offset>0?(e.L/b.offset).toFixed(0):'∞'})`]);
+  const row = D.schedule[e.tag]; if (row) lines.push(['Steltic governing combo', row.combo], ['Steltic demand P / Mx', `${row.P} ${U.force} / ${row.Mx} ${U.moment}`]);
   return rows(lines);
 }
 function init(){
-  const sel = document.getElementById('comboSel'); RUNS.forEach((r,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=`${r.label}  ·  ${r.kind}  ·  λu ${r.lambda_u.toFixed(2)}  ·  φsλu ${r.phi_lam===null?'n/a':r.phi_lam.toFixed(2)} ${r.check_ok===null?'':(r.check_ok?'✓':'✗')}`; sel.appendChild(o); });
+  const sel = document.getElementById('comboSel'); RUNS.forEach((r,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=`${r.label}  ·  ${r.kind}  ·  λu ${r.lambda_u===null?'no limit':r.lambda_u.toFixed(2)}  ·  φsλu ${r.phi_lam===null?'n/a':r.phi_lam.toFixed(2)} ${r.check_ok===null?'':(r.check_ok?'✓':'✗')}`; sel.appendChild(o); });
   sel.value = ci; sel.onchange = e => { ci=parseInt(e.target.value); show(); };
   document.getElementById('step').oninput = e => { step=parseInt(e.target.value); update(); };
   const firstAtOrAbove = lam => { const FR=C().frames; for (let i=0;i<FR.length;i++){ if (FR[i].lam>=lam) return i; } return C().peak_frame; };
@@ -138,13 +139,23 @@ def model_from_nm(nm):
     return VC.model_dict(nm.nodes, els, fixed, diaph, support_label=lab)
 
 
+def _india_nmm(nm):
+    """True for an India (N-mm) model: the viewer labels lengths in mm and forces in kN (NL-33)."""
+    plan = (nm.cfg or {}).get("load_plan") if isinstance(nm.cfg, dict) else None
+    return bool(plan) and str((plan or {}).get("jurisdiction") or "").lower() == "india"
+
+
 def _schedule(job_dir):
     p = os.path.join(job_dir, "design", "member_schedule.csv"); out = {}
     if os.path.exists(p):
         with open(p, newline="") as f:
             for r in csv.DictReader(f):
                 try:
-                    out[int(r["ele_tag"])] = dict(combo=r.get("governing_combo", ""), P=round(float(r.get("P_comp_kip") or 0)), Mx=round(float(r.get("Mx_kipft") or 0)))
+                    if "P_comp_kN" in r:                                   # India schedule (kN, kN-m)
+                        P, M = r.get("P_comp_kN"), r.get("M_major_kNm")
+                    else:
+                        P, M = r.get("P_comp_kip"), r.get("Mx_kipft")
+                    out[int(r["ele_tag"])] = dict(combo=r.get("governing_combo", ""), P=round(float(P or 0)), Mx=round(float(M or 0)))
                 except Exception:
                     pass
     return out
@@ -180,22 +191,29 @@ def write(out_dir, nm, gate, runs):
         phi = r["phi"]; chk = r["check"]
         R.append(dict(label=r["combo"][0], kind=r["summary"]["kind"], imp=r["imp"], lambda_u=res["lambda_u"], first_yield=res.get("first_yield"), lam_125=res.get("lam_at_1p25d"),
                       d_at_max=res.get("d_at_max", 0.0), hist=hist, peak_index=peak_index, frames=frames, peak_frame=peak_frame, control_label=ctrl_label, lateral=list(lat) if lat else None,
-                      phi_s=phi.get("phi_s"), phi_cls=phi.get("cls"), provisional=bool(phi.get("provisional")), phi_status=phi.get("status"), beta_T=phi.get("beta_T"), phi_lam=chk[0] if chk else None, check_ok=(None if not chk or chk[1] == "n/a" else chk[1] == "PASS"),
+                      phi_s=phi.get("phi_s"), phi_cls=phi.get("cls"), provisional=bool(phi.get("provisional")), phi_status=phi.get("status"), beta_T=phi.get("beta_T"), phi_lam=chk[0] if chk else None, check_ok=(chk[1] == "PASS" if chk and chk[1] in ("PASS", "FAIL") else None),
+                      check_info=bool(chk and chk[1] == "INFO"),
                       cls=r["cls"]["cls"], mechanism=r["cls"]["mechanism"], steps=res["steps"], seconds=res["seconds"], plateau=bool(res.get("plateau")),
                       snapshot=dict(drifts=snap.get("drifts"), disp=snap["disp"], member_ratio=snap.get("member_ratio", {}), braces=snap.get("braces", {})), state=r["state"]))
     if not R:
         raise RuntimeError("no runs with viewer snapshots (re-run with this version of steltic_ddm)")
     # default: the governing (lowest phi_s*lambda_u, else lowest lambda_u) combination
     def key(x):
-        return (x["phi_lam"] if x["phi_lam"] is not None else 9.0, x["lambda_u"])
+        return (x["phi_lam"] if x["phi_lam"] is not None else 9.0, x["lambda_u"] if x["lambda_u"] is not None else 9e9)
     default_index = min(range(len(R)), key=lambda i: key(R[i]))
     roles = {m.tag: m.role for m in nm.members}
     gate_small = dict(ok=gate.get("ok"), tol=gate.get("tol"), rows=[dict(quantity=g["quantity"], steltic=g["steltic"], gmnia=g["gmnia"], ratio=g["ratio"], ok=g["ok"]) for g in gate.get("rows", [])])
-    extra = dict(ddm=dict(runs=R, default_index=default_index, roles=roles, gate=gate_small, schedule=_schedule(nm.job_dir)))
+    nmm = _india_nmm(nm)
+    units = (dict(len="mm", force="kN", fscale=1e-3, moment="kN·m") if nmm else dict(len="in", force="kip", fscale=1.0, moment="k-ft"))
+    extra = dict(ddm=dict(runs=R, default_index=default_index, roles=roles, gate=gate_small, schedule=_schedule(nm.job_dir),
+                          units=units, loads_label=("IS 800 Table 4 factored loads" if nmm else "ASCE 7 factored loads")))
     worst = R[default_index]
     seis = (nm.cfg or {}).get("seis", {})
     meta = dict(title=f"{nm.name} · DDM (GMNIA system capacity)", subtitle=seis.get("system", "") if isinstance(seis, dict) else "",
-                accline=f"Steltic viewer bundle · DDM Steel App · {len(R)} combinations · governing {worst['label']} λu {worst['lambda_u']:.3f}" + (f" · φsλu {worst['phi_lam']:.3f} {'PASS' if worst['check_ok'] else 'FAIL'}" if worst["phi_lam"] is not None else ""),
+                accline=(f"Steltic viewer bundle · DDM Steel App · {len(R)} combinations · governing {worst['label']} λu "
+                         + (f"{worst['lambda_u']:.3f}" if worst["lambda_u"] is not None else "no limit point")
+                         + (f" · φsλu {worst['phi_lam']:.3f} " + ("(information)" if worst["check_ok"] is None else ("PASS" if worst["check_ok"] else "FAIL"))
+                            if worst["phi_lam"] is not None else "")),
                 caveat=("Building drawn at the λ selected on the curve from the diaphragm masters (rigid floors, imperfections and P-Δ included; beam sag of gravity cases is not "
                         "in the rigid-body shape). Member colours and hinge dots are the fibre strain ratio ε/εy recorded every second load step (and at λu). φs status per class as reported by phi_s.py — see the banner in ddm_report.html. Not for construction."))
     return VC.render(os.path.join(out_dir, "ddm_viewer_3d.html"), f"{nm.name} · DDM viewer", "ddm", meta, model, extra, LEFT, RIGHT, MODULE_JS, amp=10,

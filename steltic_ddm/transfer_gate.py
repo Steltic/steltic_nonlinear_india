@@ -116,8 +116,9 @@ def run(nm, cfg, lat_x, lat_y, tol=0.05, nsub=(2, 2, 2)):
         rows.append(dict(quantity=name, steltic=a, gmnia=b, ratio=r, ok=abs(r - 1) <= tol))
     for i, (a, b) in enumerate(zip(T_ref, T_new)):
         cmp("T%d (s)" % (i + 1), a, b)
-    cmp("roof disp X under ELF pattern (in)", dx_ref, dx_new)
-    cmp("roof disp Y under ELF pattern (in)", dy_ref, dy_new)
+    du = "mm" if getattr(g, "_fibre_units", "kip-in") == "N-mm" else "in"      # an India model is N-mm
+    cmp("roof disp X under ELF pattern (%s)" % du, dx_ref, dx_new)
+    cmp("roof disp Y under ELF pattern (%s)" % du, dy_ref, dy_new)
     ok = all(r["ok"] for r in rows)
     hint = None
     if not ok:
