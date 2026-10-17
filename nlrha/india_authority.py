@@ -534,6 +534,32 @@ def ddm_solver_stop_rows(job_dir) -> list[dict]:
     return out
 
 
+def ddm_model_disclosures(job_dir) -> list[dict]:
+    """NL-37 / NL-38: the DDM load basis (IS 875-2 3.2.1 column imposed-load reduction as the HR design) and the
+    rolled-shed restraint idealisation, read back from ddm_results.json."""
+    if not job_dir:
+        return []
+    o = ((_read_json(os.path.join(job_dir, "ddm_results.json")) or {}).get("options") or {})
+    rows = []
+    ilr = o.get("imposed_load_reduction") or {}
+    if ilr.get("applied") or ilr.get("error") or (ilr.get("mode") == "off"):
+        rows.append(dict(id="ddm_imposed_load_reduction", found=True, disclosed=True, applied=bool(ilr.get("applied")),
+                         n_columns=ilr.get("n_columns"), r_values=ilr.get("r_values"), mode=ilr.get("mode"),
+                         note=o.get("imposed_load_basis") or ilr.get("basis")))
+    pr = o.get("peb_restraints") or {}
+    if pr.get("source") == "rolled":
+        rows.append(dict(id="rolled_ddm_restraints", found=True, disclosed=True, counts=pr.get("counts"),
+                         basis=pr.get("basis"),
+                         note="NL-38: the DDM GMNIA of this rolled-section shed carries the out-of-plane restraints the HR "
+                              "member design counts on and the HR frame model does not contain: %s. Rafter fly braces "
+                              "(both flanges) are lateral ties to the roof diaphragm plus torsional restraints; columns get "
+                              "lateral restraints at k x Ky x L (the design's out-of-plane buckling length) and no torsional "
+                              "restraint; purlin- and girt-only stations hold one flange and are omitted (conservative). "
+                              "Rolled I sections in these chains carry G J + pi^2 E Cw / L_t^2 (no warping degree of freedom)."
+                              % (pr.get("summary") or "")))
+    return rows
+
+
 def peb_disclosures(job_dir) -> list[dict]:
     """NL-33: what the nonlinear models of a PEB shed (welded plate I / web-tapered I members) do not represent, and the
     DDM restraint idealisation. Empty for a package without welded / tapered custom sections."""
@@ -553,7 +579,7 @@ def peb_disclosures(job_dir) -> list[dict]:
                       "local buckling and flange-induced web buckling at large rotations are therefore not captured.")]
     ddm = _read_json(os.path.join(job_dir, "ddm_results.json")) or {}
     pr = (ddm.get("options") or {}).get("peb_restraints")
-    if pr:
+    if pr and pr.get("source") != "rolled":
         rows.append(dict(id="peb_ddm_restraints", found=True, disclosed=True, counts=pr.get("counts"),
                          note="NL-33: the DDM GMNIA carries the purlin / girt / fly-brace restraints the HR design relies on "
                               "(cfg['flange_braces'], read as peb_build, owner ruling D-T1), which the HR frame model does not "
@@ -591,6 +617,7 @@ def method_disclosures(job_dir) -> list[dict]:
         rows.append(dict(id="record_trimming", found=True, disclosed=True, method=trims[0].get("method"),
                          free_vib_s=trims[0].get("free_vib_s"), note=trims[0].get("basis")))
     rows += peb_disclosures(job_dir)
+    rows += ddm_model_disclosures(job_dir)
     stops = ddm_solver_stop_rows(job_dir)
     if stops:
         rows.append(dict(id="ddm_seismic_solver_stop", found=True, disclosed=True, runs=stops,
@@ -1116,6 +1143,10 @@ def design_status(
     status = "complete" if ok else "partial"
     if ok and art.get("capacity_shortfall"):
         status = "complete_with_capacity_shortfall"
+    elif ok and (art.get("checks") or {}).get("ddm_solver_failures"):
+        # NL-36: never COMPLETE silently over a numerical stop -- the only stops that do not block are the NL-31
+        # disclosed seismic ones, and the status names them
+        status = "complete_with_solver_stops"
     note = (
         "COMPLETE allowed: fibre preferred/used + NSP tables found:false disclosed + "
         "ASCE §16.1.2 drift-relief analogue found:false disclosed (feedback loop "
@@ -1395,6 +1426,13 @@ def artefact_gate(job_dir: str | None) -> dict:
                 checks.setdefault("ddm_solver_stops_disclosed", []).append(
                     dict(label=r.get("label"), imp=r.get("imp"), lambda_end=r.get("lambda_end")))
                 continue
+            if stt == "SOLVER_FAILURE" and (r.get("runaway") or r.get("termination") == "runaway"):
+                # NL-36: a converged step beyond the plausibility bounds (lambda > 10, drift > 10 %, absurd strain)
+                reasons.append("DDM %s: SOLVER FAILURE -- numerical runaway (%s) at lambda %.3f; the step was discarded and "
+                               "no capacity is reported for this combination" % (
+                                   r.get("label"), (r.get("runaway") or {}).get("criterion") or "runaway",
+                                   r.get("lambda_end") or 0))
+                continue
             if stt == "SOLVER_FAILURE":                       # NL-24: a numerical stop blocks honestly (gravity / wind, < 1, un-retried)
                 reasons.append("DDM %s: SOLVER FAILURE (equilibrium iterations failed after the algorithm ladder and all "
                                "step cuts and the arc-length rescue; %s) at lambda %.3f -- a numerical stop, not a structural limit" % (
@@ -1402,6 +1440,9 @@ def artefact_gate(job_dir: str | None) -> dict:
                 continue
             if stt == "NO_LIMIT_POINT" and r.get("kind") in ("gravity", "wind") and (r.get("lambda_end") or 0) < 1.0:
                 reasons.append("DDM %s: NO_LIMIT_POINT and terminated below lambda 1 (%.3f)" % (r.get("label"), r.get("lambda_end") or 0))
+        sfr = [r for r in ddm.get("runs") or [] if r.get("status") == "SOLVER_FAILURE"]
+        checks["ddm_solver_failures"] = len(sfr)                 # NL-36: always stated, disclosed or blocking
+        checks["ddm_runaway_steps"] = sum(1 for r in sfr if r.get("runaway") or r.get("termination") == "runaway")
         o_ = ddm.get("options") or {}
         if o_.get("n_combos_default") and (o_.get("n_combos_run") or 0) < o_["n_combos_default"]:
             reasons.append("DDM ran %s of the %s default combinations" % (o_.get("n_combos_run"), o_["n_combos_default"]))
@@ -1410,6 +1451,9 @@ def artefact_gate(job_dir: str | None) -> dict:
             reasons.append("IS 800 B-1.2 section-capacity check at lambda = 1 missing")
         elif b12.get("ok") is False:
             shortfall = True
+        elif b12.get("ok") is None:                           # NL-36: not evaluated (numerical stop before lambda = 1)
+            reasons.append("IS 800 B-1.2 section check not evaluated for %s combination(s) (numerical stop before "
+                           "lambda = 1): %s" % (b12.get("n_not_evaluated"), "; ".join(b12.get("not_evaluated") or [])[:200]))
         if ddm.get("options", {}).get("time_limit") and float(ddm["options"]["time_limit"]) < 2400:
             reasons.append("DDM time limit %.0f s below the default 2400 s" % float(ddm["options"]["time_limit"]))
     # freshness
@@ -1440,8 +1484,14 @@ def write_complete_gate(job_dir: str) -> dict:
     Called only at the END of `nlrha run/report`, `pushover run`, `steltic_ddm run` and `snl report`."""
     st = design_status(job_dir=job_dir, evidence={"from_artifact": True})
     art = st["artefact_gate"]
+    chk = art.get("checks") or {}
+    notes = []
+    if chk.get("ddm_solver_failures"):
+        notes.append("DDM: %d sweep(s) stopped numerically (SOLVER_FAILURE)%s; %d disclosed (NL-31), the rest block COMPLETE"
+                     % (chk["ddm_solver_failures"], (", %d of them numerical runaways (NL-36)" % chk["ddm_runaway_steps"])
+                        if chk.get("ddm_runaway_steps") else "", len(chk.get("ddm_solver_stops_disclosed") or [])))
     payload = dict(jurisdiction=JURISDICTION, status=st["status"], reasons=st["reasons"], checks=art.get("checks"),
-                   inputs_sha256=art.get("inputs_sha256"),
+                   notes=notes, inputs_sha256=art.get("inputs_sha256"),
                    statement="Gate on analysis artefacts only; IS 1893 provides no NL acceptance criteria (results informative).",
                    generated=__import__("time").strftime("%Y-%m-%dT%H:%M:%S"))
     with open(os.path.join(job_dir, "complete_gate.json"), "w", encoding="utf-8") as f:

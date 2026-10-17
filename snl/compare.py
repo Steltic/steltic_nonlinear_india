@@ -59,6 +59,12 @@ def steltic_facts(job):
     return out
 
 
+def stop_reason_mm(s):
+    """Pushover stop messages in mm: the India analysis runs in kip-in and the engine wrote 'u=17.27 in'."""
+    from pushover.report_india import stop_reason_mm as _f
+    return _f(s)
+
+
 def fmt(x, n=2):
     return "—" if x is None else (f"{x:,.{n}f}" if isinstance(x, (int, float)) else str(x))
 
@@ -153,6 +159,102 @@ def _is_india_job(job):
     return os.path.exists(os.path.join(job, "seismic_calc.json"))
 
 
+def design_basis(job):
+    """The linear design's IS 1893 basis for the India four-analyses header: VB per direction, W and R (per direction).
+    Read, first found per quantity, from <job>/seismic_calc.json (older packages), load_plan.json seismic_summary
+    (every current HR package, PEB included), design/calc_package.json seismic_calc, and the pushover package basis.
+    PEB packages have no seismic_calc.json: the header used to print 'design VB — kN, W 0.0 kN, R None'."""
+    out = dict(VB_kN=None, VB_x_kN=None, VB_y_kN=None, W_kN=None, R=None, R_x=None, R_y=None, Z=None, I=None, sources=[])
+
+    def take(src, d, keys):
+        got = False
+        for k_out, k_in in keys:
+            v = d.get(k_in)
+            if isinstance(v, list):
+                v = sum(float(x) for x in v if isinstance(x, (int, float))) if v else None
+            if out.get(k_out) is None and isinstance(v, (int, float)) and not isinstance(v, bool) and v:
+                out[k_out] = float(v); got = True
+        if got:
+            out["sources"].append(src)
+    sc = _load_json(os.path.join(job, "seismic_calc.json"), {}) or {}
+    take("seismic_calc.json", sc, [("VB_kN", "VB_kN"), ("VB_x_kN", "VB_x_kN"), ("VB_y_kN", "VB_y_kN"), ("W_kN", "W_kN"),
+                                   ("R", "R"), ("R_x", "R_x"), ("R_y", "R_y"), ("Z", "Z"), ("I", "I")])
+    ss = (_load_json(os.path.join(job, "load_plan.json"), {}) or {}).get("seismic_summary") or {}
+    take("load_plan.json seismic_summary", ss, [("VB_kN", "VB_kN"), ("VB_x_kN", "VB_x_kN"), ("VB_y_kN", "VB_y_kN"),
+                                                ("W_kN", "W_kN"), ("R", "R"), ("R_x", "R_x"), ("R_y", "R_y"), ("Z", "Z"), ("I", "I")])
+    cs = (_load_json(os.path.join(job, "design", "calc_package.json"), {}) or {}).get("seismic_calc") or {}
+    take("calc_package seismic_calc", cs, [("W_kN", "W_design_kN"), ("W_kN", "W_engine_kN"), ("R", "R"), ("Z", "Z"), ("I", "I")])
+    pb = (_load_json(os.path.join(job, "pushover", "pushover_package.json"), {}) or {}).get("basis") or {}
+    take("pushover basis", pb, [("VB_kN", "VB_kN"), ("VB_x_kN", "VB_x_kN"), ("VB_y_kN", "VB_y_kN"), ("W_kN", "W_kN"),
+                                ("R", "R_design"), ("R_x", "R_x"), ("R_y", "R_y"), ("Z", "Z"), ("I", "I")])
+    if out["VB_kN"] is None and (out["VB_x_kN"] or out["VB_y_kN"]):
+        out["VB_kN"] = max(v for v in (out["VB_x_kN"], out["VB_y_kN"]) if v)
+    return out
+
+
+def design_header(b):
+    """'design VB 145 / 161 kN (X / Y), W 2,419 kN, R 5 / 4.5 (X / Y)' (one value when both directions agree)."""
+    def g(v, n):
+        if n is None:                                       # R: 5, 4.5
+            return "%g" % round(v, 3)
+        return "{:,.0f}".format(v) if abs(v) >= 100 else "{:,.1f}".format(v)
+
+    def pair(x, y, one, n, unit=""):
+        if x is not None and y is not None:
+            if abs(x - y) <= 1e-9 * max(abs(x), abs(y), 1.0):
+                return "%s%s" % (g(x, n), unit)
+            return "%s / %s%s (X / Y)" % (g(x, n), g(y, n), unit)
+        return ("%s%s" % (g(one, n), unit)) if one is not None else "not recorded"
+    return "design VB %s, W %s, R %s" % (pair(b.get("VB_x_kN"), b.get("VB_y_kN"), b.get("VB_kN"), 0, " kN"),
+                                           ("%s kN" % g(b["W_kN"], 0)) if b.get("W_kN") else "not recorded",
+                                           pair(b.get("R_x"), b.get("R_y"), b.get("R"), None))
+
+
+def floor3(x):
+    """3 decimals, rounded DOWN: a margin of 0.9997 must never read 1.000 (or 1.00) on a public page."""
+    import math as _m
+    return None if x is None else _m.floor(float(x) * 1000.0 + 1e-9) / 1000.0
+
+
+def ddm_headline(ddm):
+    """NL-36 / first wave: the DDM figures the summaries and the site index publish -- gravity lambda_u (the headline:
+    >= 1 means the collapse load exceeds the IS 800 factored load), the minimum phi_s x lambda_u (US/AU reliability
+    calibration, information only), the solver failures (always stated), B-1.2 and the B-1.1 preconditions."""
+    runs = ddm.get("runs") or []
+    grav = [r for r in runs if r.get("kind") == "gravity"]
+    gl = [r for r in grav if r.get("lambda_u") is not None]
+    gov = min(gl, key=lambda r: r["lambda_u"]) if gl else None
+    phis = [(r.get("check") or [None])[0] for r in runs if (r.get("check") or [None])[0] is not None]
+    sf = [r for r in runs if r.get("status") == "SOLVER_FAILURE"]
+    b12 = ddm.get("b12_check") or {}
+    worst = None
+    for c in b12.get("combos") or []:
+        for g in c.get("groups") or []:
+            if worst is None or (g.get("dc_max") or 0) > worst[0]:
+                worst = (g.get("dc_max") or 0, g, c.get("combo"))
+    b11 = ddm.get("b11_preconditions") or {}
+    grav_nolimit = [r for r in grav if r.get("lambda_u") is None]
+    return dict(
+        gravity_lambda_u=(floor3(gov["lambda_u"]) if gov else None), gravity_status=(gov or {}).get("status"),
+        gravity_combo=(gov or {}).get("label"),
+        gravity_without_limit=[dict(label=r.get("label"), status=r.get("status"), lambda_end=round(float(r.get("lambda_end") or 0), 3))
+                               for r in grav_nolimit],
+        min_phi_lambda=floor3(min(phis)) if phis else None,
+        phi_lambda_note="phi_s x lambda_u: US/AU reliability calibration (not IS 800 / IS 875), information only",
+        n_runs=len(runs), solver_failures=len(sf),
+        runaway_steps=sum(1 for r in sf if r.get("runaway") or r.get("termination") == "runaway"),
+        solver_failure_labels=[r.get("label") for r in sf],
+        b12_ok=b12.get("ok"), b12_not_evaluated=b12.get("n_not_evaluated") or 0,
+        b12_lambda1_not_reached=[c.get("combo") for c in b12.get("combos") or []
+                                 if c.get("ok") is False and not c.get("reached_lambda_1")],
+        b12_dc=(worst[0] if worst else None),
+        b12_member=("%s %s" % (worst[1].get("role"), worst[1].get("section")) if worst else None),
+        b12_combo=(worst[2] if worst else None),
+        b11_sections_compact=b11.get("ok"),
+        b11_lateral_restraint=b11.get("lateral_restraint"),
+        imposed_load_basis=(ddm.get("options") or {}).get("imposed_load_basis"))
+
+
 def build_india(job, out_name="four_analyses.html"):
     """India four-analyses sheet (D6/D7): elastic IS targets actually used, informative NL quantities, B-1.2 code
     check, and snl_summary.json recording the sha256 of every package it read (WP4.13 freshness gate)."""
@@ -160,18 +262,21 @@ def build_india(job, out_name="four_analyses.html"):
     po = _load_json(os.path.join(job, "pushover", "pushover_package.json"), {}) or {}
     nl = _load_json(os.path.join(job, "nlrha", "nlrha_package.json"), {}) or {}
     ddm = _load_json(os.path.join(job, "ddm_results.json"), {}) or {}
-    sc = _load_json(os.path.join(job, "seismic_calc.json"), {}) or {}
+    db = design_basis(job)
     stmt = "IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information."
     summ = dict(jurisdiction="india", generated=datetime.datetime.now().isoformat(timespec="seconds"), statement=stmt,
-                inputs_sha256=IA.summary_inputs(job), design=dict(Z=sc.get("Z"), I=sc.get("I"), R=sc.get("R"),
-                                                                  VB_kN=sc.get("VB_kN"), W_kN=sum(sc.get("W_kN") or [])),
+                inputs_sha256=IA.summary_inputs(job), design=dict(Z=db["Z"], I=db["I"], R=db["R"], R_x=db["R_x"], R_y=db["R_y"],
+                                                                  VB_kN=db["VB_kN"], VB_x_kN=db["VB_x_kN"], VB_y_kN=db["VB_y_kN"],
+                                                                  W_kN=db["W_kN"], sources=db["sources"]),
                 pushover=None, nlrha=None, ddm=None, verdict=None)
     rows = []
     if po.get("directions"):
         p = {}
         for d, dd in po["directions"].items():
             p[d] = dict(T1=dd.get("T1"), Vmax_kN=(dd.get("capacity") or {}).get("Vmax_kN"),
-                        Vmax_over_VB=(dd.get("capacity") or {}).get("Vmax_over_VB"), stop=dd.get("stop_reason"),
+                        Vmax_over_VB=(dd.get("capacity") or {}).get("Vmax_over_VB"),
+                        Vmax_over_W=(dd.get("capacity") or {}).get("Vmax_over_W"),
+                        stop=stop_reason_mm(dd.get("stop_reason")),
                         nsp={lv: dict(Sa=n.get("Sa"), Te=n.get("Te"), dt_mm=n.get("target_disp_mm"), reached=n.get("reached_target"))
                              for lv, n in (dd.get("nsp") or {}).items()},
                         response={lv: dict(V_over_VB=r.get("V_over_VB"), max_story_drift=r.get("max_story_drift"), census=r.get("census"))
@@ -190,19 +295,46 @@ def build_india(job, out_name="four_analyses.html"):
                          "max mean drift %s %%; mean V/VB %s" % (fmt(100 * d["max_mean_drift"] if d.get("max_mean_drift") is not None else None, 3),
                                                                  fmt((d.get("base_shear") or {}).get("mean_over_VB")))))
     if ddm.get("runs") is not None:
+        hd = ddm_headline(ddm)
         summ["ddm"] = dict(gravity_gate=(ddm.get("gravity_gate") or {}).get("summary"), gravity_gate_ok=(ddm.get("gravity_gate") or {}).get("ok"),
-                           b12_ok=(ddm.get("b12_check") or {}).get("ok"),
-                           runs=[dict(label=r.get("label"), status=r.get("status"), lambda_u=r.get("lambda_u"), lambda_end=r.get("lambda_end"))
+                           b12_ok=(ddm.get("b12_check") or {}).get("ok"), headline=hd,
+                           runs=[dict(label=r.get("label"), status=r.get("status"), lambda_u=r.get("lambda_u"), lambda_end=r.get("lambda_end"),
+                                      runaway=(r.get("runaway") or {}).get("criterion"))
                                  for r in ddm.get("runs") or []])
+        rows.append(("DDM gravity λu (headline)", hd["gravity_combo"] or "—",
+                     ("λu = %.3f (%s): %s" % (hd["gravity_lambda_u"], hd["gravity_status"],
+                                             "the collapse load exceeds the IS 800 factored load" if hd["gravity_lambda_u"] >= 1.0
+                                             else "BELOW the IS 800 factored load")) if hd["gravity_lambda_u"] is not None
+                     else "no gravity limit point"))
+        if hd["min_phi_lambda"] is not None:
+            rows.append(("DDM min φs·λu (information)", "US/AU reliability calibration, not IS 800 / IS 875",
+                         "%.3f (3 decimals, rounded down; no pass/fail)" % hd["min_phi_lambda"]))
+        rows.append(("DDM solver failures", "numerical stops (NL-24 / NL-36)",
+                     ("none" if not hd["solver_failures"] else "%d sweep(s)%s: %s -- not capacities" % (
+                         hd["solver_failures"], (", %d numerical runaway(s)" % hd["runaway_steps"]) if hd["runaway_steps"] else "",
+                         "; ".join(hd["solver_failure_labels"][:6])))))
+        if hd.get("imposed_load_basis"):
+            rows.append(("DDM imposed-load basis", "IS 875 (Part 2) 3.2.1", hd["imposed_load_basis"]))
         for r in ddm.get("runs") or []:
+            ra = (r.get("runaway") or {}).get("criterion")
             rows.append(("DDM %s" % r.get("label"), r.get("status") or "?",
-                         ("λu = %.3f" % r["lambda_u"]) if r.get("lambda_u") is not None else "%s (λ reached %.3f)" % (r.get("status") or "NO_LIMIT_POINT", r.get("lambda_end") or 0)))
-        rows.append(("IS 800 B-1.2 section check at λ = 1", "code check", "satisfied" if (ddm.get("b12_check") or {}).get("ok") else "NOT satisfied / not run"))
+                         ("λu = %.3f" % r["lambda_u"]) if r.get("lambda_u") is not None else (
+                             "SOLVER_FAILURE: numerical runaway (%s); λ reached %.3f, not a capacity" % (ra, r.get("lambda_end") or 0) if ra else
+                             "%s (λ reached %.3f)" % (r.get("status") or "NO_LIMIT_POINT", r.get("lambda_end") or 0))))
+        b12 = ddm.get("b12_check") or {}
+        rows.append(("IS 800 B-1.2 section check at λ = 1", "code check (members; connections not checked)",
+                     "satisfied" if b12.get("ok") else (
+                         "not evaluated for %d combination(s) (numerical stop before λ = 1); no evaluated combination fails"
+                         % (b12.get("n_not_evaluated") or 0) if b12.get("ok") is None and b12 else
+                         ("NOT satisfied: %s %.3f (%s)" % (hd["b12_member"], hd["b12_dc"] or 0, hd["b12_combo"]) if hd["b12_dc"] else "NOT satisfied / not run"))))
+        rows.append(("IS 800 B-1.1 preconditions", "compact sections, full lateral restraint",
+                     "sections %s; full lateral restraint: %s" % (
+                         "all plastic / compact" if hd["b11_sections_compact"] else "NOT all plastic / compact (outside B-1.1 scope, information only)",
+                         hd["b11_lateral_restraint"] or "not checked")))
     H = ["<!doctype html><meta charset='utf-8'><title>Four analyses (IS)</title><style>body{font-family:Georgia,serif;max-width:1000px;margin:24px auto;padding:0 16px}"
          "table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #bbb;padding:4px 6px;text-align:left}.s{background:#fff4d6;padding:8px 12px;font-weight:bold}</style>",
          "<h1>%s — linear design + pushover + NLRHA + advanced analysis</h1>" % html.escape(os.path.basename(os.path.abspath(job))),
-         "<p>IS 1893 (Part 1):2016 + Amd 1–2 · IS 800:2007 · design VB %s kN, W %s kN, R %s (linear design only)</p>" % (
-             fmt(sc.get("VB_kN"), 1), fmt(summ["design"]["W_kN"], 1), sc.get("R")),
+         "<p>IS 1893 (Part 1):2016 + Amd 1–2 · IS 800:2007 · %s (linear design only)</p>" % html.escape(design_header(db)),
          "<div class='s'>%s</div>" % stmt,
          "<p>NL targets used: IS 1893 elastic spectrum — DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g (no R).</p>",
          "<table><tr><th>analysis</th><th>demand</th><th>response (information)</th></tr>"]

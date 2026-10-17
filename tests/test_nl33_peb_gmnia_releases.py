@@ -181,8 +181,16 @@ def test_restraint_plan_reads_flange_braces_like_peb_build():
 
 
 def test_no_plan_for_earlier_golds():
+    """No PEB plan for the earlier golds. NL-38 (first wave): a rolled-section shed whose design counts intermediate
+    out-of-plane restraint gets the rolled plan instead -- IN_Ex10's SCBF wall columns (girts at Ky x L = 2.375 m),
+    no rafter chain -- while a multi-storey building without such columns (IN_Ex19) gets none."""
     from steltic_ddm import peb_restraints as PR
     job = _job(NL_REF, "*SCBF_bigbox_flexdiaphragm_Indore")
+    nm, cfg = _load(job)
+    p = PR.plan(nm, cfg)
+    assert p is not None and p.get("source") == "rolled"
+    assert p["counts"]["rafter_lateral"] == 0 and p["counts"]["column_torsion"] == 0 and p["counts"]["column_lateral"] > 0
+    job = _job(NL_REF, "*EBF_12levels_Tplan_Guwahati")
     nm, cfg = _load(job)
     assert PR.plan(nm, cfg) is None
 

@@ -328,8 +328,32 @@ IS_STATEMENT = ("IS 1893 (Part 1):2016 provides no acceptance criteria for nonli
 def _lam(res):
     lam = res.get("lambda_u")
     if lam is None:
+        ra = res.get("runaway") or {}
+        if ra:
+            return "SOLVER_FAILURE — numerical runaway (%s), step discarded; λ reached %.3f, not a capacity" % (
+                ra.get("criterion"), res.get("lambda_end") or 0)
         return "%s (terminated: %s at λ = %.3f)" % (res.get("status") or "NO_LIMIT_POINT", res.get("termination"), res.get("lambda_end") or 0)
     return "%.3f [%s]" % (lam, res.get("status"))
+
+
+def _solver_failure_html(runs):
+    """NL-36: the numerical stops, stated in the report (never silent)."""
+    sf = [r for r in runs if r["res"].get("status") == "SOLVER_FAILURE"]
+    if not sf:
+        return ('<p><b>Solver failures: none.</b> Every sweep ended at a structural status. Plausibility bounds of a '
+                'converged step (NL-36): |λ| ≤ 10, a one-step λ change ≤ 1.0, drift from the base ≤ 10 %, max fibre strain '
+                '≤ 1 000 ε<sub>y</sub>.</p>')
+    rows = "".join('<tr><td>%s</td><td>%s</td><td>%s</td><td>%.3f</td><td>%s</td></tr>' % (
+        _h(r["combo"][0]), _h(r.get("imp")), _h(r["res"].get("termination")), r["res"].get("lambda_end") or 0,
+        _h((r["res"].get("runaway") or {}).get("criterion") or "equilibrium iterations failed")) for r in sf)
+    return ('<div class="flag"><b>Solver failures: %d sweep%s stopped numerically</b> (%d numerical runaway%s: a converged '
+            'step beyond the plausibility bounds |λ| ≤ 10, one-step Δλ ≤ 1.0, drift from the base ≤ 10 %%, max fibre strain '
+            '≤ 1 000 ε<sub>y</sub> — the step is discarded). Their λ is <b>not a capacity</b>; their B-1.2 rows are not '
+            'evaluated unless λ = 1 was passed before the stop. The completeness gate states them.</div>'
+            '<div class="tw"><table><tr><th>combination</th><th>imperf.</th><th>termination</th><th>λ reached</th>'
+            '<th>reason</th></tr>%s</table></div>' % (
+                len(sf), "" if len(sf) == 1 else "s", sum(1 for r in sf if r["res"].get("runaway")),
+                "" if sum(1 for r in sf if r["res"].get("runaway")) == 1 else "s", rows))
 
 
 def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table):
@@ -362,8 +386,25 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
     P.append('<li>Steel01, E = 200 000 MPa, hardening b = %.3f; f<sub>y</sub> per section from IS 2062 (Part 1):2025 Table 3 by thickness band '
              '(expected-strength factor 1.0 unless the EOR sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
     P.append('<li>Residual stress pattern: %s.</li>' % _h(o.get("residual")))
+    if o.get("imposed_load_basis"):
+        P.append('<li><b>%s</b></li>' % _h(o["imposed_load_basis"]))
     pr = o.get("peb_restraints") or {}
-    if pr:
+    if pr and pr.get("source") == "rolled":
+        bs = pr.get("basis") or {}
+        srcs = bs.get("sources") or {}
+        P.append('<li>Out-of-plane restraints of the rolled-section shed (NL-38): %s. Sources: %s.%s Rafter fly-brace stations '
+                 'hold both flanges (lateral tie to the roof diaphragm + torsional restraint); purlin- and girt-only stations hold '
+                 'one flange, which a centroid-line model cannot represent, and are omitted (conservative). Columns: lateral '
+                 'restraint at k × K<sub>y</sub>L, the design\'s out-of-plane buckling length, to a rigid stud on the element\'s '
+                 'chord; no torsional restraint (the HR column LTB check uses the element length). Rolled I sections in these '
+                 'chains carry G J + π² E C<sub>w</sub> / L<sub>t</sub>² as their torsional stiffness (no warping degree of '
+                 'freedom in the beam-column; L<sub>t</sub> %s mm).</li>' % (
+                     _h(pr.get("summary") or ""),
+                     _h("; ".join("%s %s" % (k, v) for k, v in srcs.items()) or "—"),
+                     (" <b>The HR cfg declares no %s spacing: the brief's is used.</b>" % _h(", ".join(bs.get("brief_fallback"))))
+                     if bs.get("brief_fallback") else "",
+                     "–".join("%.0f" % v for v in ((pr.get("counts") or {}).get("warping_length_mm") or []))))
+    elif pr:
         P.append('<li>PEB shed (NL-33): welded plate I and web-tapered I members (the tapered ones as the HR stepped prismatic '
                  'segments) as plate fibres, without a residual-stress pattern and without local buckling (slender webs: the '
                  'B-1.2 check uses the IS 800 3.7.2(d) effective section, the fibres the gross plates). %s. Lateral restraints '
@@ -383,6 +424,9 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
              '(KrylovNewton, NewtonLineSearch, ModifiedNewton, then relaxed tolerances), step cuts and an arc-length rescue '
              '(MinUnbalDispNorm) near the limit; a run the equilibrium iterations still stop is SOLVER_FAILURE (a numerical stop, '
              'blocks the gate) unless the tangent there is below 10 %% of elastic (a genuine limit, NO_LIMIT_POINT). '
+             'A converged step beyond the plausibility bounds — |λ| &gt; 10, a λ change &gt; 1.0 in one step, drift from the '
+             'base &gt; 10 %%, max fibre strain &gt; 1 000 ε<sub>y</sub> — is a numerical runaway (NL-36): the step is discarded '
+             '(not in the curve, the peak or the forces at λ = 1) and the sweep is SOLVER_FAILURE, never a capacity. '
              'Time limit per sweep %.0f s.</li></ul>' % (
                  o.get("strain_cap") or 0, o.get("time_limit") or 0))
     b11 = o.get("b11") or {}
@@ -392,7 +436,7 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
                 "%s %s" % (x["section"], x["cls"]) for x in b11.get("sections", []) if x.get("cls") not in ("plastic", "compact")),
             _h(b11.get("lateral_restraint")), _h(b11.get("quote"))))
     # 3 capacity table
-    P.append('<h2>3 · Load factor by combination</h2><div class="tw"><table><tr><th>combination</th><th>kind</th><th>imperf.</th>'
+    P.append('<h2>3 · Load factor by combination</h2>' + _solver_failure_html(runs) + '<div class="tw"><table><tr><th>combination</th><th>kind</th><th>imperf.</th>'
              '<th>λ first yield</th><th>λ<sub>u</sub> / status</th><th>φ<sub>s</sub>·λ<sub>u</sub> (literature φ<sub>s</sub>, information)</th>'
              '<th>mechanism</th><th>roof disp at peak (mm)</th><th>steps / s</th></tr>')
     for r in runs:
@@ -415,14 +459,20 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
         b = r.get("b12")
         if not b:
             continue
-        P.append('<h3>%s — %s</h3>' % (_h(r["combo"][0]), "satisfied" if b["ok"] else ("NOT satisfied" if b.get("reached_lambda_1") else _h(b.get("note")))))
+        P.append('<h3>%s — %s</h3>' % (_h(r["combo"][0]), "satisfied" if b["ok"] else (
+            _h(b.get("note")) if b.get("ok") is None else ("NOT satisfied" if b.get("reached_lambda_1") else _h(b.get("note"))))))
         if b.get("groups"):
+            red = b.get("imposed_reduction") or {}
+            if red.get("n_columns"):
+                P.append('<p class="cap">Column axial forces reduced by IS 875 (Part 2) 3.2.1 as in the HR design (%d columns; '
+                         'the reduction r × fL × N<sub>LL</sub> is shown in brackets after N).</p>' % red["n_columns"])
             P.append('<div class="tw"><table><tr><th>role</th><th>section</th><th>n</th><th>N (kN)</th><th>M major (kN·m)</th><th>M minor (kN·m)</th>'
                      '<th>N<sub>d</sub> (kN)</th><th>M<sub>d</sub> (kN·m)</th><th>f<sub>y</sub> (MPa)</th><th>D/C 9.3.1.1</th><th>V/V<sub>d</sub></th></tr>')
             for g in b["groups"]:
-                P.append('<tr><td>%s</td><td>%s</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%.3f</b></td><td>%.3f</td></tr>' % (
-                    g["role"], g["section"], g["n"], g.get("N_kN"), g.get("M_major_kNm"), g.get("M_minor_kNm"), g.get("Nd_kN"),
-                    g.get("Md_kNm"), g.get("fy_MPa"), g["dc_max"], g["dc_shear_max"]))
+                P.append('<tr><td>%s</td><td>%s</td><td>%d</td><td>%s%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>%.3f</b></td><td>%.3f</td></tr>' % (
+                    g["role"], g["section"], g["n"], g.get("N_kN"),
+                    (" (−%s)" % g["N_reduction_kN"]) if g.get("N_reduction_kN") else "", g.get("M_major_kNm"), g.get("M_minor_kNm"),
+                    g.get("Nd_kN"), g.get("Md_kNm"), g.get("fy_MPa"), g["dc_max"], g["dc_shear_max"]))
             P.append('</table></div>')
     # 5 member table
     P.append('<h2>5 · Member state at the end of each governing sweep</h2><div class="tw"><table><tr><th>role</th><th>section</th><th>n</th>'
@@ -452,12 +502,14 @@ def ddm_block_india(nm, gate, runs, sensitivity, options, member_table):
         "model": {"material": "Steel01 fy per section (IS 2062 Table 3) E=200000 MPa b=%.3f" % options.get("hardening", 0.002),
                   "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), options.get("psi_basis")),
                   "out_of_straightness": options.get("bow_basis"), "units": "N, mm, MPa",
-                  **({"peb_restraints": options["peb_restraints"].get("summary")} if options.get("peb_restraints") else {})},
+                  **({"peb_restraints": options["peb_restraints"].get("summary")} if options.get("peb_restraints") else {}),
+                  **({"imposed_load": options["imposed_load_basis"]} if options.get("imposed_load_basis") else {})},
         "gravity_gate": {k: v for k, v in (options.get("gravity_gate") or {}).items() if k in ("ok", "summary", "tol", "n_compared", "n_bad")},
         "combinations": [
             {"label": r["combo"][0], "kind": r["summary"]["kind"], "imperfection": r["imp"],
              "lambda_u": (round(r["res"]["lambda_u"], 3) if r["res"].get("lambda_u") is not None else None),
              "status": r["res"].get("status"), "termination": r["res"].get("termination"),
+             "runaway": (r["res"].get("runaway") or {}).get("criterion"),
              "lambda_end": round(r["res"].get("lambda_end") or 0, 3),
              "phi_s_lambda_u_information": r["check"][0], "b12_ok": (r.get("b12") or {}).get("ok"),
              "mechanism": r["cls"]["mechanism"]} for r in runs],

@@ -36,7 +36,10 @@ stations and with the same reading as peb_build:
 
 Stations inside an HR element become GMNIA sub-element nodes (model_gmnia splits the member there); the member ends,
 the eaves and the apex already carry the HR ties and joints (no torsional restraint is added at a joint). Returns
-None for a package without calc_package['peb'] chains or without cfg['flange_braces'] (every earlier gold)."""
+None for a package without calc_package['peb'] chains or without cfg['flange_braces'] (every earlier gold) --
+unless the package is a ROLLED-section India shed (NL-38, rolled_source below): sloped cfg['roof_planes'] rafters and
+columns whose design counted intermediate out-of-plane restraint (K_factors Ky < 1) get the same treatment from the
+spacings the HR cfg declares (the brief's when it declares none)."""
 import math
 
 END_TOL_MM = 1.0          # a station within 1 mm of an element end is that end node
@@ -104,17 +107,31 @@ def _warping_intervals(ms, nodes, pos, c0, c1, tpoints, out):
 
 
 def plan(nm, cfg=None):
+    """The restraint plan of a PEB shed (NL-33, calc_package['peb'] chains + cfg['flange_braces']) or, failing that,
+    of a rolled-section shed (NL-38, rolled_source: sloped cfg['roof_planes'] rafters and the columns whose design
+    counted intermediate out-of-plane restraint). None when neither applies."""
     cfg = cfg if cfg is not None else (getattr(nm, "cfg", None) or {})
     peb = (getattr(nm, "calc_package", None) or {}).get("peb") or {}
     fb = (cfg or {}).get("flange_braces") or {}
     chains, pm = peb.get("chains") or {}, peb.get("members") or {}
     if not chains or not fb:
-        return None
+        src = rolled_source(nm, cfg) if not chains else None
+        if src is None:
+            return None
+        out = _plan(nm, cfg, src["chains"], src["members"], src["flange_braces"], both=False,
+                    col_tops=src["col_tops"], rafter_abs=src["rafter_abs"])
+        out["source"] = "rolled"
+        out["basis"] = src["basis"]
+        return out
+    return _plan(nm, cfg, chains, pm, fb, both=bool(cfg.get("column_lateral_support_both_flanges")))
+
+
+def _plan(nm, cfg, chains, pm, fb, both, col_tops=None, rafter_abs=None):
     nodes = nm.nodes
     by_tag = {int(m.tag): m for m in nm.members}
     hr_ties = _springs_by_node(nm)
-    both = bool(cfg.get("column_lateral_support_both_flanges"))
-    col_tops = {int(ch["top"]) for ch in chains.values() if ch.get("kind") == "column" and ch.get("top") is not None}
+    if col_tops is None:
+        col_tops = {int(ch["top"]) for ch in chains.values() if ch.get("kind") == "column" and ch.get("top") is not None}
     out = dict(stations=[], member_fracs={}, studs=[], skipped=[], counts={}, warping_intervals={})
     one_flange = [0]
 
@@ -143,10 +160,12 @@ def plan(nm, cfg=None):
             d = 1 if str(ch.get("strong_dir")) == "Y" else 2            # weak-axis (out-of-plane) direction
             st = {}
             fly_c = {float(h) for h in rs.get("fly_braces_mm") or []}
+            for h in rs.get("lateral_mm") or []:                       # NL-38 (rolled): lateral restraint only
+                st.setdefault(float(h), set()).add("lateral")
             for h in rs.get("girts_mm") or []:
                 if both:
                     st.setdefault(float(h), set()).update({"lateral", "torsion"})
-                elif float(h) not in fly_c and END_TOL_MM < float(h) < H - END_TOL_MM:
+                elif float(h) not in fly_c and float(h) not in st and END_TOL_MM < float(h) < H - END_TOL_MM:
                     one_flange[0] += 1
             for h in fly_c:
                 st.setdefault(h, set()).update({"lateral", "torsion"})
@@ -161,8 +180,11 @@ def plan(nm, cfg=None):
             _warping_intervals(ms, nodes, lambda p: p[2] - zb, 0.0, H,
                                [s_["at_mm"] for s_ in rec if "torsion" in s_["kinds"]], out["warping_intervals"])
             if any("lateral" in s["kinds"] for s in rec):
-                out["studs"].append(dict(chain=cid, base=base, top=top, dir=d,
-                                         stations=[i for i, s in enumerate(out["stations"]) if s in rec and "lateral" in s["kinds"]]))
+                stud = dict(chain=cid, base=base, top=top, dir=d,
+                            stations=[i for i, s in enumerate(out["stations"]) if s in rec and "lateral" in s["kinds"]])
+                if ch.get("base_fixed") is False:
+                    stud["base_fixed"] = False                         # NL-38: a column element above a floor / roof
+                out["studs"].append(stud)
         elif kind == "rafter":
             planes = cfg.get("roof_planes") or []
             try:
@@ -184,10 +206,16 @@ def plan(nm, cfg=None):
                             s_.add(round(a, 3))
                 return s_
             st = {}
-            fly_r = coords(rb.get("fly_braces_mm") or [])
+            ra = (rafter_abs or {}).get(int(ch.get("plane", 0)))
+            if ra is not None:                                           # NL-38 (rolled): absolute plan positions
+                fly_r = {round(float(a), 3) for a in ra.get("fly") or []}
+                purl_all = {round(float(a), 3) for a in ra.get("purlin") or []}
+            else:
+                fly_r = coords(rb.get("fly_braces_mm") or [])
+                purl_all = coords(rb.get("purlins_mm") or [])
             for a in fly_r:
                 st.setdefault(a, set()).update({"lateral", "torsion"})
-            purl_only = coords(rb.get("purlins_mm") or []) - fly_r - {round(lo, 3), round(hi, 3), round(ridge, 3)}
+            purl_only = purl_all - fly_r - {round(lo, 3), round(hi, 3), round(ridge, 3)}
             for a in (lo, hi, ridge):
                 st.setdefault(round(a, 3), set()).add("lateral")
             chain_nodes = {int(n) for m in ms for n in (m.n1, m.n2)}
@@ -270,10 +298,218 @@ def plan(nm, cfg=None):
     return out
 
 
+# --------------------------------------------------------------------------------------------------------------------
+# NL-38: rolled-section (non-PEB) sheds
+# --------------------------------------------------------------------------------------------------------------------
+# Spacings the briefs state, used ONLY when the HR cfg declares none (the plan then says so). Quoted from
+# steltic_india/test_buildings/<brief>.txt; mm.
+BRIEF_SPACINGS = {
+    "IN_Ex6_OMRF_warehouse_mezzanine_Hyderabad": dict(purlin=1500.0, girt=2000.0,
+                                                      quote="purlins at 1.5 m, girts at 2.0 m"),
+    "IN_Ex7_Crane_bay_OMRF_OCBF_Vizag": dict(purlin=1500.0, girt=2300.0, quote="purlins at 1.5 m, girts at 2.3 m"),
+    "IN_Ex8_SMF_portal_Chennai_wind": dict(purlin=1500.0, girt=2000.0, fly=3000.0,
+                                           quote="purlins at 1.5 m (roof), girts at 2.0 m (walls) ... fly braces at 3.0 m"),
+    "IN_Ex9_Gable_warehouse_SMF_SCBF_snow_Shimla": dict(purlin=1500.0, girt=1500.0,
+                                                        quote="purlins and girts at 1.5 m as IS 808 channels"),
+    "IN_Ex10_SCBF_bigbox_flexdiaphragm_Indore": dict(girt=2375.0,
+                                                     quote="Wall girts at 2.375 m restrain the column weak axis"),
+}
+
+
+def _by_role(v, role):
+    """A cfg value that is a number or {role: number} (LLT_sag_mm / LLT_hog_mm convention)."""
+    if isinstance(v, dict):
+        v = v.get(role)
+    try:
+        return float(v) if v is not None and float(v) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _secondary_spacing(cfg, word):
+    for sm in (cfg.get("secondary_members") or []):
+        txt = ("%s %s" % (sm.get("id") or "", sm.get("kind") or "")).lower()
+        if word in txt and sm.get("spacing_mm"):
+            try:
+                return float(sm["spacing_mm"]), "cfg['secondary_members'] '%s' spacing_mm" % (sm.get("id") or sm.get("kind"))
+            except (TypeError, ValueError):
+                pass
+    return None, None
+
+
+def rolled_spacings(cfg, name=None):
+    """(spacings, sources, fallback) for a rolled shed, from the HR cfg first:
+      fly     rafter fly braces (both flanges): cfg['LLT_hog_mm']['roof'] -- the design's bottom-flange LTB length;
+      purlin  roof purlins (top flange only): cfg['secondary_members'] purlin spacing_mm, else cfg['LLT_sag_mm']['roof'];
+      girt    wall girts (outer flange only): cfg['secondary_members'] girt spacing_mm.
+    A spacing the cfg does not declare comes from BRIEF_SPACINGS[name] and is listed in `fallback`."""
+    sp, src, fb = {}, {}, []
+    v = _by_role(cfg.get("LLT_hog_mm"), "roof")
+    if v:
+        sp["fly"], src["fly"] = v, "cfg['LLT_hog_mm']['roof'] (the design's bottom-flange LTB length, fly-brace spacing)"
+    v, s_ = _secondary_spacing(cfg, "purlin")
+    if not v:
+        v = _by_role(cfg.get("LLT_sag_mm"), "roof")
+        s_ = "cfg['LLT_sag_mm']['roof'] (the design's top-flange LTB length, purlin spacing)" if v else None
+    if v:
+        sp["purlin"], src["purlin"] = v, s_
+    v, s_ = _secondary_spacing(cfg, "girt")
+    if v:
+        sp["girt"], src["girt"] = v, s_
+    brief = BRIEF_SPACINGS.get(str(name or cfg.get("name") or ""))
+    for k in ("fly", "purlin", "girt"):
+        if k not in sp and brief and brief.get(k):
+            sp[k], src[k] = brief[k], "brief (cfg declares none): '%s'" % brief["quote"]
+            fb.append(k)
+    return sp, src, fb
+
+
+def _india(cfg):
+    plan_ = (cfg or {}).get("load_plan") if isinstance(cfg, dict) else None
+    return str((plan_ or {}).get("jurisdiction") or (cfg or {}).get("jurisdiction") or "").lower() == "india"
+
+
+def _side_positions(eave, ridge, dz, spacing):
+    """Plan positions of restraints at `spacing` along the SLOPE from the eave at plan coordinate `eave` towards the
+    ridge (the last gap, next to the ridge, may be shorter)."""
+    run = ridge - eave
+    if abs(run) < 1.0 or not spacing:
+        return []
+    Ls = math.hypot(run, dz)
+    out, k = [], 1
+    while k * spacing < Ls - END_TOL_MM:
+        out.append(eave + run * (k * spacing / Ls))
+        k += 1
+    return out
+
+
+def rolled_source(nm, cfg):
+    """NL-38: restraint chains of a ROLLED-section (non-PEB) India shed, from the HR cfg -- the out-of-plane restraint
+    the member design counted on, which the HR frame model (and so the GMNIA) does not contain:
+
+      rafters  every sloped beam of a cfg['roof_planes'] plane, chained per frame line. Fly braces (both flanges held,
+               the design's LLT_hog_mm['roof']) at that spacing along the slope from each eave: lateral restraint tied to
+               the roof diaphragm + torsional restraint; plus a lateral tie at the apex and the eaves where the HR model
+               has none (as NL-33). Purlins (top flange only) are counted, not modelled (a centroid-line model cannot
+               hold one flange; conservative). Corotational rafters without these restraints buckle out of plane far
+               below their in-plane capacity (IN_Ex9 2026-09: lambda 0.61 under 1.5DL+1.5LL+1.5SL with the HR roof
+               NPB600 at D/C 0.81).
+      columns  every column element whose role has K_factors Ky < 1 -- the design's out-of-plane buckling length
+               Ky x L counts intermediate restraint (girts / fly braces). Lateral restraint (weak-axis direction, to a
+               rigid stud on the element's chord) at k x Ky x L from the element's foot, exactly the HR flexural basis.
+               No torsional restraint: the HR LTB check of a column uses the element length (no LLT declared).
+      warping  rolled I sections in a chain carry G J + pi^2 E Cw / L_t^2 (L_t as NL-33: between modelled torsional
+               restraints, twice the gap next to a joint without one).
+
+    Returns None for a PEB package, a non-India cfg, or a shed with neither sloped rafters nor such columns."""
+    cfg = cfg or {}
+    if not _india(cfg) or ((getattr(nm, "calc_package", None) or {}).get("peb") or {}).get("chains"):
+        return None
+    nodes = nm.nodes
+    name = cfg.get("name") or getattr(nm, "name", None)
+    sp, src, fallback = rolled_spacings(cfg, name)
+    chains, pm, rafter_abs = {}, {}, {}
+    n_raf = n_col = 0
+    # ---- rafters
+    for idx, pl in enumerate(cfg.get("roof_planes") or []):
+        try:
+            ax = 1 if str(pl.get("axis", "Y")).upper() == "Y" else 0
+            lo, hi = sorted(float(v) for v in pl.get("eave_coords_mm") or (0.0, 0.0))
+            ridge = float(pl.get("ridge_coord_mm", 0.5 * (lo + hi)))
+            dz = float(pl.get("ridge_z_mm", 0.0)) - float(pl.get("eave_z_mm", 0.0))
+        except (TypeError, ValueError):
+            continue
+        oax = 1 - ax
+        lines = {}
+        for m in nm.members:
+            if m.kind != "beam" or m.role == "link":
+                continue
+            p1, p2 = nodes[m.n1], nodes[m.n2]
+            if abs(p1[2] - p2[2]) <= 1.0 or abs(p1[oax] - p2[oax]) > 1.0:
+                continue                                         # not a sloped rafter in this plane's direction
+            if not all(lo - 1.0 <= p[ax] <= hi + 1.0 for p in (p1, p2)):
+                continue
+            lines.setdefault(round(p1[oax], 0), []).append(m)
+        if not lines:
+            continue
+        fly = sp.get("fly")
+        rafter_abs[idx] = dict(
+            fly=sorted(set(round(a, 3) for a in _side_positions(lo, ridge, dz, fly) + _side_positions(hi, ridge, dz, fly))),
+            purlin=sorted(set(round(a, 3) for a in _side_positions(lo, ridge, dz, sp.get("purlin")) +
+                              _side_positions(hi, ridge, dz, sp.get("purlin")))))
+        for c, ms in sorted(lines.items()):
+            cid = "R%d@%.0f" % (idx, c)
+            ms = sorted(ms, key=lambda m: min(nodes[m.n1][ax], nodes[m.n2][ax]))
+            pm[cid] = dict(elements=[int(m.tag) for m in ms])
+            chains[cid] = dict(kind="rafter", plane=idx, members=[cid])
+            n_raf += 1
+    # ---- columns with a declared out-of-plane restraint (Ky < 1)
+    K = cfg.get("K_factors") or {}
+    for m in nm.members:
+        if m.kind != "col":
+            continue
+        kk = K.get(m.role) or K.get("col") or {}
+        try:
+            Ky = float(kk.get("Ky")) if isinstance(kk, dict) and kk.get("Ky") is not None else None
+        except (TypeError, ValueError):
+            Ky = None
+        if not Ky or Ky >= 1.0:
+            continue
+        a, b = (m.n1, m.n2) if nodes[m.n1][2] <= nodes[m.n2][2] else (m.n2, m.n1)
+        H = nodes[b][2] - nodes[a][2]
+        if H <= 1.0 or math.hypot(nodes[b][0] - nodes[a][0], nodes[b][1] - nodes[a][1]) > 1.0:
+            continue                                             # vertical columns only
+        s = Ky * H
+        lat = []
+        k = 1
+        while k * s < H - END_TOL_MM:
+            lat.append(round(k * s, 1)); k += 1
+        if not lat:
+            continue
+        girts = []
+        if sp.get("girt"):
+            k = 1
+            z0 = nodes[a][2]
+            # girts at the declared spacing from the ground (wall line), inside this element
+            while k * sp["girt"] < nodes[b][2] - END_TOL_MM:
+                h = k * sp["girt"] - z0
+                if END_TOL_MM < h < H - END_TOL_MM:
+                    girts.append(round(h, 1))
+                k += 1
+        sd = "Y" if int(getattr(m, "transf", 1) or 1) == 1 else "X"     # transf 1: strong axis resists Y (engine3d)
+        cid = "C%d" % int(m.tag)
+        pm[cid] = dict(elements=[int(m.tag)])
+        chains[cid] = dict(kind="column", base=int(a), top=int(b), strong_dir=sd, members=[cid],
+                           restraints=dict(lateral_mm=lat, girts_mm=girts), base_fixed=(a in nm.fixes),
+                           Ky=Ky, KyL_mm=round(s, 1))
+        n_col += 1
+    if not chains:
+        return None
+    col_tops = {int(max((m.n1, m.n2), key=lambda t: nodes[t][2])) for m in nm.members if m.kind == "col"}
+    basis = dict(spacings_mm=sp, sources=src, brief_fallback=fallback, rafter_chains=n_raf, column_elements=n_col,
+                 column_rule="lateral restraint at k x Ky x L (cfg K_factors[role]['Ky'] < 1), no torsional restraint "
+                             "(the HR column LTB check uses the element length)",
+                 rafter_rule="fly braces (lateral + torsional) at LLT_hog_mm['roof'] along the slope from each eave; "
+                             "purlins (top flange only) not modelled")
+    return dict(chains=chains, members=pm, flange_braces={"rafter": {}}, col_tops=col_tops, rafter_abs=rafter_abs,
+                basis=basis)
+
+
 def summary(p):
     if not p:
         return None
     c = p["counts"]
+    if p.get("source") == "rolled":
+        b = p.get("basis") or {}
+        spc = b.get("spacings_mm") or {}
+        return ("Rolled-section restraints (NL-38, from the HR cfg%s): rafters %d lateral (roof-diaphragm ties) + %d "
+                "torsional (fly braces at %s mm along the slope); columns %d lateral (studs on %d column elements at "
+                "Ky x L, no torsional); %d HR elements split at a station; %d one-flange (purlin / girt only) stations "
+                "not modelled (conservative); warping lengths %s mm"
+                % ((", brief spacing for " + ", ".join(b["brief_fallback"])) if b.get("brief_fallback") else "",
+                   c["rafter_lateral"], c["rafter_torsion"], ("%.0f" % spc["fly"]) if spc.get("fly") else "—",
+                   c["column_lateral"], c["studs"], c["split_elements"], c["not_modelled_one_flange"],
+                   "-".join("%.0f" % v for v in (c.get("warping_length_mm") or [])) or "none"))
     return ("PEB restraints (NL-33, cfg['flange_braces'] as peb_build / D-T1): rafters %d lateral (roof-diaphragm ties) "
             "+ %d torsional; columns %d lateral (wall-line studs, %d columns) + %d torsional; canopies %d torsional; %d HR "
             "elements split at a station; %d one-flange (purlin / girt only) stations not modelled (conservative); "

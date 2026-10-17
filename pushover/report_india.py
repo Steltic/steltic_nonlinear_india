@@ -10,6 +10,16 @@ from .postprocess import IS_NL_STATEMENT
 KIP_TO_KN = 4.4482216152605
 IN_TO_MM = 25.4
 
+
+def stop_reason_mm(s):
+    """The pushover stop message in mm for the India reports: the analysis runs in kip-in (Stage B) and
+    nonlinear_model.pushover writes 'u=17.27 in' / 'roof u=1.84 in'. Every 'u=<x> in' becomes 'u = <25.4 x> mm'; other
+    text is unchanged. None stays None."""
+    import re
+    if not s:
+        return s
+    return re.sub(r"u=(-?\d+(?:\.\d+)?) in\b", lambda m: "u = %.0f mm" % (float(m.group(1)) * IN_TO_MM), str(s))
+
 CSS = """
 body{font-family:Georgia,serif;max-width:1080px;margin:28px auto;padding:0 18px;color:#1b1b1b;line-height:1.45}
 h1{font-size:25px;margin-bottom:2px} h2{font-size:18px;border-bottom:2px solid #333;padding-bottom:3px;margin-top:30px}
