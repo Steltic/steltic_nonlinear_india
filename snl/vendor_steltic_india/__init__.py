@@ -13,7 +13,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = ("india_loads.py", "india_seismic.py", "india_units.py", "india_wind_tables.py", "india_combos.py",
          "india_is18168.py", "india_seismic_gates.py", "india_omega_is18168.py", "preflight.py")
-HR_SOURCE_COMMIT = "3ec586a"   # steltic_india fix/2026-09-review (0.3.0 + O1/O2/O3, GOLD-1..7, AUD-1..4, GOLD-764, GOLD-COLL)
+HR_SOURCE_COMMIT = "54e7463"   # steltic_india fix/2026-10-first-wave (india_seismic, india_seismic_gates re-synced; see VENDORED_FROM.md)
 
 
 def shared(name):

@@ -172,6 +172,58 @@ LIMIT_STATUSES = ("LIMIT_POINT", "PLASTIC_PLATEAU", "DUCTILITY_CAP")
 SOLVER_FAILURE_TERMS = ("step_exhausted", "too_many_failures")
 GENUINE_STOP_TANGENT = 0.10        # NL-24: a numerical stop with the tangent below 10 % of the elastic one is at a limit
 
+# NL-36: plausibility bounds of a converged step. A step beyond any of them is a numerical runaway (the equilibrium
+# iterations "converged" onto a non-physical branch after a near-singular step), never a structural state: IN_Ex9
+# (2026-09) reported lambda_u = 5 576, 106 901 and 1 402 093 as DUCTILITY_CAP with storey drifts of 1 156 % to
+# 2.5 million % and fibre strains of millions of eps_y; IN_Ex18 a 1 615 % storey drift at lambda 1.67. The runaway step
+# is not recorded (not in the curve, the peak, the snapshot or the B-1.2 forces at lambda = 1) and the sweep stops with
+# termination "runaway" -> SOLVER_FAILURE (NL-30 then retries it with smaller load steps).
+RUNAWAY_LAMBDA = 10.0              # load factor: no factored IS 800 Table 4 combination is carried 10 times over
+RUNAWAY_DRIFT = 0.10               # drift ratio from the base (10 %): far beyond any steel frame at its limit point
+RUNAWAY_STRAIN = 1000.0            # max fibre strain / eps_y: about five times the fracture strain of IS 2062 steel
+RUNAWAY_JUMP = 1.0                 # lambda change in ONE converged step (20 elastic steps of the default dlam 0.05)
+RUNAWAY_TERM = "runaway"
+
+
+def max_drift_ratio(model):
+    """Largest drift ratio of the current state measured from the base: max over the diaphragm masters of the
+    horizontal displacement over the master's height (without masters -- a portal -- over every free node above the
+    base). A ratio, so N-mm and kip-in alike. Measured from the base, not storey by storey, so that split levels and
+    several units (masters a short height apart that need not move together) never read as a large storey drift; a
+    runaway step moves the whole structure by many storey heights (IN_Ex9 / IN_Ex18) and is caught either way."""
+    tags = list(model.masters) if model.masters else [t for t in model.nm.nodes if t not in model.nm.fixes]
+    best = 0.0
+    for t in tags:
+        z = model.nm.nodes[t][2]
+        if z <= 1e-9:
+            continue
+        try:
+            u = ops.nodeDisp(t)
+        except Exception:
+            continue
+        best = max(best, math.hypot(u[0], u[1]) / z)
+    return best
+
+
+def runaway_check(lam, lam_prev, drift=None, strain=None, lam_jump=RUNAWAY_JUMP):
+    """NL-36: None for a plausible converged step, else dict(criterion, lambda, lambda_prev, drift, strain) naming the
+    first bound it breaks (RUNAWAY_LAMBDA, the one-step jump, RUNAWAY_DRIFT, RUNAWAY_STRAIN)."""
+    rec = dict(lambda_=round(float(lam), 4), lambda_prev=round(float(lam_prev), 4),
+               drift=(round(float(drift), 5) if drift is not None else None),
+               strain_over_eps_y=(round(float(strain), 1) if strain is not None else None))
+    if not math.isfinite(lam) or abs(lam) > RUNAWAY_LAMBDA:
+        rec["criterion"] = "|lambda| %.4g > %.0f" % (lam, RUNAWAY_LAMBDA)
+    elif abs(lam - lam_prev) > lam_jump:
+        rec["criterion"] = "lambda jumped %.4g -> %.4g in one converged step (> %.2f)" % (lam_prev, lam, lam_jump)
+    elif drift is not None and (not math.isfinite(drift) or drift > RUNAWAY_DRIFT):
+        rec["criterion"] = "drift from the base %.4g %% > %.0f %%" % (100 * drift, 100 * RUNAWAY_DRIFT)
+    elif strain is not None and (not math.isfinite(strain) or strain > RUNAWAY_STRAIN):
+        rec["criterion"] = "max fibre strain %.4g eps_y > %.0f eps_y" % (strain, RUNAWAY_STRAIN)
+    else:
+        return None
+    rec["lambda"] = rec.pop("lambda_")
+    return rec
+
 
 def stop_tangent_ratio(hist, k_el, n=3):
     """Tangent stiffness (d lambda / |d u|) over the last `n` converged steps as a fraction of the elastic one; None when
@@ -195,7 +247,12 @@ def limit_status(hist, hi_at_max, lam_max, plateau=False, capped=False, terminat
     if plateau:
         return "PLASTIC_PLATEAU", n_desc
     if n_desc >= 2 and after and after[-1] < lam_max:
+        # a limit point confirmed on the converged steps BEFORE a runaway stays a limit point (the runaway step is not
+        # in `hist`); NL-36
         return "LIMIT_POINT", n_desc
+    if termination == RUNAWAY_TERM:
+        # NL-36: a numerical runaway is never a capacity, whatever the strain cap or the tangent say
+        return "SOLVER_FAILURE", n_desc
     if capped:
         return "DUCTILITY_CAP", n_desc
     if termination in SOLVER_FAILURE_TERMS and not (tangent_ratio is not None and tangent_ratio < GENUINE_STOP_TANGENT):
@@ -279,6 +336,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
     fails = 0; consecutive_fail = 0; ladder_used = {}
     mode = "disp"; dl0 = dl = None                # NL-24: "arc" after the arc-length rescue
     log = []; plateau = False; term = "max_steps"; capped = False; forces_at_1 = None; prev_f = None
+    runaway = None                                # NL-36: the discarded runaway step, if any
     for step in range(1, max_steps + 1):
         ok = ops.analyze(1)
         if ok != 0:
@@ -326,14 +384,23 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
             dl = min(dl * 1.5, dl0)
             _arc_integrator(dl)
         lam = ops.getLoadFactor(1); d = ops.nodeDisp(cnode, cdof)
-        hist.append((lam, d))
-        hi = len(hist) - 1                        # index of this converged step in hist (failed steps are not counted)
-        disp_hist[hi] = {t: ops.nodeDisp(t) for t in _track_nodes(model)}
+        hi = len(hist)                            # index this converged step takes in hist (failed steps are not counted)
         ys = None
         if (first_yield is None and step % 2 == 0) or hi % frame_every == 0 or (strain_cap and step % 2 == 0):
             ys = yield_state(model, eps_y)
-            if first_yield is None and max(ys.values(), default=0.0) >= 1.0:
-                first_yield = lam
+        # NL-36: a converged step beyond the plausibility bounds is a numerical runaway -- stop BEFORE recording it
+        ra = runaway_check(lam, hist[-1][0], drift=max_drift_ratio(model),
+                           strain=(max(ys.values(), default=0.0) if ys is not None else None),
+                           lam_jump=max(RUNAWAY_JUMP, 20.0 * abs(dlam)))
+        if ra is not None:
+            runaway = dict(ra, step=step)
+            log.append("step %d: numerical runaway (%s) -- step discarded, sweep stopped (SOLVER_FAILURE)" % (step, ra["criterion"]))
+            term = RUNAWAY_TERM
+            break
+        hist.append((lam, d))
+        disp_hist[hi] = {t: ops.nodeDisp(t) for t in _track_nodes(model)}
+        if ys is not None and first_yield is None and max(ys.values(), default=0.0) >= 1.0:
+            first_yield = lam
         if capture_lambda1 and forces_at_1 is None and lam >= 0.85:
             # NL-25: the B-1.2 forces AT lambda = 1, interpolated between the converged steps either side (the first
             # step past 1 can be up to one load step -- 5 % -- beyond it: gym NPB700 1008 vs 996.6 kN-m at lambda 1)
@@ -408,7 +475,10 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
         (l1, d1), (l2, d2) = hist[-2], hist[-1]
         tangent_at_end = (l2 - l1) / (abs(d2 - d1) or 1e-12)
     lam_reported = lam_max if status in LIMIT_STATUSES else None
+    # forces_at_1 (NL-25) is only ever taken from recorded (plausible) steps: the runaway step is discarded before the
+    # capture, so a B-1.2 check at lambda = 1 reached BEFORE a numerical stop remains valid (NL-36)
     return dict(label=label, lambda_u=lam_reported, lambda_end=lam_max, status=status, termination=term, ladder_used=ladder_used,
+                runaway=runaway,
                 control_mode=mode, stop_tangent_ratio=(round(t_ratio, 4) if t_ratio is not None else None),
                 n_descending_steps=n_desc, tangent_at_end=tangent_at_end, forces_at_1=forces_at_1,
                 step_at_max=step_at_max, d_at_max=d_at_max,
@@ -435,7 +505,8 @@ def classify(res, model):
         k = bt[t].role
         by_kind[k] = by_kind.get(k, 0) + 1
     buckled = [t for t, s in snap.get("braces", {}).items() if s.get("buckled")]
-    ductile_post = res.get("plateau", False) or (res["lam_at_1p25d"] is not None and res["lam_at_1p25d"] >= 0.9 * res["lambda_u"])
+    lam_ref = res["lambda_u"] if res.get("lambda_u") is not None else (res.get("lambda_end") or 0.0)
+    ductile_post = res.get("plateau", False) or (res["lam_at_1p25d"] is not None and res["lam_at_1p25d"] >= 0.9 * lam_ref)
     nbeam_h = by_kind.get("floor", 0) + by_kind.get("roof", 0) + by_kind.get("link", 0)
     if buckled and not nbeam_h:
         mech = "brace buckling (%d brace%s) governs the peak" % (len(buckled), "s" if len(buckled) > 1 else "")

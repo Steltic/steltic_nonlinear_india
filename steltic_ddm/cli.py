@@ -50,7 +50,11 @@ def _worker(args):
     b12 = None
     if india:
         from .india_checks import b12_check
-        b12 = b12_check(res.pop("forces_at_1", None), _india_fy_fn(job), res.get("lambda_end"), combo_label)
+        f1 = res.pop("forces_at_1", None)
+        if opts.get("_llr_plan"):                     # NL-37: IS 875-2 3.2.1 on the column axial force, as the HR design
+            from .imposed_reduction import reduce_forces
+            f1 = reduce_forces(f1, opts["_llr_plan"], combo[2], getattr(combo, "meta", None))
+        b12 = b12_check(f1, _india_fy_fn(job), res.get("lambda_end"), combo_label, status=res.get("status"))
     else:
         res.pop("forces_at_1", None)
     # per-role/section member state at the peak
@@ -221,9 +225,10 @@ def run(args):
     _pp = _PR.plan(nm, cfg)
     if _pp:
         nm._peb_plan = _pp
-        opts["peb_restraints"] = dict(summary=_PR.summary(_pp), counts=_pp["counts"], skipped=_pp["skipped"][:20],
-                                      basis="cfg['flange_braces'] read as steltic_india peb_build (owner ruling D-T1)")
+        opts["peb_restraints"] = _restraint_opts(_PR, _pp)
         print(">> " + _PR.summary(_pp), flush=True)
+    if india:
+        _llr_setup(nm, cfg, opts, tuple(args.nsub), rigid_off, getattr(args, "imposed_load_reduction", "hr"))
     ggate = None
     if india:
         from .india_checks import gravity_gate, b11_preconditions
@@ -347,12 +352,49 @@ def run(args):
     return rep
 
 
+def _restraint_opts(PR, pp):
+    """opts['peb_restraints'] for the report, the gate disclosures and ddm_results.json (NL-33 PEB / NL-38 rolled)."""
+    if pp.get("source") == "rolled":
+        return dict(source="rolled", summary=PR.summary(pp), counts=pp["counts"], skipped=pp["skipped"][:20],
+                    basis=pp.get("basis"))
+    return dict(summary=PR.summary(pp), counts=pp["counts"], skipped=pp["skipped"][:20],
+                basis="cfg['flange_braces'] read as steltic_india peb_build (owner ruling D-T1)")
+
+
+def _llr_setup(nm, cfg, opts, nsub, rigid_off, mode="hr"):
+    """NL-37: the IS 875-2 3.2.1 column imposed-load reduction the HR design applied (None when it applied none), for
+    the B-1.2 check at lambda = 1. opts['_llr_plan'] carries r and N_LL per column to the workers (not written to
+    ddm_results.json); opts['imposed_load_reduction'] / opts['imposed_load_basis'] are the recorded basis and the report
+    sentence."""
+    from . import imposed_reduction as IR
+    plan = None
+    if mode != "off":
+        try:
+            plan = IR.build_plan(nm, cfg, nsub=nsub, rigid_end_offset=rigid_off)
+        except Exception as ex:                                        # noqa: BLE001
+            plan = dict(columns={}, error=repr(ex)[:200], cite=IR.CITE)
+    use = plan if (plan and plan.get("columns")) else None
+    opts["_llr_plan"] = use
+    opts["imposed_load_reduction"] = (dict(applied=bool(use), mode=mode, cite=IR.CITE,
+                                           **{k: plan.get(k) for k in ("n_columns", "r_values", "basis", "error") if plan and k in plan})
+                                      if (plan or cfg.get("column_imposed_load_reduction")) else dict(applied=False, mode=mode))
+    if mode == "off" and cfg.get("column_imposed_load_reduction"):
+        opts["imposed_load_basis"] = ("Imposed load: UNREDUCED by request (--imposed-load-reduction off) although the HR design "
+                                      "applies the IS 875 (Part 2) 3.2.1 column reduction -- the B-1.2 column check is then "
+                                      "more severe than the design's (information).")
+    else:
+        opts["imposed_load_basis"] = IR.report_line(plan, cfg)
+    print(">> " + opts["imposed_load_basis"], flush=True)
+    return plan
+
+
 def _print_done(r):
     res = r["res"]
     lam = res.get("lambda_u")
     print("   done %-40s imp %-3s %s  (%d steps, %.0f s) %s" % (
         r["label"][:40], r["imp"], ("lambda_u %.3f [%s]" % (lam, res.get("status"))) if lam is not None else
-        ("%s (terminated: %s at lambda %.3f)" % (res.get("status") or "NO_LIMIT_POINT", res.get("termination"), res.get("lambda_end") or 0)),
+        ("%s (terminated: %s at lambda %.3f)%s" % (res.get("status") or "NO_LIMIT_POINT", res.get("termination"), res.get("lambda_end") or 0,
+                                                   (" [runaway step discarded: %s]" % res["runaway"]["criterion"]) if res.get("runaway") else "")),
         res["steps"], res["seconds"], r["cls"]["mechanism"][:60]), flush=True)
 
 
@@ -390,24 +432,22 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
     else:
         rep = report_ddm.build(out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, _notes(runs, opts_rep.get("n_cases", len(runs))))
         block = report_ddm.ddm_block(nm, gate, runs, sens, opts_rep, member_table)
-    opts_json = {k: v for k, v in opts_rep.items() if k != "section_log"}
+    opts_json = {k: v for k, v in opts_rep.items() if k not in ("section_log", "_llr_plan")}
     opts_json["section_log"] = [list(x) for x in opts_rep.get("section_log", [])]
     b12 = None
     if opts_rep.get("india"):
-        rows12 = [r.get("b12") for r in runs if r.get("b12")]
-        b12 = dict(ok=(all(x["ok"] for x in rows12) if rows12 else False), combos=rows12,
-                   quote=(rows12[0]["quote"] if rows12 else None),
-                   note="IS 800 Annex B-1.2 section-capacity check with GMNIA member forces at lambda = 1 (a code check)")
+        b12 = b12_summary([r.get("b12") for r in runs if r.get("b12")])
     opts_json.pop("gravity_gate", None); opts_json.pop("b11", None)
     json.dump(dict(job=job, jurisdiction=("india" if opts_rep.get("india") else None), options=opts_json, gate=gate,
                    gravity_gate=opts_rep.get("gravity_gate"), b11_preconditions=opts_rep.get("b11"), b12_check=b12,
                    statement=("IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information. "
                               "IS 800 Annex B-1.2 section capacities are the code check." if opts_rep.get("india") else None),
+                   solver_failures=solver_failure_summary(runs),
                    runs=[dict(label=r["combo"][0], imp=r["imp"], kind=r["summary"]["kind"], lambda_u=r["res"]["lambda_u"],
                               lambda_end=r["res"].get("lambda_end"), status=r["res"].get("status"), termination=r["res"].get("termination"),
                               b12=r.get("b12"), stop_tangent_ratio=r["res"].get("stop_tangent_ratio"),
                               control_mode=r["res"].get("control_mode"), ladder_used=r["res"].get("ladder_used"),
-                              retries=r["res"].get("retries"),
+                              retries=r["res"].get("retries"), runaway=r["res"].get("runaway"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
                                                                    steps=r["res"]["steps"], fails=r["res"].get("fails"), lam_at_1p25d=r["res"].get("lam_at_1p25d"),
                                                                    seconds=r["res"]["seconds"], log=r["res"]["log"], state=r["state"],
@@ -418,14 +458,131 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
     return rep, block
 
 
+def b12_summary(rows12):
+    """IS 800 B-1.2 over the combinations. ok True: every combination evaluated and satisfied; False: at least one
+    evaluated combination NOT satisfied (a capacity shortfall, or lambda = 1 not reached at a structural limit); None:
+    none fails but some were not evaluated (NL-36: a numerical stop before lambda = 1) -- incomplete, not a shortfall."""
+    ev = [x for x in rows12 if x.get("ok") is not None]
+    nev = [x for x in rows12 if x.get("ok") is None]
+    if not rows12:
+        ok = False
+    elif any(x["ok"] is False for x in ev):
+        ok = False
+    elif nev:
+        ok = None
+    else:
+        ok = True
+    return dict(ok=ok, combos=rows12, quote=(rows12[0].get("quote") if rows12 else None), n_evaluated=len(ev),
+                n_not_evaluated=len(nev), not_evaluated=[x.get("combo") for x in nev],
+                note="IS 800 Annex B-1.2 section-capacity check with GMNIA member forces at lambda = 1 (a code check)")
+
+
+def solver_failure_summary(runs):
+    """NL-36: the numerical stops of a DDM run, stated (never silent): every SOLVER_FAILURE sweep, and among them the
+    numerical runaways (a converged step beyond the plausibility bounds, discarded)."""
+    sf = [r for r in runs if (r["res"].get("status") == "SOLVER_FAILURE")]
+    return dict(n=len(sf), n_runaway=sum(1 for r in sf if r["res"].get("runaway") or r["res"].get("termination") == solver.RUNAWAY_TERM),
+                runs=[dict(label=r["combo"][0], imp=r.get("imp"), kind=(r.get("summary") or {}).get("kind"),
+                           termination=r["res"].get("termination"), lambda_end=round(float(r["res"].get("lambda_end") or 0.0), 4),
+                           runaway=(r["res"].get("runaway") or {}).get("criterion")) for r in sf],
+                bounds=dict(lambda_=solver.RUNAWAY_LAMBDA, storey_drift=solver.RUNAWAY_DRIFT,
+                            strain_over_eps_y=solver.RUNAWAY_STRAIN, lambda_jump_per_step=solver.RUNAWAY_JUMP))
+
+
+def _stored_runaway_index(hist, dlam=0.05):
+    """Index of the first step of a stored lambda history beyond the NL-36 bounds (|lambda| > 10, or a one-step change
+    > max(1.0, 20 dlam)), else None."""
+    jump = max(solver.RUNAWAY_JUMP, 20.0 * abs(dlam or 0.05))
+    for i in range(1, len(hist or [])):
+        lam, lam0 = float(hist[i][0]), float(hist[i - 1][0])
+        if abs(lam) > solver.RUNAWAY_LAMBDA or abs(lam - lam0) > jump:
+            return i
+    return None
+
+
+def reclassify_stored_run(r, dlam=0.05):
+    """NL-36 for results computed BEFORE the runaway guard (`report` / `retry` on an old ddm_results.json). A stored run
+    is a numerical runaway when its lambda history has a step beyond the bounds (|lambda| > 10, or a one-step jump --
+    IN_Ex9 2026-09: lambda 5 576 / 106 901 / 1 402 093, and -78 892 read as the 'descending' step of a LIMIT_POINT;
+    IN_Ex19: -788 read as the post-peak drop; IN_Ex18: -732 at a 'ductility cap'), or its peak-snapshot storey drift or
+    member strain ratio is beyond the bounds (IN_Ex18 1 615 %). The runaway step is discarded and the status re-derived
+    from the steps BEFORE it (solver.limit_status): a limit point confirmed by >= 2 descending steps before the runaway
+    stands; anything else is SOLVER_FAILURE (lambda_u None, B-1.2 row not evaluated unless lambda = 1 was passed
+    before the runaway). Returns the criterion, or None when the run is plausible (left untouched)."""
+    if r.get("runaway"):
+        return None
+    hist = [tuple(x) for x in (r.get("hist") or [])]
+    i_r = _stored_runaway_index(hist, dlam)
+    dr = ((r.get("snapshot") or {}).get("drifts") or [None, None])[1] or []
+    drift = max((abs(float(x)) for x in dr), default=0.0)
+    strain = max((float(s_.get("ratio") or 0.0) for s_ in (r.get("state") or {}).values()), default=0.0)
+    lam_st = max(abs(float(r.get("lambda_u") or 0.0)), abs(float(r.get("lambda_end") or 0.0)))
+    crit = None
+    if i_r is not None:
+        crit = "lambda %.6g after %.4g at step %d of the stored curve" % (hist[i_r][0], hist[i_r - 1][0], i_r)
+    elif lam_st > solver.RUNAWAY_LAMBDA:
+        crit = "|lambda| %.4g > %.0f" % (lam_st, solver.RUNAWAY_LAMBDA)
+    elif drift > solver.RUNAWAY_DRIFT:
+        crit = "storey drift %.4g %% > %.0f %%" % (100 * drift, 100 * solver.RUNAWAY_DRIFT)
+    elif strain > solver.RUNAWAY_STRAIN:
+        crit = "max fibre strain %.4g eps_y > %.0f eps_y" % (strain, solver.RUNAWAY_STRAIN)
+    if crit is None:
+        return None
+    status, lam_max = "SOLVER_FAILURE", None
+    if i_r is not None and i_r > 1:
+        trunc = hist[:i_r]
+        lam_max = max(l for l, _ in trunc)
+        hi = max(range(len(trunc)), key=lambda k: trunc[k][0])
+        status, _ = solver.limit_status(trunc, hi, lam_max, termination=solver.RUNAWAY_TERM)
+        r["hist"] = [list(x) for x in trunc]
+    r["runaway"] = dict(criterion=crit + " (reclassified from stored results)", drift=drift, strain_over_eps_y=strain)
+    r["termination"] = solver.RUNAWAY_TERM
+    b = r.get("b12") or {}
+    # the stored B-1.2 forces at lambda = 1 are valid only when lambda = 1 was passed BEFORE the runaway step (the
+    # bracketing upper step is a plausible one); IN_Ex9: lambda jumped 0.71 -> 5 576, and the forces at that state
+    # scaled by 1 / 5 576 gave the 1 826 kN brace force (B-1.2 2.559)
+    up = (b.get("lambda_basis") or {}).get("upper")
+    b_valid = bool(b.get("reached_lambda_1")) and lam_max is not None and up is not None and float(up) <= lam_max + 1e-9
+    if status == "LIMIT_POINT":                      # confirmed before the runaway: the capacity stands
+        r["status"], r["lambda_u"], r["lambda_end"] = "LIMIT_POINT", lam_max, lam_max
+        r["runaway"]["criterion"] += "; limit point confirmed before it"
+        if b and not b_valid:
+            if lam_max < 1.0:
+                r["b12"] = dict(combo=b.get("combo") or r.get("label"), ok=False, reached_lambda_1=False,
+                                lambda_reached=lam_max, groups=[], quote=b.get("quote"),
+                                note="lambda = 1 not reached by the GMNIA sweep -> B-1.2 not satisfied (the stored check "
+                                     "came from a numerical runaway step, discarded)")
+            else:
+                r["b12"] = dict(combo=b.get("combo") or r.get("label"), ok=None, evaluated=False, reached_lambda_1=False,
+                                lambda_reached=lam_max, groups=[], quote=b.get("quote"),
+                                note="not evaluated: the stored forces at lambda = 1 include a numerical runaway step; "
+                                     "re-run the combination (steltic_ddm retry --combos)")
+        return crit
+    r["status"] = "SOLVER_FAILURE"
+    r["lambda_u"] = None
+    if lam_max is not None:
+        r["lambda_end"] = lam_max
+    if r.get("check"):
+        r["check"] = [None, "SOLVER_FAILURE"]
+    if b and not b_valid:
+        r["b12"] = dict(combo=b.get("combo") or r.get("label"), ok=None, evaluated=False, reached_lambda_1=False,
+                        lambda_reached=r.get("lambda_end"), groups=[], quote=b.get("quote"),
+                        note="not evaluated: numerical runaway in the stored sweep (%s) -- the forces at lambda = 1 may "
+                             "include the runaway step; re-run the combination (steltic_ddm retry)" % crit)
+    return crit
+
+
 def _runs_from_results(d):
     runs = []
     for r in d["runs"]:
+        if reclassify_stored_run(r, (d.get("options") or {}).get("dlam") or 0.05):
+            print("   NL-36: %s reclassified SOLVER_FAILURE (%s)" % (r.get("label"), r["runaway"]["criterion"]), flush=True)
         res = dict(lambda_u=r["lambda_u"], lambda_end=r.get("lambda_end", r["lambda_u"]), status=r.get("status"),
                    termination=r.get("termination"), first_yield=r.get("first_yield"), hist=r["hist"], steps=r["steps"], fails=r.get("fails"), lam_at_1p25d=r.get("lam_at_1p25d"),
                    seconds=r["seconds"], snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
                    log=r.get("log", []), frames=r.get("frames", []), stop_tangent_ratio=r.get("stop_tangent_ratio"),
-                   control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"), retries=r.get("retries"))
+                   control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"), retries=r.get("retries"),
+                   runaway=r.get("runaway"))
         runs.append(dict(combo=(r["label"],), summary=dict(kind=r["kind"]), res=res, cls=r["cls"], phi=r["phi"], check=r["check"], imp=r["imp"], state=r["state"],
                          b12=r.get("b12")))
     return runs
@@ -472,13 +629,26 @@ def retry(args):
     """NL-30: re-run, with the smaller-step retry ladder, every combination whose stored result is SOLVER_FAILURE (all its
     imperfection cases, as `run` does) and replace those runs in ddm_results.json; then rebuild the report, the
     ddm_analysis block and the viewer. The other runs, the gates, the sensitivity and the B-1.2 rows of the other
-    combinations are kept as they are."""
+    combinations are kept as they are. NL-36: stored runs are first read through the runaway guard, so a stored
+    numerical runaway is re-run too. --combos re-runs named combinations as well (a fix that changes only some
+    combinations -- e.g. NL-37, which changes only the B-1.2 check of combinations without earthquake); --only-listed
+    re-runs only those."""
     t0 = time.time()
     job = os.path.abspath(args.job_dir)
     engine_dir = args.steltic_engine or os.environ.get("STELTIC_ENGINE_DIR")
     out_dir = args.out or job
     d = json.load(open(os.path.join(out_dir, "ddm_results.json")))
+    for r in d.get("runs") or []:
+        reclassify_stored_run(r, (d.get("options") or {}).get("dlam") or 0.05)   # NL-36: stored runaways are retried too
     bad = [r["label"] for r in d.get("runs") or [] if r.get("status") == "SOLVER_FAILURE"]
+    if getattr(args, "only_listed", False):           # only the named combinations (keep the stored failures as they are)
+        bad = [lab for lab in bad if lab in (getattr(args, "combos", None) or [])]
+    for lab in getattr(args, "combos", None) or []:   # first wave: re-run named combinations as well (fresh sweeps)
+        if lab not in bad and any(r["label"] == lab for r in d.get("runs") or []):
+            bad.append(lab)
+    missing = [lab for lab in getattr(args, "combos", None) or [] if not any(r["label"] == lab for r in d.get("runs") or [])]
+    if missing:
+        raise SystemExit("retry --combos: not in ddm_results.json: %s" % "; ".join(missing))
     if not bad:
         print(">> no SOLVER_FAILURE run in %s -- nothing to retry" % out_dir)
         return None
@@ -491,6 +661,9 @@ def retry(args):
                 dlam=o.get("dlam", 0.05), max_steps=o.get("max_steps", 250), time_limit=o.get("time_limit", 2400.0),
                 rigid_end_offset=o.get("rigid_end_offset", False), india=india, strain_cap=o.get("strain_cap"),
                 bow_hollow=o.get("bow_hollow"))
+    if india:
+        _llr_setup(nm, cfg, opts, tuple(opts["nsub"]), opts["rigid_end_offset"],
+                   (o.get("imposed_load_reduction") or {}).get("mode") or "hr")
     cases = loads.steltic_combos(cfg, nm=nm)
     by_combo = {c[0]: c for c in cases}
     gdirs = {"+X only": "one", "+X and +Y": "two", "±X and ±Y": "all"}.get(o.get("gravity_dirs"), "two")
@@ -529,14 +702,22 @@ def retry(args):
         print("   replaced %-40s %s -> %s (lambda_end %.3f)" % (r["label"][:40], "SOLVER_FAILURE", r["res"].get("status"),
                                                                 r["res"]["lambda_end"]), flush=True)
     opts_rep = dict(o)
+    for k_ in ("imposed_load_reduction", "imposed_load_basis"):
+        if k_ in opts:
+            opts_rep[k_] = opts[k_]
     opts_rep["nsub"] = tuple(opts_rep.get("nsub", (2, 2, 4)))
     opts_rep["section_log"] = [tuple(x) for x in opts_rep.get("section_log", [])]
     if opts_rep.get("Fy") is None: opts_rep["Fy"] = cfg.get("Fy", 50.0)
     opts_rep["risk_category"] = rc; opts_rep["india"] = india
     opts_rep["gravity_gate"] = d.get("gravity_gate"); opts_rep["b11"] = d.get("b11_preconditions")
     opts_rep.setdefault("n_cases", len(cases))
-    opts_rep["ddm_retry"] = dict(code="NL-30", combos=bad, sweeps=len(tasks), seconds=round(time.time() - t0),
-                                 result={lab: gov[lab]["res"].get("status") for lab in gov})
+    rec_ = dict(code="NL-30" if not getattr(args, "combos", None) else "NL-30 / first-wave re-run", combos=bad,
+                sweeps=len(tasks), seconds=round(time.time() - t0), result={lab: gov[lab]["res"].get("status") for lab in gov},
+                date=time.strftime("%Y-%m-%dT%H:%M:%S"))
+    if getattr(args, "combos", None):
+        opts_rep["ddm_rerun"] = rec_                  # the original NL-30 retry record (if any) is kept
+    else:
+        opts_rep["ddm_retry"] = rec_
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
                          d.get("member_table", []), None, elapsed=d.get("elapsed_s"))
     if not args.no_block:
@@ -600,6 +781,9 @@ def main(argv=None):
                    help="HR DDM: rigid beam end offset fraction of L (default 0.05 for HR; off for CFS portal)")
     r.add_argument("--no-rigid-end-offset", action="store_true", help="disable rigid end offsets (Liu continuity stubs)")
     r.add_argument("--no-block", action="store_true", help="do not write ddm_analysis into calc_package.json")
+    r.add_argument("--imposed-load-reduction", default="hr", choices=["hr", "off"],
+                   help="India: IS 875-2 3.2.1 column imposed-load reduction -- 'hr' applies it exactly as the HR design "
+                        "did (default, NL-37); 'off' runs the unreduced imposed load (information, disclosed)")
     v = sub.add_parser("viewer", help="rebuild ddm_viewer_3d.html from ddm_results.json")
     v.add_argument("job_dir"); v.add_argument("--out", default=None); v.add_argument("--steltic-engine", default=None)
     p = sub.add_parser("report", help="rebuild ddm_report.html, the ddm_analysis block and the viewer from ddm_results.json with the current phi_s policy (no re-analysis)")
@@ -607,6 +791,10 @@ def main(argv=None):
     p.add_argument("--risk-category", default=None, choices=["I", "II", "III", "IV"]); p.add_argument("--no-block", action="store_true")
     t = sub.add_parser("retry", help="NL-30: re-run the SOLVER_FAILURE combinations with smaller load steps and replace them in ddm_results.json")
     t.add_argument("job_dir"); t.add_argument("--out", default=None); t.add_argument("--steltic-engine", default=None)
+    t.add_argument("--combos", nargs="*", default=None,
+                   help="also re-run these combinations (exact labels) from the start on the current code and replace them")
+    t.add_argument("--only-listed", action="store_true",
+                   help="re-run only the --combos (stored SOLVER_FAILURE combinations not listed are kept as they are)")
     t.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2)))); t.add_argument("--no-block", action="store_true")
     s = sub.add_parser("selftest", help="column-curve regression + small frame")
     a = ap.parse_args(argv)

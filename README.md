@@ -10,8 +10,8 @@ Pushover, NLRHA with records scaled to the IS 1893 elastic spectrum at DBE and M
 
 - **Start with the Hub:** most people install this module through
   [Steltic Hub India](https://github.com/Steltic/steltic_hub_india), which sets everything up.
-- **See the output first:** 19 nonlinear runs with reports and 3D models at
-  [stelticai.com/india.html](https://stelticai.com/india.html).
+- **See the output first:** 24 nonlinear runs, on 24 of the 39 worked Indian designs, with reports and 3D models
+  at [stelticai.com/india.html](https://stelticai.com/india.html).
 - **Setup video:** [YouTube](https://www.youtube.com/watch?v=lcKjj9wLcno).
 
 > Steltic assists with structural design but does not replace a licensed professional engineer. All output

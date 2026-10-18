@@ -36,6 +36,14 @@ import openseespy.opensees as ops
 from .ingest import decode_tag
 from .sections_fiber import FiberSectionBuilder, elastic_props
 
+def _rolled_i(label):
+    """NL-38: a rolled (IS 808 / AISC) I-section label -- what sections_fiber.w_shape builds."""
+    lab = str(label).upper().replace(" ", "")
+    if lab.startswith(("BOX", "WI", "HSS", "CHS", "RHS", "SHS", "MC")):
+        return False
+    return lab.startswith(("W", "HP", "M", "S", "MB", "HB", "UB", "JB", "SC", "NPB", "WPB", "ISMB"))
+
+
 SUB_NODE0 = 10_000_000
 PIN_NODE0 = 30_000_000
 PIN_ELE0 = 40_000_000
@@ -335,8 +343,15 @@ class GMNIAModel:
             # and a tilted stiff bar on vertical rollers would resist the building's sway (k ~ EA psi^2 / H)
             fixity = [0 if q in free or q == 3 else 1 for q in range(1, 7)]
             chain = [new_node(self._coord(stud["base"]))]
-            ops.fix(chain[0], *[0 if q == free[1] else 1 for q in range(1, 7)])
             links = []
+            if stud.get("base_fixed", True):
+                ops.fix(chain[0], *[0 if q == free[1] else 1 for q in range(1, 7)])
+            else:
+                # NL-38: a column element standing on a floor / roof node -- the stud's foot follows that node in d (a
+                # zeroLength tie) and rotates freely, held vertically (uz) like the PEB stud's base: without it the stud
+                # would be a free vertical mechanism (singular stiffness)
+                ops.fix(chain[0], *[0 if q in (d, free[1]) else 1 for q in range(1, 7)])
+                links.append((chain[0], stud["base"]))
             for i in stud["stations"]:
                 n = st_nodes[i]
                 if n is None:
@@ -383,7 +398,9 @@ class GMNIAModel:
         # NL-33: a welded I between torsional restraints carries the warping term in its torsional stiffness
         if wl:
             from pushover import india_sections as _ISEC
-            if _ISEC.is_welded_i(m.section):
+            rolled = ((getattr(self, "peb", None) or {}).get("source") == "rolled" and m.kind in ("col", "beam")
+                      and _rolled_i(m.section))
+            if _ISEC.is_welded_i(m.section) or rolled:          # NL-38: rolled I in a rolled-shed restraint chain
                 wl = round(float(wl) / 10.0) * 10.0
                 key = key + (wl,)
             else:

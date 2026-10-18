@@ -242,6 +242,9 @@ def _run_india(args, pkg, t0):
         run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
                           tail_strategies=strategies, recorder=rec, target_estimator=estimator,
                           stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
+        run["stop_reason"] = RI.stop_reason_mm(run["stop_reason"])   # first wave: mm in every India output
+        if (run.get("tail") or {}).get("message"):
+            run["tail"]["message"] = RI.stop_reason_mm(run["tail"]["message"])
         nsp = {lvn: PP.nsp_target(run, pkg.basis, prm, lv) for lvn, lv in levels.items()}
         from snl.india_units import KN_TO_KIP
         vbd = IH.vb_direction_kN(ind, d)                  # NL-4: V-bar_B of THIS direction (per-direction R)

@@ -281,6 +281,20 @@ def section_class(section: str, fy: float) -> dict:
                 limits=dict(flange_plastic=9.4 * eps, flange_compact=10.5 * eps, web_plastic=84 * eps, web_compact=105 * eps))
 
 
+def _b11_statement(job_dir):
+    """A design engineer's statement of full lateral restraint (IS 800 B-1.1), from <job>/nl_plan.json (or the folder
+    above): {"b11_lateral_restraint": {"confirmed": true, "statement": "...", "by": "..."}}. None when absent."""
+    import json
+    for p in (os.path.join(job_dir or "", "nl_plan.json"), os.path.join(os.path.dirname(job_dir or ""), "nl_plan.json")):
+        try:
+            st = (json.load(open(p, encoding="utf-8")) or {}).get("b11_lateral_restraint")
+        except Exception:
+            continue
+        if isinstance(st, dict) and st.get("confirmed") and st.get("statement"):
+            return st
+    return None
+
+
 def b11_preconditions(nm, fy_fn) -> dict:
     rows = {}
     for m in nm.members:
@@ -292,14 +306,25 @@ def b11_preconditions(nm, fy_fn) -> dict:
         except Exception as ex:  # noqa: BLE001
             rows[key] = dict(section=key, cls="unknown", note=str(ex))
     ok = all(r["cls"] in ("plastic", "compact") for r in rows.values())
-    return dict(ok=ok, sections=list(rows.values()), lateral_restraint="EOR statement required (not checked)",
+    st = _b11_statement(getattr(nm, "job_dir", None))
+    return dict(ok=ok, sections=list(rows.values()),
+                lateral_restraint=(("confirmed by the design engineer: %s" % st["statement"]) if st else
+                                   "design engineer's statement required (not checked)"),
+                lateral_restraint_confirmed=bool(st), met=bool(ok and st),
                 quote=B11_QUOTE, clause="IS 800:2007 B-1.1; Table 2")
 
 
-def b12_check(forces_at_1: dict | None, fy_fn, lam_reached: float | None, label: str) -> dict:
-    """Section-capacity D/C per member group at lambda = 1 (IS 800 B-1.2)."""
+def b12_check(forces_at_1: dict | None, fy_fn, lam_reached: float | None, label: str, status: str | None = None) -> dict:
+    """Section-capacity D/C per member group at lambda = 1 (IS 800 B-1.2).
+    NL-36: a sweep that stopped NUMERICALLY (SOLVER_FAILURE, including a discarded runaway step) before lambda = 1 is
+    not evaluated (ok None): neither satisfied nor a capacity shortfall -- the gate states the solver failure instead.
+    The forces at lambda = 1 only ever come from recorded (plausible) converged steps."""
     from pushover import india_materials as IM
     if not forces_at_1:
+        if status == "SOLVER_FAILURE":
+            return dict(combo=label, ok=None, evaluated=False, reached_lambda_1=False, lambda_reached=lam_reached,
+                        note=("not evaluated: the sweep stopped numerically (SOLVER_FAILURE) at lambda %.3f before lambda = 1 "
+                              "-- not a capacity result" % float(lam_reached or 0.0)), groups=[], quote=B12_QUOTE)
         return dict(combo=label, ok=False, reached_lambda_1=False, lambda_reached=lam_reached,
                     note="lambda = 1 not reached by the GMNIA sweep -> B-1.2 not satisfied", groups=[], quote=B12_QUOTE)
     groups = {}
@@ -314,9 +339,11 @@ def b12_check(forces_at_1: dict | None, fy_fn, lam_reached: float | None, label:
         if r["dc"] > g["dc_max"]:
             g.update(dc_max=round(r["dc"], 3), ele=tag, N_kN=round(f["N_abs"] / 1e3, 1), M_major_kNm=round(f["M_major"] / 1e6, 1),
                      M_minor_kNm=round(f["M_minor"] / 1e6, 1), Nd_kN=round(cap["Nd_N"] / 1e3, 1),
-                     Md_kNm=round(cap["Mdz_Nmm"] / 1e6, 1), fy_MPa=cap["fy_MPa"])
+                     Md_kNm=round(cap["Mdz_Nmm"] / 1e6, 1), fy_MPa=cap["fy_MPa"],
+                     N_reduction_kN=(round(f["N_reduction_N"] / 1e3, 1) if f.get("N_reduction_N") else None))
         g["dc_shear_max"] = round(max(g["dc_shear_max"], r["dc_shear"]), 3)
     gl = sorted(groups.values(), key=lambda g: -g["dc_max"])
     ok = all(g["dc_max"] <= 1.0 and g["dc_shear_max"] <= 1.0 for g in gl)
     return dict(combo=label, ok=ok, reached_lambda_1=True, groups=gl, quote=B12_QUOTE, lambda_basis=forces_at_1.get("_lambda"),
+                imposed_reduction=forces_at_1.get("_imposed_reduction"),
                 clause="IS 800:2007 Annex B-1.2 -> 6.2, 7 (section), 8.2.1.2, 8.4, 9.3.1.1; gamma_m0 = 1.10")

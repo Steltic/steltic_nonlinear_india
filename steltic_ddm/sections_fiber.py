@@ -243,11 +243,13 @@ class FiberSectionBuilder:
         return tag
 
     # ---- W-shape ---------------------------------------------------------------------------
-    def w_shape(self, secTag, label, axis="y", nf_flange=(8, 2), nf_web=(12, 1), residual=None):
+    def w_shape(self, secTag, label, axis="y", nf_flange=(8, 2), nf_web=(12, 1), residual=None, warping_length=None):
         """Fibre W/I-section. axis="y": depth along local y (column); "z": depth along local z (beam).
 
         Stage C: when units='N-mm', inch CSV dims × length_scale (25.4) → mm; E/Fy/G in MPa.
         Prefers is808_shapes.csv when available for Indian designations (MB/HB/UB/…).
+        NL-38: with `warping_length` L_t (mm) the torsional stiffness is G J + pi^2 E Cw / L_t^2, as welded_i_plates
+        (a rolled I in a rolled-shed restraint chain, peb_restraints.rolled_source).
         """
         r = shape(label, prefer_is808=self.prefer_is808)
         sc = self.length_scale
@@ -259,6 +261,12 @@ class FiberSectionBuilder:
         hw = d - 2 * tf
         Af, Aw = bf * tf, hw * tw
         res = self.residual if residual is None else residual
+        GJ, warp = self.G * J, ""
+        if warping_length:
+            Cw = (_f(r.get("Cw")) or 0.0) * sc ** 6
+            Lt = float(warping_length) if self.units == "N-mm" else float(warping_length) / MM_PER_IN
+            GJ += math.pi ** 2 * self.E * Cw / Lt ** 2
+            warp = "; torsion G J + pi^2 E Cw / Lt^2 with Lt = %.0f mm (x%.1f)" % (float(warping_length), GJ / (self.G * J))
         if res == "lehigh":
             rc = self.sigma_rc; rt = rc * Af / (Af + Aw)
             def sig_fl(zfrac): return rt + (-rc - rt) * zfrac       # zfrac 0 (junction) .. 1 (tip)
@@ -270,7 +278,7 @@ class FiberSectionBuilder:
         else:
             def sig_fl(zfrac): return 0.0
             sig_web = 0.0
-        self.ops.section("Fiber", secTag, "-GJ", self.G * J)
+        self.ops.section("Fiber", secTag, "-GJ", GJ)
         nb, nt = nf_flange
         dz = bf / nb
         nfib = 0
@@ -307,12 +315,15 @@ class FiberSectionBuilder:
                 else:
                     self.ops.fiber(0.0, yc, fil["A"] / 2.0, m)
                 nfib += 1
-        self.log.append((secTag, label, "W", nfib, "residual=%s axis=%s units=%s%s" % (
-            res, axis, self.units, (" fillets A+%.1f%% at y=%.1f" % (100 * fil["A"] / A_pl, fil["y"])) if fil else "")))
+        self.log.append((secTag, label, "W", nfib, "residual=%s axis=%s units=%s%s%s" % (
+            res, axis, self.units, (" fillets A+%.1f%% at y=%.1f" % (100 * fil["A"] / A_pl, fil["y"])) if fil else "", warp)))
         A_out = A_pl + (fil["A"] if fil else 0.0)
         Ix_out = Ix_pl + (fil["A"] * fil["y"] ** 2 if fil else 0.0)
-        return dict(A=A_out, Ix=Ix_out, Iy=2 * tf * bf ** 3 / 12 + hw * tw ** 3 / 12, d=d, bf=bf, tf=tf, tw=tw, nfib=nfib,
-                    fillet=fil)
+        out = dict(A=A_out, Ix=Ix_out, Iy=2 * tf * bf ** 3 / 12 + hw * tw ** 3 / 12, d=d, bf=bf, tf=tf, tw=tw, nfib=nfib,
+                   fillet=fil)
+        if warping_length:
+            out.update(GJ=GJ, warping_length=warping_length)
+        return out
 
     @staticmethod
     def fillet_fibres(r, sc, A_pl, Ix_pl, hw):
@@ -620,7 +631,7 @@ class FiberSectionBuilder:
         # AISC W/HP/M/S or IS 808 MB/HB/UB/JB/SC/… I-sections
         _is_i = lab.startswith(("W", "HP", "M", "S", "MB", "HB", "UB", "JB", "SC", "NPB", "WPB", "ISMB", "ISMC"))
         if _is_i and not lab.startswith("MC"):
-            return self.w_shape(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
+            return self.w_shape(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")), warping_length=warping_length)
         props = cfs_section_props(label)
         if props:
             return self.cfs_equiv_rect(secTag, lab, props, residual="none", axis=(axis or ("y" if kind == "col" else "z")))

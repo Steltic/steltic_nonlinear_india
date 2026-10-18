@@ -24,3 +24,8 @@ example_build_ebf.py. The NL reads the HR package (model_opensees.py, design/*.j
 
 Check: `python scripts/check_vendored.py` ($STELTIC_HR_ROOT, else a sibling steltic_india checkout, else SKIP).
 Re-sync: `python scripts/check_vendored.py --sync` prints the cp commands.
+
+**2026-10 first-wave re-sync:** `india_seismic.py` (the D8 importance-factor row in plain words) and
+`india_seismic_gates.py` (pipeline-level open reasons such as the IS 1893 7.6.4 flexible-deck comparison are
+counted by `design_status`) copied from `steltic_india` branch `fix/2026-10-first-wave`, commit
+**54e7463343f1b6ba19429c5aa28c169118fd3bc3**. The other vendored files are unchanged by that branch.
