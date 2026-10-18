@@ -1234,6 +1234,7 @@ def design_status(cfg, pkg=None, *, job_dir=None, report_html=None) -> dict:
         reasons += analysis_findings(cfg, pk)
         reasons += combination_findings(cfg, pk)
         reasons += _R_system_agreement(cfg, pk)
+        reasons += [str(x) for x in (pk.get("_extra_reasons") or [])]      # first wave: pipeline-level findings
         reasons += _grounding_findings(pk, job_dir)
         reasons += provenance_findings(pk, job_dir) if job_dir else [
             "job folder unknown -- provenance hashes not verified"]

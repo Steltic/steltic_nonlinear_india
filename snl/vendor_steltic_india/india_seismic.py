@@ -39,7 +39,8 @@ _T8_RESIDENTIAL = ("residential", "residence", "residences", "apartment", "apart
 _T8_INSTITUTION_NAMES = ("educational", "hospital")
 _T8_STORAGE = ("warehouse", "warehouses", "storage", "godown", "godowns", "store", "stores", "cold store")
 _T8_FLAGS = ("food_storage", "educational", "hospital", "assembly", "lifeline", "important")
-D8_AREA_ROW = "owner ruling D8 (area proxy for Table 8 (ii))"
+D8_AREA_ROW = ("Table 8 (ii) by floor area: persons not stated, > 2,000 m² taken as > 200 persons (Steltic ruling D8, "
+               "an assumption for the design engineer to confirm)")
 
 
 # RR-BUG-1: a keyword preceded (within its phrase) by a negation -- 'non-food storage', 'no food storage',
@@ -172,11 +173,12 @@ def importance_factor(occupancy) -> dict:
         if occupancy.get("area_m2") is not None:
             A = float(occupancy["area_m2"])
             I = 1.2 if A > 2000.0 else 1.0
-            row = D8_AREA_ROW if I > 1.0 else "owner ruling D8 (area proxy; Table 8 (iii))"
+            row = D8_AREA_ROW if I > 1.0 else ("Table 8 (iii) by floor area: persons not stated, <= 2,000 m² taken as "
+                                               "<= 200 persons (Steltic ruling D8, to confirm)")
             return {"found": True, "I": I, "row": row, "cite": cite + "; " + row,
                     "matched_keyword": res_com[0], "basis": "ruling", "warnings": warnings,
-                    "note": "persons not stated: owner ruling D8 (area proxy for the Table 8 (ii) '> 200 persons'; "
-                            "> 2,000 m2 -> 1.2); area %.0f m2 -> I = %.1f" % (A, I)}
+                    "note": "persons not stated: Steltic ruling D8 (floor area as the proxy for the Table 8 (ii) "
+                            "'> 200 persons'; > 2,000 m2 -> 1.2); area %.0f m2 -> I = %.1f" % (A, I)}
         return {"found": False, "I": None, "cite": cite, "warnings": warnings,
                 "note": "residential/commercial occupancy needs persons or area_m2 (+ occupant load) (D8)"}
     if use:
