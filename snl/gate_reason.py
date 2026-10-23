@@ -189,6 +189,8 @@ def gate_reason(job, gate=None):
         parts.append("Completeness gate: %s." % label)
     parts += [s["text"] for s in stops if (status != "complete" or not s["blocking"])]
     parts += [p["text"] for p in po]
+    if rv:
+        parts.append("The gate checks that the analyses ran completely, not that their results are physically credible:")
     parts += [x["text"] for x in rv]
     from .public_text import scrub
     text = scrub(" ".join(parts))
