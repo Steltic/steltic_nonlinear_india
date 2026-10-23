@@ -1410,6 +1410,17 @@ def artefact_gate(job_dir: str | None) -> dict:
             reasons.append("modal participation sums exceed 1")
     # DDM
     ddm = _read_json(os.path.join(job_dir, "ddm_results.json"))
+    if ddm and ddm.get("runs"):
+        # second wave: results stored before the NL-36 guard are read through it, as the report and the site index read
+        # them -- a stored runaway (IN_Ex18 2026-09: lambda -732 at a 'ductility cap') blocks here too, never 'complete'
+        try:
+            from steltic_ddm.cli import reclassify_stored_run, b12_summary
+            dl_ = (ddm.get("options") or {}).get("dlam") or 0.05
+            if sum(1 for r in ddm["runs"] if reclassify_stored_run(r, dl_)):
+                ddm["b12_check"] = b12_summary([r.get("b12") for r in ddm["runs"] if r.get("b12")])
+                checks["ddm_reclassified_on_read"] = True
+        except Exception:                                   # noqa: BLE001 -- the gate must still run
+            pass
     shortfall = False
     if not ddm:
         reasons.append("ddm_results.json missing")

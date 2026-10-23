@@ -356,6 +356,45 @@ def _solver_failure_html(runs):
                 "" if sum(1 for r in sf if r["res"].get("runaway")) == 1 else "s", rows))
 
 
+def _stored_text(s):
+    """Basis strings stored in ddm_results.json by earlier code: a literal '%%' (a string that was never %-formatted) and
+    'EOR' (second wave: 'design engineer' in report text)."""
+    return str(s or "").replace("%%", "%").replace("EOR to confirm", "design engineer to confirm").replace(
+        "EOR input", "design engineer's input")
+
+
+def _phi_s_notes_html(runs):
+    """Second wave (review E_NL item 15): where each phi_s used comes from, and that it is not an IS 800 factor; when the
+    smallest phi_s x lambda_u is below 1.0, what that does and does not mean."""
+    rows = [r for r in runs if (r.get("check") or [None])[0] is not None and (r.get("phi") or {}).get("phi_s") is not None]
+    if not rows:
+        return ""
+    gov = min(rows, key=lambda r: r["check"][0])
+    seen, items = set(), []
+    for r in sorted(rows, key=lambda r: r["check"][0]):
+        cls = r["phi"].get("cls")
+        if cls in seen:
+            continue
+        seen.add(cls)
+        items.append(phi_s.india_note(r["phi"], r["res"].get("lambda_u"), r["check"][0] if r is gov else None, html_=True))
+    return '<div class="flag"><b>φ<sub>s</sub> is not an IS 800 factor.</b><ul>%s</ul></div>' % "".join(
+        "<li>%s</li>" % _h(x) for x in items if x)
+
+
+def _imposed_basis_by_combo(runs, o):
+    """Second wave: which B-1.2 rows actually carry the IS 875-2 3.2.1 reduction. Rows of combinations without earthquake
+    that predate NL-37 (not re-run or refreshed yet) carry the unreduced imposed load -- said, not hidden."""
+    if not (o.get("imposed_load_reduction") or {}).get("applied"):
+        return ""
+    cand = [r for r in runs if "LL" in r["combo"][0] and "EQ" not in r["combo"][0] and r.get("b12")
+            and (r["b12"].get("groups") or [])]
+    old = [r["combo"][0] for r in cand if not (r["b12"].get("imposed_reduction") or {}).get("n_columns")]
+    if not old:
+        return ""
+    return (" Not yet in these B-1.2 rows, computed before NL-37 with the unreduced imposed load (conservative): %s." %
+            "; ".join(old))
+
+
 def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table):
     name = nm.name
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -384,10 +423,10 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
              'sub-elements (column / beam / brace). Rolled I-sections carry root-fillet fibres so A, I<sub>x</sub> and Z<sub>p</sub> '
              'equal the IS 808 catalogue values of the HR design (NL-26).</li>' % (o.get("nip", 5), *o.get("nsub", (2, 2, 4))))
     P.append('<li>Steel01, E = 200 000 MPa, hardening b = %.3f; f<sub>y</sub> per section from IS 2062 (Part 1):2025 Table 3 by thickness band '
-             '(expected-strength factor 1.0 unless the EOR sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
+             '(expected-strength factor 1.0 unless the design engineer sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
     P.append('<li>Residual stress pattern: %s.</li>' % _h(o.get("residual")))
     if o.get("imposed_load_basis"):
-        P.append('<li><b>%s</b></li>' % _h(o["imposed_load_basis"]))
+        P.append('<li><b>%s</b>%s</li>' % (_h(o["imposed_load_basis"]), _h(_imposed_basis_by_combo(runs, o))))
     pr = o.get("peb_restraints") or {}
     if pr and pr.get("source") == "rolled":
         bs = pr.get("basis") or {}
@@ -415,7 +454,7 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
                  'one; %s mm).</li>' % (
                      _h(pr.get("summary") or ""), "–".join("%.0f" % v for v in ((pr.get("counts") or {}).get("warping_length_mm") or []))))
     P.append('<li>Out-of-plumb ψ = 1/%d — %s. Member bow %s (hollow sections 1/%d).</li>' % (
-        round(1 / o.get("psi", 1 / 200)), _h(o.get("psi_basis") or ""), _h(o.get("bow_basis") or ""),
+        round(1 / o.get("psi", 1 / 200)), _h(_stored_text(o.get("psi_basis"))), _h(o.get("bow_basis") or ""),
         round(1 / (o.get("bow_hollow") or o.get("bow", 1 / 1000)))))
     P.append('<li>Combinations: IS 800:2007 Table 4 combinations from load_plan (IS 875 / IS 1893), applied proportionally and scaled by λ.</li>')
     P.append('<li>λ<sub>u</sub> is reported only at a detected limit point: LIMIT_POINT (λ falls over ≥ 2 converged steps — negative tangent), '
@@ -434,7 +473,7 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
         P.append('<p>B-1.1 preconditions: sections %s (IS 800 Table 2); lateral restraint: %s. <i>%s</i></p>' % (
             "all plastic/compact" if b11.get("ok") else "NOT all plastic/compact: " + ", ".join(
                 "%s %s" % (x["section"], x["cls"]) for x in b11.get("sections", []) if x.get("cls") not in ("plastic", "compact")),
-            _h(b11.get("lateral_restraint")), _h(b11.get("quote"))))
+            _h(str(b11.get("lateral_restraint") or "").replace("EOR statement", "design engineer's statement")), _h(b11.get("quote"))))
     # 3 capacity table
     P.append('<h2>3 · Load factor by combination</h2>' + _solver_failure_html(runs) + '<div class="tw"><table><tr><th>combination</th><th>kind</th><th>imperf.</th>'
              '<th>λ first yield</th><th>λ<sub>u</sub> / status</th><th>φ<sub>s</sub>·λ<sub>u</sub> (literature φ<sub>s</sub>, information)</th>'
@@ -451,6 +490,7 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
             _h(r["cls"]["mechanism"]), roof, res["steps"], res["seconds"]))
     P.append('</table></div><p class="cap">φ<sub>s</sub> values are US/AU literature calibrations (not calibrated for IS 800 Table 4 load '
              'factors / IS 875 statistics); shown for information, no pass/fail.</p>')
+    P.append(_phi_s_notes_html(runs))
     # 4 B-1.2
     P.append('<h2>4 · IS 800 Annex B-1.2 section-capacity check at λ = 1</h2><p><i>%s</i></p>' % _h(
         "IS 800:2007 B-1.2: 'For the strength limit state, it shall be sufficient to satisfy the section capacity requirements of "
@@ -461,6 +501,17 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
             continue
         P.append('<h3>%s — %s</h3>' % (_h(r["combo"][0]), "satisfied" if b["ok"] else (
             _h(b.get("note")) if b.get("ok") is None else ("NOT satisfied" if b.get("reached_lambda_1") else _h(b.get("note"))))))
+        rf = r.get("b12_refresh") or {}
+        if rf.get("replaced"):
+            P.append('<p class="cap">B-1.2 refreshed %s (second wave, NL %s): the stored governing sweep (imperfection %s, Δλ %s) '
+                     'was repeated up to λ = 1 (%d steps, %.0f s); its curve repeats the stored one over %d steps (largest '
+                     'difference in λ %.1e), so λ<sub>u</sub> and the curve above stand and only this check was redone.</p>' % (
+                         _h(str(rf.get("date") or "")[:10]), _h(rf.get("code_version") or "?"), _h(rf.get("imp")),
+                         _h(rf.get("dlam")), rf.get("steps") or 0, rf.get("seconds") or 0, rf.get("curve_steps_compared") or 0,
+                         rf.get("max_dlambda") or 0.0))
+        elif rf:
+            P.append('<p class="cap">B-1.2 refresh attempted %s and NOT applied: %s</p>' % (
+                _h(str(rf.get("date") or "")[:10]), _h(rf.get("reason") or "")))
         if b.get("groups"):
             red = b.get("imposed_reduction") or {}
             if red.get("n_columns"):
@@ -500,7 +551,7 @@ def ddm_block_india(nm, gate, runs, sensitivity, options, member_table):
         "basis": ["IS 800:2007 4.1.1, 4.3.6, Table 34, Annex B-1.1 / B-1.2", "IS 2062 (Part 1):2025 Table 3",
                   "phi_s: literature (Zhang, Shayan, Rasmussen & Ellingwood 2016) -- information only, not calibrated for IS 800 Table 4"],
         "model": {"material": "Steel01 fy per section (IS 2062 Table 3) E=200000 MPa b=%.3f" % options.get("hardening", 0.002),
-                  "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), options.get("psi_basis")),
+                  "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), _stored_text(options.get("psi_basis"))),
                   "out_of_straightness": options.get("bow_basis"), "units": "N, mm, MPa",
                   **({"peb_restraints": options["peb_restraints"].get("summary")} if options.get("peb_restraints") else {}),
                   **({"imposed_load": options["imposed_load_basis"]} if options.get("imposed_load_basis") else {})},

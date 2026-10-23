@@ -264,7 +264,7 @@ def limit_status(hist, hi_at_max, lam_max, plateau=False, capped=False, terminat
 
 def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap_factor=60.0,
           verbose=True, snapshot_every=3, time_limit=None, post_peak_steps=8, plateau_frac=0.02, frame_every=2,
-          strain_cap=None, capture_lambda1=False):
+          strain_cap=None, capture_lambda1=False, stop_after_lambda1=False):
     """... WP4.9: returns `status` in LIMIT_POINT (lambda fell over >= 2 converged steps after the peak: negative
     tangent), PLASTIC_PLATEAU (tangent < plateau_frac of elastic at the peak), DUCTILITY_CAP (max fibre strain reached
     `strain_cap` x eps_y -- lambda at the cap), or NO_LIMIT_POINT (time / step exhaustion / max steps / displacement
@@ -410,6 +410,10 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
                 forces_at_1 = forces_at_lambda(prev_f, (lam, cur_f), 1.0)
             else:
                 prev_f = (lam, cur_f)
+        if stop_after_lambda1 and forces_at_1 is not None:
+            # second wave (B-1.2 refresh): the forces at lambda = 1 are captured -- the rest of the sweep cannot change them
+            log.append("step %d: lambda = 1 passed (%.4f) -- B-1.2 refresh sweep stopped" % (step, lam)); term = "lambda1_captured"
+            break
         if hi % frame_every == 0:
             frames.append(_frame(model, eps_y, hi, lam, d, ys=ys))
         if lam > lam_max:

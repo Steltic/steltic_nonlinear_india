@@ -106,6 +106,43 @@ def _provenance(prm, out):
         return ""
 
 
+SHED_MARK_START = "<!-- steltic:shed-base-shear-note -->"
+SHED_MARK_END = "<!-- /steltic:shed-base-shear-note -->"
+
+
+def shed_note_html(shed):
+    """Second wave (review E_NL item 15): on a shed the strength coefficient Vmax/W is the headline, not Vmax/VB."""
+    return ("%s<div class='note'><b>%s: Vmax/W is the headline here.</b> VB is the R-reduced IS 1893 design base shear, which "
+            "is small for a light shed, so Vmax/VB is large and is not a measure of the structure's reserve; Vmax/W "
+            "(W the IS 1893 seismic weight%s) is the strength coefficient.</div>%s" % (
+                SHED_MARK_START, html.escape(shed.get("basis") or "Shed"),
+                (", %s kN" % format(round(shed["W_kN"]), ",")) if shed.get("W_kN") else "", SHED_MARK_END))
+
+
+def refresh_report(pushover_dir, shed=None):
+    """Report-only refresh of a stored India pushover report: stop messages in mm ('u=17.27 in' -> 'u = 439 mm', the
+    first-wave fix, which reached only re-run pushovers) and, on a shed, the note above section 3 and Vmax/W before
+    Vmax/VB in each direction's line. Idempotent; returns True when the file changed."""
+    import re
+    p = os.path.join(pushover_dir, "pushover_report.html")
+    if not os.path.exists(p):
+        return False
+    h0 = h = open(p, encoding="utf-8").read()
+    h = re.sub(r"(; stop: )([^<]*)(</p>)", lambda m: m.group(1) + stop_reason_mm(m.group(2)) + m.group(3), h)
+    if shed and shed.get("shed"):
+        note = shed_note_html(shed)
+        if SHED_MARK_START in h and SHED_MARK_END in h:
+            h = h[:h.index(SHED_MARK_START)] + note + h[h.index(SHED_MARK_END) + len(SHED_MARK_END):]
+        else:
+            h = h.replace("<h2>3 Response at δt (interpolated)</h2>", "<h2>3 Response at δt (interpolated)</h2>" + note, 1)
+        h = re.sub(r"\(Vmax/VB = ([^,()]+), Vmax/W = ([^()]+?)\)",
+                   lambda m: "(Vmax/W = %s; Vmax/VB = %s, VB R-reduced, see the note above)" % (m.group(2), m.group(1)), h)
+    if h != h0:
+        open(p, "w", encoding="utf-8").write(h)
+        return True
+    return False
+
+
 def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None):
     b = pkg.basis
     ind = b.india or {}
@@ -169,11 +206,21 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
                         n["target_over_H"], "yes" if n["reached_target"] else "NO"))
     h.append("</table>")
     h.append("<h2>3 Response at δt (interpolated)</h2>")
+    try:                                                     # second wave: on a shed Vmax/W, not Vmax/VB, comes first
+        from snl.shed import shed_basis
+        shed = shed_basis(str(pkg.root))
+    except Exception:                                        # noqa: BLE001
+        shed = dict(shed=False)
+    if shed.get("shed"):
+        h.append(shed_note_html(shed))
     for d, r in results.items():
         cap = r["capacity"]
-        h.append("<p><b>%s</b>: Vmax = %s kN (Vmax/VB = %s, Vmax/W = %s); curve end %s mm, μ(end) = %s; stop: %s</p>" % (
-            d, _f(cap["Vmax_kN"], 0), _f(cap["Vmax_over_VB"], 2), _f(cap["Vmax_over_W"], 3), _f(cap["u_end_in"] * IN_TO_MM, 0),
-            _f(cap["mu_end"], 2), html.escape(str(cap["stop_reason"]))))
+        ratios = (("Vmax/W = %s; Vmax/VB = %s, VB R-reduced, see the note above" if shed.get("shed") else "Vmax/VB = %s, Vmax/W = %s")
+                  % ((_f(cap["Vmax_over_W"], 3), _f(cap["Vmax_over_VB"], 2)) if shed.get("shed") else
+                     (_f(cap["Vmax_over_VB"], 2), _f(cap["Vmax_over_W"], 3))))
+        h.append("<p><b>%s</b>: Vmax = %s kN (%s); curve end %s mm, μ(end) = %s; stop: %s</p>" % (
+            d, _f(cap["Vmax_kN"], 0), ratios, _f(cap["u_end_in"] * IN_TO_MM, 0),
+            _f(cap["mu_end"], 2), html.escape(str(stop_reason_mm(cap["stop_reason"])))))
         h.append("<table><tr><th>level</th><th>roof (mm)</th><th>V (kN)</th><th>V/VB</th><th>max storey drift</th>"
                  "<th>member groups yielded</th><th>brace groups yielded (T)</th><th>braces buckled</th><th>max chord rot (rad)</th><th>IS 800 §12 ref (rad)</th></tr>")
         for lv, a in r["resp"].items():

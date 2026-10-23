@@ -184,6 +184,31 @@ def cmd_report(a):
     from . import compare
     job = os.path.abspath(a.job)
     print(">> four analyses:", compare.build(job)); _hub(job)
+    _refresh_india_reports(job)
+
+
+def _refresh_india_reports(job):
+    """Second wave (report-only): the record-set disclosure and the record-count wording in the stored NLRHA reports
+    and viewer, and the shed base-shear note in the stored pushover report -- rewritten from the stored packages, no
+    re-analysis, idempotent. Never fails the report."""
+    try:
+        from .compare import _is_india_job
+        if not _is_india_job(job):
+            return
+        from .shed import shed_basis
+        sb = shed_basis(job)
+        sb = sb if sb.get("shed") else None
+        if os.path.isdir(os.path.join(job, "nlrha")):
+            from nlrha import record_set as RSET
+            ch = RSET.refresh_reports(os.path.join(job, "nlrha"), shed=sb)
+            if ch:
+                print(">> NLRHA reports refreshed (record set):", len(ch), "file(s)")
+        if os.path.isdir(os.path.join(job, "pushover")):
+            from pushover.report_india import refresh_report
+            if refresh_report(os.path.join(job, "pushover"), sb):
+                print(">> pushover report refreshed (stop messages in mm%s)" % ("; shed: Vmax/W first" if sb else ""))
+    except Exception as ex:                                            # noqa: BLE001
+        print("   report refresh skipped:", ex)
 
 
 def cmd_revise(a):

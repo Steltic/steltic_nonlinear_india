@@ -154,6 +154,11 @@ beyond the shipped FEMA P-695 far-field set with `--records-set <folder> ...`: f
 downloads with their `_SearchResults.csv`) or two-column CSVs are indexed on the fly (`python -m nlrha library <folder>`).
 See `docs/README_nlrha.md`.
 **India:** prefer `python -m nlrha hazard <package> --zone III --soil-type II` (IS 1893 Ah via `nlrha.india_hazard`). USGS only with `--usgs --lat --lon` (scaffolding). Scale with `--target is1893`.
+**Record set (India):** the shipped library is the FEMA P-695 far-field set (22 pairs from 14 earthquakes, M 6.5–7.6;
+`records/p695_farfield/index.json`). It holds no Indian or Himalayan records, so near-field and long-duration effects
+of Indian earthquakes are not represented. Each India run uses 11 pairs (both horizontal components), one scale factor
+per pair, fitted to the IS 1893 elastic DBE and MCE spectra (no R) — 22 analyses per run. Every NLRHA report and
+four-analyses page states this (`nlrha/record_set.py`); supply Indian or regional records with `--records-set`.
 
 
 ## Design criteria document (16.1.4)
