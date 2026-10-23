@@ -160,3 +160,27 @@ def check(phi, lam_u):
         return None, "n/a"
     v = phi * lam_u
     return round(v, 3), ("PASS" if v >= 1.0 else "FAIL")
+
+
+def india_note(phi, lam_u=None, value=None, html_=False):
+    """Second wave (review E_NL item 15): where phi_s comes from, in words, for the India reports. phi_s is NOT an IS 800
+    factor: it is a literature system resistance factor (US / Australian reliability calibrations, `phi` as returned by
+    choose(): its class description and sources), so phi_s x lambda_u is information only, with no pass / fail. When the
+    product is below 1.0 the note says what the code check is instead (B-1.2 at lambda = 1; lambda_u >= 1 means the
+    collapse load exceeds the IS 800 factored load)."""
+    phi = phi or {}
+    if phi.get("phi_s") is None:
+        return None
+    lam_s, phi_s_s = ("λu", "φs") if html_ else ("lambda_u", "phi_s")
+    src = phi.get("source") or "; ".join(SOURCES[s] for s in (TABLE.get(phi.get("cls")) or {}).get("sources", []))
+    out = ("%s = %.2f (class %s: %s) is not an IS 800 factor: it is a system resistance factor from US / Australian "
+           "reliability calibrations (target reliability index %s; source: %s), not calibrated for IS 800 Table 4 load "
+           "factors or IS 875 load statistics. %s x %s is shown for information only, with no pass / fail."
+           % (phi_s_s, phi["phi_s"], phi.get("cls"), phi.get("description") or (TABLE.get(phi.get("cls")) or {}).get("desc"),
+              phi.get("beta_T"), src or "docs/PHI_S_SOURCES.md", phi_s_s, lam_s))
+    if value is not None and value < 1.0:
+        out += (" A value below 1.0 does not mean the design fails: the IS 800 code check of the advanced analysis is the "
+                "Annex B-1.2 section check at lambda = 1%s." % (
+                    (", and %s = %.3f >= 1.0 means the collapse load exceeds the IS 800 factored load" % (lam_s, lam_u))
+                    if (lam_u is not None and lam_u >= 1.0) else ""))
+    return out.replace("lambda = 1", "λ = 1").replace(" x ", " × ").replace(">=", "≥") if html_ else out

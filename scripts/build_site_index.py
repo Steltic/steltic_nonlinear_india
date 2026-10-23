@@ -13,13 +13,19 @@ number comes from the packages; nothing is typed in.
 What each example's "results" carries (2026-10 first wave):
   gate, gate_notes             complete_gate.json status and notes (solver failures are stated, never silent)
   pushover                     per direction Vmax/VB and Vmax/W, whether the curve ended in a numerical stop (Vmax a
-                               lower bound) and whether the IS-MCE target displacement was reached
+                               lower bound) and whether the IS-MCE target displacement was reached; second wave: `shed`
+                               (snl/shed.py: single storey or industrial use in the HR package) with `headline` vmax_w --
+                               a shed's meta line shows Vmax/W only (its R-reduced VB makes Vmax/VB 20-130)
   nlrha                        the record set ("FEMA P-695 far-field set, amplitude-scaled to the IS 1893 spectrum"),
                                per level the number of record pairs and how many converged, the max mean storey drift
                                and the scale-factor range; n_records / n_converged are kept for the current page and
-                               count analyses (pairs x levels)
+                               count analyses (pairs x levels); second wave: the record set in full, its source and
+                               what it lacks (nlrha/record_set.py, from records/p695_farfield/index.json), the scaling
+                               rule and `analyses_text` ("11 record pairs (two horizontal components each), run at DBE
+                               and at MCE: 22 analyses, 22 converged")
   ddm                          gravity lambda_u as the headline, min phi_s x lambda_u kept as information (US/AU
-                               calibration), solver-failure counts, B-1.2 (worst D/C rounded UP), b11_met and its parts
+                               calibration; second wave: phi_s, its class and source, "not an IS 800 factor"),
+                               solver-failure counts, B-1.2 (worst D/C rounded UP), b11_met and its parts
 Margins (lambda, phi_s x lambda_u) are rounded DOWN to 3 decimals and demand ratios UP, and each comes with a
 preformatted *_text string, so 0.997 never reads 1.00 (IN_Ex10).
 """
@@ -77,8 +83,13 @@ def record_set_name(nl_pkg, lv_pkgs):
 
 
 def pushover_results(job):
+    from snl.shed import shed_basis
     po = _j(os.path.join(job, "pushover", "pushover_package.json")) or {}
-    out = {}
+    sb = shed_basis(job)
+    out = dict(shed=sb["shed"], shed_basis=sb["basis"],
+               headline=("vmax_w" if sb["shed"] else "vmax_vb"),
+               vmax_vb_note=("on a shed VB (the R-reduced IS 1893 design base shear) is small, so Vmax/VB is large and is "
+                             "not the headline: Vmax/W is" if sb["shed"] else None))
     for d, dd in sorted((po.get("directions") or {}).items()):
         cap = dd.get("capacity") or {}
         k = d.lower()
@@ -106,6 +117,13 @@ def nlrha_results(job):
                           drift_pct=_r(100 * info["max_mean_drift"], 2) if info.get("max_mean_drift") is not None else None,
                           sf_min=_r(min(sfs), 3) if sfs else None, sf_max=_r(max(sfs), 3) if sfs else None)
     out = dict(record_set=record_set_name(nl, lv_pkgs), levels=levels)
+    if lv_pkgs:                                   # second wave: what the set is, where it comes from, what it lacks
+        from nlrha import record_set as RSET
+        for lv, p in lv_pkgs.items():
+            g = _j(os.path.join(job, "nlrha", lv, "gm_scaling.json")) or {}
+            if g and not ((p or {}).get("ground_motions") or {}).get("selected"):
+                lv_pkgs[lv] = dict(p or {}, ground_motions=g.get("gm") or {})
+        out.update(RSET.facts_for_index(lv_pkgs))
     for lv in ("DBE", "MCE"):
         L = levels.get(lv) or {}
         out["drift_%s_pct" % lv.lower()] = L.get("drift_pct")
@@ -133,6 +151,7 @@ def ddm_results(job):
         from steltic_ddm.cli import b12_summary
         ddm["b12_check"] = b12_summary([r.get("b12") for r in ddm["runs"] if r.get("b12")])
     h = ddm_headline(ddm)
+    ph = h.get("phi") or {}
     lam = floor3(h["gravity_lambda_u"])
     phi = floor3(h["min_phi_lambda"])
     dc = ceil3(h["b12_dc"])
@@ -141,7 +160,13 @@ def ddm_results(job):
                 gravity_status=STATUS_WORDS.get(h["gravity_status"], (h["gravity_status"] or "").lower().replace("_", " ") or None),
                 gravity_combo=h["gravity_combo"],
                 min_phi_lambda=phi, min_phi_lambda_text=txt3(phi),
-                min_phi_lambda_note="information only: phi_s from US/AU reliability calibrations, not IS 800 / IS 875",
+                min_phi_lambda_note=("information only, no pass/fail: phi_s%s is a system resistance factor from US / "
+                                     "Australian reliability calibrations%s, not an IS 800 factor; the code check is "
+                                     "B-1.2 at lambda = 1" % (
+                                         (" = %.2f" % ph["phi_s"]) if ph.get("phi_s") is not None else "",
+                                         (" (class %s: %s)" % (ph.get("cls"), ph.get("description"))) if ph.get("cls") else "")),
+                min_phi_lambda_combo=h.get("phi_combo"), phi_s=ph.get("phi_s"), phi_s_class=ph.get("cls"),
+                phi_s_source=ph.get("source"),
                 n_runs=h["n_runs"], solver_failures=h["solver_failures"], runaway_steps=h["runaway_steps"],
                 b12_ok=h["b12_ok"], b12_dc=dc, b12_dc_text=txt3(dc),
                 b12_member=(h["b12_member"].replace("_", " ") if h["b12_member"] else None), b12_combo=h["b12_combo"],
@@ -159,13 +184,22 @@ def meta_line(res):
     p, n, d = res.get("pushover") or {}, res.get("nlrha") or {}, res.get("ddm") or {}
     parts = []
     vb = [p.get("vmax_vb_x"), p.get("vmax_vb_y")]
-    if any(v is not None for v in vb):
-        w = [p.get("vmax_w_x"), p.get("vmax_w_y")]
+    w = [p.get("vmax_w_x"), p.get("vmax_w_y")]
+    if p.get("shed") and any(v is not None for v in w):        # second wave: no Vmax/VB headline on a shed
+        parts.append("Pushover Vmax/W %s" % " / ".join("%.2f" % v for v in w if v is not None))
+    elif any(v is not None for v in vb):
         parts.append("Pushover Vmax/VB %s (Vmax/W %s)" % (" / ".join("%.1f" % v for v in vb if v is not None),
                                                           " / ".join("%.2f" % v for v in w if v is not None)))
     if n.get("drift_dbe_pct") is not None:
-        parts.append("NLRHA mean drift %.2f %% DBE / %.2f %% MCE (%s pairs converged)" % (
-            n["drift_dbe_pct"], n.get("drift_mce_pct") or 0, n.get("converged_text") or "?"))
+        lv = n.get("levels") or {}
+        pairs = sorted({(L or {}).get("pairs") for L in lv.values()})
+        if len(pairs) == 1 and pairs[0]:
+            runs_txt = "%d record pairs at %s: %d/%d analyses converged" % (
+                pairs[0], " and ".join(k for k in ("DBE", "MCE") if k in lv), n.get("n_converged") or 0, n.get("n_records") or 0)
+        else:
+            runs_txt = "%s pairs converged" % (n.get("converged_text") or "?")
+        parts.append("NLRHA mean drift %.2f %% DBE / %.2f %% MCE (%s)" % (
+            n["drift_dbe_pct"], n.get("drift_mce_pct") or 0, runs_txt))
     if d.get("gravity_lambda") is not None:
         parts.append("DDM gravity λu %s (%s)" % (d["gravity_lambda_text"], d.get("gravity_status")))
     if d.get("solver_failures"):

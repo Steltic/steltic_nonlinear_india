@@ -131,7 +131,7 @@ function memberInfo(e){
 }
 function suite(){
   const S = L().summary; const r = [];
-  r.push(['Statement', `<i>${N.statement}</i>`], ['Target', L().label], ['Records · converged', `${S.n_records} · ${S.n_converged}`],
+  r.push(['Statement', `<i>${N.statement}</i>`], ['Target', L().label], ['Record pairs · converged', `${S.n_records} · ${S.n_converged}`],
     ['Max mean / peak storey drift', `${pct(S.max_mean_drift||0)} / ${pct(S.max_peak_drift||0)}`],
     ['Mean base shear X / Y', `${fmt(S.base_shear.mean_X_kN,0)} / ${fmt(S.base_shear.mean_Y_kN,0)} kN`],
     ['V-bar_B X / Y (HR design)', `${fmt(S.base_shear.VB_design_X_kN,0)} / ${fmt(S.base_shear.VB_design_Y_kN,0)} kN`],
@@ -223,9 +223,11 @@ def write(outdir, pkg, per_level: dict, modal: dict, numerics: dict, prm=None) -
     extra = dict(nlrha_india=dict(levels=levels, braces=braces or [], heights=heights, H=sum(heights or [0]),
                                   linear_drift_ratio=0.004, reference_rot=ref_rot, xi=xi, T1x=modal.get("T1x"), T1y=modal.get("T1y"),
                                   statement=IS_NL_STATEMENT))
-    n = sum(len(v["records"]) for v in levels.values())
+    from .record_set import analyses_text
+    at = analyses_text(dict(levels={lv: dict(pairs=(v["summary"] or {}).get("n_records") or len(v["records"]),
+                                              converged=(v["summary"] or {}).get("n_converged")) for lv, v in levels.items()}))
     meta = dict(title=f"{pkg.name} · NLRHA (IS 1893 elastic DBE / MCE)", subtitle=f"{pkg.basis.system or ''}",
-                accline=f"Steltic viewer bundle · India NLRHA · {', '.join(levels)} · {n} records · information only (D7)",
+                accline=f"Steltic viewer bundle · India NLRHA · {', '.join(levels)} · {at} · information only (D7)",
                 caveat=("Deformed shape from the diaphragm masters; braces by their instantaneous axial deformation, beams / columns / "
                         "EBF links by their record-peak fibre strain ratio or link shear ductility. mm, kN. " + IS_NL_STATEMENT
                         + " Not for construction."))

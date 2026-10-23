@@ -8,12 +8,11 @@ import datetime, html, json, os
 
 from .response_summary import IS_NL_STATEMENT
 from .report import CSS, _png, fig_scaling
+from .record_set import BASIS_SENTENCE
 
 GM_BASIS_INDIA = dict(
     record_library="FEMA P-695 far-field set (22 pairs; PEER NGA) — record library (information)",
-    selection_scaling=("selection/scaling rules per EOR; IS 1893 7.7.4 requires motions 'preferably compatible with the "
-                       "design acceleration spectrum in the desired range of natural periods'. This tool fits the suite mean "
-                       "RotD100 to >= 0.9 x the IS elastic target over [T_lower, T_upper] (EOR-adoptable convention, not IS law)."),
+    selection_scaling=BASIS_SENTENCE,                  # second wave: 7.7.4 quoted from the corpus; the 0.9 rule is ours
     tectonic_consistency="EOR to confirm (non-Indian crustal records); Indian/regional sets (e.g. PESMOS) can be supplied with --records-set",
     target="IS 1893 elastic spectrum (DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g), 5 % damping, no R (D6)",
 )
@@ -103,7 +102,9 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=
             _f(100 * p["max_drift_Y"] if p["max_drift_Y"] is not None else None, 3) + " %",
             _f(p["base_shear_kN"][0], 0), _f(p["base_shear_kN"][1], 0),
             "%s / %s" % (_f(p["peak_roof_mm"][0], 1), _f(p["peak_roof_mm"][1], 1))))
-    H.append("</table><p>Scale-factor bounds: %s%s</p>" % (gm.get("sf_bounds"), (" — " + "; ".join(gm.get("sf_warnings") or [])) if gm.get("sf_warnings") else ""))
+    H.append("</table><p>Scale-factor bounds: %s%s</p>" % (
+        gm.get("sf_bounds") if gm.get("sf_bounds") else "none set (the engineer may set nl_plan.gm_selection.sf_bounds).",
+        (" — " + "; ".join(gm.get("sf_warnings") or [])) if gm.get("sf_warnings") else ""))
     H.append("<h2>2 Storey drifts</h2><figure><img src='%s'></figure><table><tr><th>storey</th><th>h (mm)</th><th>mean X</th>"
              "<th>mean Y</th><th>max X</th><th>max Y</th></tr>" % fig_drift_is(summ))
     for s in summ["story"]:
@@ -187,7 +188,7 @@ def write_index(out, pkg, level_summaries: dict, modal, numerics, hazard):
     H = ["<!doctype html><meta charset='utf-8'><style>%s</style><title>NLRHA (IS, information)</title>" % CSS,
          "<h1>Nonlinear response-history analysis — IS 1893 7.7.4 (information)</h1>",
          "<div class='note'><b>%s</b></div>" % IS_NL_STATEMENT,
-         "<table><tr><th>level</th><th>target</th><th>records (converged)</th><th>scale factors</th><th>max mean drift</th>"
+         "<table><tr><th>level</th><th>target</th><th>record pairs (converged)</th><th>scale factors</th><th>max mean drift</th>"
          "<th>max peak drift</th><th>mean V / VB</th><th>report</th></tr>"]
     for lv, d in idx["levels"].items():
         sf = d["scale_factors"]

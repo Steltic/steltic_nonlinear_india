@@ -210,6 +210,14 @@ def design_header(b):
                                            pair(b.get("R_x"), b.get("R_y"), b.get("R"), None))
 
 
+def vmax_lower_bound(dd):
+    """A pushover direction whose curve ended in a numerical stop: its Vmax is a lower bound, not a capacity (the same
+    rule as scripts/build_site_index.py)."""
+    cap = (dd or {}).get("capacity") or {}
+    tail = cap.get("tail_status") or ((dd or {}).get("tail") or {}).get("status")
+    return (tail == "lower_bound") or str((dd or {}).get("stop_reason") or "").startswith("solver")
+
+
 def floor3(x):
     """3 decimals, rounded DOWN: a margin of 0.9997 must never read 1.000 (or 1.00) on a public page."""
     import math as _m
@@ -234,6 +242,8 @@ def ddm_headline(ddm):
                 worst = (g.get("dc_max") or 0, g, c.get("combo"))
     b11 = ddm.get("b11_preconditions") or {}
     grav_nolimit = [r for r in grav if r.get("lambda_u") is None]
+    phi_runs = [r for r in runs if (r.get("check") or [None])[0] is not None]
+    phi_gov = min(phi_runs, key=lambda r: r["check"][0]) if phi_runs else None
     return dict(
         gravity_lambda_u=(floor3(gov["lambda_u"]) if gov else None), gravity_status=(gov or {}).get("status"),
         gravity_combo=(gov or {}).get("label"),
@@ -241,6 +251,8 @@ def ddm_headline(ddm):
                                for r in grav_nolimit],
         min_phi_lambda=floor3(min(phis)) if phis else None,
         phi_lambda_note="phi_s x lambda_u: US/AU reliability calibration (not IS 800 / IS 875), information only",
+        phi_combo=(phi_gov or {}).get("label"), phi=((phi_gov or {}).get("phi") or None),
+        phi_lambda_u=(phi_gov or {}).get("lambda_u"),
         n_runs=len(runs), solver_failures=len(sf),
         runaway_steps=sum(1 for r in sf if r.get("runaway") or r.get("termination") == "runaway"),
         solver_failure_labels=[r.get("label") for r in sf],
@@ -263,13 +275,19 @@ def build_india(job, out_name="four_analyses.html"):
     nl = _load_json(os.path.join(job, "nlrha", "nlrha_package.json"), {}) or {}
     ddm = _load_json(os.path.join(job, "ddm_results.json"), {}) or {}
     db = design_basis(job)
+    from .shed import shed_basis
+    shed = shed_basis(job)
+    W_sh = shed.get("W_kN") or db.get("W_kN")
     stmt = "IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information."
     summ = dict(jurisdiction="india", generated=datetime.datetime.now().isoformat(timespec="seconds"), statement=stmt,
                 inputs_sha256=IA.summary_inputs(job), design=dict(Z=db["Z"], I=db["I"], R=db["R"], R_x=db["R_x"], R_y=db["R_y"],
                                                                   VB_kN=db["VB_kN"], VB_x_kN=db["VB_x_kN"], VB_y_kN=db["VB_y_kN"],
                                                                   W_kN=db["W_kN"], sources=db["sources"]),
-                pushover=None, nlrha=None, ddm=None, verdict=None)
+                pushover=None, nlrha=None, ddm=None, verdict=None,
+                shed=dict(shed=shed["shed"], basis=shed["basis"], W_kN=shed["W_kN"]))
     rows = []
+    notes_rs = []
+    notes = []                                            # second wave: sentences under the table (record set, phi_s, shed)
     if po.get("directions"):
         p = {}
         for d, dd in po["directions"].items():
@@ -283,17 +301,58 @@ def build_india(job, out_name="four_analyses.html"):
                                   for lv, r in (dd.get("response") or {}).items()})
             for lv, n in (dd.get("nsp") or {}).items():
                 r = (dd.get("response") or {}).get(lv) or {}
+                if shed["shed"] and W_sh and r.get("base_shear_kN") is not None:      # second wave: V/W on sheds
+                    vr = "V/W = %.3f" % (float(r["base_shear_kN"]) / W_sh)
+                else:
+                    vr = "V/VB = %s" % fmt(r.get("V_over_VB"))
                 rows.append(("Pushover %s %s" % (d, lv), "Sa(Te=%.3f s) = %.3f g (elastic, no R)" % (n.get("Te") or 0, n.get("Sa") or 0),
-                             "δt = %.1f mm; V/VB = %s; max storey drift %.3f %%" % (n.get("target_disp_mm") or 0, fmt(r.get("V_over_VB")), 100 * (r.get("max_story_drift") or 0))))
+                             "δt = %.1f mm; %s; max storey drift %.3f %%" % (n.get("target_disp_mm") or 0, vr, 100 * (r.get("max_story_drift") or 0))))
+        caps = [(d, dd.get("capacity") or {}) for d, dd in po["directions"].items()]
+        if any(c.get("Vmax_kN") is not None for _, c in caps):
+            vw = " / ".join("%.3f" % c["Vmax_over_W"] for _, c in caps if c.get("Vmax_over_W") is not None)
+            vb = " / ".join("%.1f" % c["Vmax_over_VB"] for _, c in caps if c.get("Vmax_over_VB") is not None)
+            lb = [d for d, dd in po["directions"].items() if vmax_lower_bound(dd)]
+            rows.append(("Pushover strength Vmax (%s)" % " / ".join(d for d, _ in caps),
+                         " / ".join("%.0f kN" % c["Vmax_kN"] for _, c in caps if c.get("Vmax_kN") is not None),
+                         ("Vmax/W = %s (strength coefficient)" % vw) + ("" if shed["shed"] else "; Vmax/VB = %s" % vb)
+                         + ("; %s: lower bound (the curve ended in a numerical stop)" % ", ".join(lb) if lb else "")))
+            if shed["shed"]:
+                notes.append("%s: VB, the R-reduced IS 1893 design base shear, is small for a light shed (%s), so V/VB is "
+                             "large (Vmax/VB = %s) and is not a measure of the structure's reserve. V/W (W = %s kN, the IS 1893 "
+                             "seismic weight) is shown instead." % (
+                                 shed["basis"], "VB = %s kN" % " / ".join("%.1f" % v for v in (db.get("VB_x_kN"), db.get("VB_y_kN"))
+                                                                         if v is not None) if (db.get("VB_x_kN") or db.get("VB_y_kN"))
+                                 else ("VB = %.1f kN" % db["VB_kN"] if db.get("VB_kN") else "VB not recorded"), vb,
+                                 "{:,.0f}".format(W_sh) if W_sh else "?"))
         summ["pushover"] = p
     if nl.get("levels"):
         summ["nlrha"] = nl["levels"]
+        from nlrha import record_set as RSET
+        lvp = {}
+        for lv, info in nl["levels"].items():
+            lp = _load_json(os.path.join(job, "nlrha", info.get("package") or os.path.join(lv, "nlrha_package.json")), {}) or {}
+            g = _load_json(os.path.join(job, "nlrha", lv, "gm_scaling.json"), {}) or {}
+            if g and not (lp.get("ground_motions") or {}).get("selected"):
+                lp = dict(lp, ground_motions=g.get("gm") or {})
+            lvp[lv] = lp
         for lv, d in nl["levels"].items():
             sf = d.get("scale_factors") or [0]
-            rows.append(("NLRHA %s" % lv, "%s; %d records (%d converged), SF %.3f–%.3f" % (d.get("target_label"), d.get("n_records") or 0,
-                                                                                       d.get("n_converged") or 0, min(sf), max(sf)),
-                         "max mean drift %s %%; mean V/VB %s" % (fmt(100 * d["max_mean_drift"] if d.get("max_mean_drift") is not None else None, 3),
-                                                                 fmt((d.get("base_shear") or {}).get("mean_over_VB")))))
+            bs = d.get("base_shear") or {}
+            if shed["shed"] and W_sh and bs.get("mean_X_kN") is not None:                  # second wave: V/W on sheds
+                vr = "mean V/W %.3f / %.3f (X / Y)" % (bs["mean_X_kN"] / W_sh, (bs.get("mean_Y_kN") or 0) / W_sh)
+            else:
+                vr = "mean V/VB %s" % fmt(bs.get("mean_over_VB"))
+            rows.append(("NLRHA %s" % lv, "%s; %d record pairs (two horizontal components each), %d converged, SF %.3f–%.3f" % (
+                d.get("target_label"), d.get("n_records") or 0, d.get("n_converged") or 0, min(sf), max(sf)),
+                         "max mean drift %s %%; %s" % (fmt(100 * d["max_mean_drift"] if d.get("max_mean_drift") is not None else None, 3), vr)))
+        at = RSET.analyses_text(RSET.suite_facts(lvp)) if any(lvp.values()) else None
+        if at:
+            rows.append(("NLRHA analyses", "record pairs × hazard levels", at))
+        fx = RSET.facts_for_index(lvp) if any(lvp.values()) else {}
+        if fx.get("record_set_full"):
+            rows.append(("NLRHA record set", fx["record_set_full"], fx.get("record_set_note") or ""))
+        summ["nlrha_record_set"] = fx or None
+        notes_rs = RSET.disclosure(lvp) if any(lvp.values()) else []
     if ddm.get("runs") is not None:
         hd = ddm_headline(ddm)
         summ["ddm"] = dict(gravity_gate=(ddm.get("gravity_gate") or {}).get("summary"), gravity_gate_ok=(ddm.get("gravity_gate") or {}).get("ok"),
@@ -307,8 +366,17 @@ def build_india(job, out_name="four_analyses.html"):
                                              else "BELOW the IS 800 factored load")) if hd["gravity_lambda_u"] is not None
                      else "no gravity limit point"))
         if hd["min_phi_lambda"] is not None:
-            rows.append(("DDM min φs·λu (information)", "US/AU reliability calibration, not IS 800 / IS 875",
-                         "%.3f (3 decimals, rounded down; no pass/fail)" % hd["min_phi_lambda"]))
+            ph = hd.get("phi") or {}
+            rows.append(("DDM min φs·λu (information)",
+                         "φs = %s (%s): US/AU reliability calibration, not an IS 800 factor" % (
+                             ("%.2f" % ph["phi_s"]) if ph.get("phi_s") is not None else "?", ph.get("cls") or "?"),
+                         "%.3f (3 decimals, rounded down; %s; information only, no pass/fail)%s" % (
+                             hd["min_phi_lambda"], hd.get("phi_combo") or "?",
+                             " — below 1.0 only through φs; see the note below" if hd["min_phi_lambda"] < 1.0 else "")))
+            from steltic_ddm import phi_s as _PHI
+            pn = _PHI.india_note(ph, hd.get("phi_lambda_u"), hd["min_phi_lambda"], html_=True)
+            if pn:
+                notes.append(pn)
         rows.append(("DDM solver failures", "numerical stops (NL-24 / NL-36)",
                      ("none" if not hd["solver_failures"] else "%d sweep(s)%s: %s -- not capacities" % (
                          hd["solver_failures"], (", %d numerical runaway(s)" % hd["runaway_steps"]) if hd["runaway_steps"] else "",
@@ -339,7 +407,14 @@ def build_india(job, out_name="four_analyses.html"):
          "<p>NL targets used: IS 1893 elastic spectrum — DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g (no R).</p>",
          "<table><tr><th>analysis</th><th>demand</th><th>response (information)</th></tr>"]
     H += ["<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % tuple(html.escape(str(x)) for x in r) for r in rows]
-    H.append("</table><p>Inputs (sha256): %s</p>" % html.escape(json.dumps(summ["inputs_sha256"])))
+    H.append("</table>")
+    if notes:
+        H.append("<h2>Notes</h2><ul>%s</ul>" % "".join("<li>%s</li>" % html.escape(x) for x in notes))
+    if nl.get("levels") and notes_rs:
+        H.append("<h2 id='record-set'>Ground-motion record set (NLRHA)</h2><ul>%s</ul>" % "".join(
+            "<li>%s</li>" % html.escape(x) for x in notes_rs))
+    summ["notes"] = notes
+    H.append("<p>Inputs (sha256): %s</p>" % html.escape(json.dumps(summ["inputs_sha256"])))
     open(os.path.join(job, out_name), "w", encoding="utf-8").write("\n".join(H))
     json.dump(summ, open(os.path.join(job, "snl_summary.json"), "w"), indent=1, default=str)
     try:

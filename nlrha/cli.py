@@ -409,6 +409,13 @@ def _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0):
             summ["non_vacuous"]["ok"]))
     idx = RI.write_index(out, pkg, level_summaries, modal, numerics, hz)
     print("wrote", idx, "(%.0f s)" % (time.time() - t0))
+    try:                                                   # second wave: the record-set disclosure on every page
+        from . import record_set as RSET
+        from snl.shed import shed_basis
+        sb = shed_basis(str(pkg.root))
+        RSET.refresh_reports(out, shed=sb if sb.get("shed") else None)
+    except Exception as ex:                                # noqa: BLE001 -- never let the note hide the report
+        print("[record set] disclosure skipped:", ex)
     try:                                                   # NL-11: the India viewer (no IO/LS/CP, no verdict)
         from . import viewer3d_india as V3I
         print("wrote", V3I.write(out, pkg, per_level, modal, numerics, prm))
