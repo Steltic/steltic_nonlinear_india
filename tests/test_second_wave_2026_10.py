@@ -37,3 +37,32 @@ def test_code_version_names_the_commit():
     from steltic_ddm.cli import code_version
     v = code_version()
     assert v is None or (len(v.split("+")[0]) >= 7 and all(c in "0123456789abcdef" for c in v.split("+")[0]))
+
+
+# =============================================================================================== B-1.2 refresh (--b12-only)
+def test_curve_prefix_match():
+    from steltic_ddm.cli import curve_prefix_match
+    stored = [(0.05, -2.1), (0.1, -4.2), (0.5, -21.0), (1.0, -42.0), (1.04, -47.4), (1.03, -49.0)]
+    ok, n, dl, dd, bad = curve_prefix_match(stored[:4], stored)
+    assert ok and n == 4 and dl == 0.0 and bad is None
+    ok, n, dl, dd, bad = curve_prefix_match([(0.05, -2.1), (0.1, -4.2), (0.52, -21.0), (1.0, -42.0)], stored)
+    assert not ok and bad == 2 and dl > 0.01
+    assert not curve_prefix_match([(0.05, -2.1)], stored)[0]                      # one point proves nothing
+    assert not curve_prefix_match(stored + [(1.0, -50.0)], stored)[0]             # longer than the stored curve
+
+
+def test_sweep_stops_after_lambda_1_flag_exists():
+    import inspect
+    from steltic_ddm import solver
+    assert "stop_after_lambda1" in inspect.signature(solver.sweep).parameters
+    src = inspect.getsource(solver.sweep)
+    assert "lambda1_captured" in src
+
+
+def test_retry_has_b12_only_flag():
+    import contextlib, io
+    from steltic_ddm import cli
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), pytest.raises(SystemExit):
+        cli.main(["retry", "--help"])
+    assert "--b12-only" in buf.getvalue()

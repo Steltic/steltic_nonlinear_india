@@ -87,6 +87,57 @@ def _worker(args):
     return dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12)
 
 
+def _b12_worker(args):
+    """Second wave (`retry --b12-only`): re-run ONE stored governing sweep -- the same combination, imperfection case
+    and load step as the stored result (the last NL-30 rung when it was retried) -- only until lambda = 1 is passed,
+    and redo the IS 800 B-1.2 check at lambda = 1 with the current rule (e.g. NL-37). Returns the curve so far (the
+    caller checks it against the stored curve) and the new B-1.2 row."""
+    job, engine_dir, combo_label, imp, opts = args
+    if engine_dir and engine_dir not in sys.path:
+        sys.path.insert(0, engine_dir)
+    import io, contextlib
+    nm = ingest.load_package(job, engine_dir)
+    cfg = nm.cfg
+    combo = [c for c in loads.steltic_combos(cfg, nm=nm) if c[0] == combo_label][0]
+    pres = loads.present_sets(nm)
+    ref = opts["_b12_only"]
+    g = GMNIAModel(nm, cfg, nsub=tuple(opts["nsub"]), residual=opts["residual"], Fy=opts.get("Fy"),
+                   hardening=opts["hardening"], fast=opts["fast"], nip=opts["nip"],
+                   out_of_plumb=(imp["dir"], imp["psi"]), bow=opts["bow"], bow_sign=imp["bow_sign"], brace_bow=opts["bow"],
+                   rigid_end_offset=opts.get("rigid_end_offset", False), fy_fn=_india_fy_fn(job), bow_hollow=opts.get("bow_hollow"))
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        res = solver.sweep(g, combo, pres, dlam=ref["dlam"], max_steps=int(opts["max_steps"] * ref["k"]), verbose=True,
+                           time_limit=opts["time_limit"] * ref["k"], strain_cap=opts.get("strain_cap"), capture_lambda1=True,
+                           stop_after_lambda1=True)
+    from .india_checks import b12_check
+    f1 = res.pop("forces_at_1", None)
+    if f1 and opts.get("_llr_plan"):
+        from .imposed_reduction import reduce_forces
+        f1 = reduce_forces(f1, opts["_llr_plan"], combo[2], getattr(combo, "meta", None))
+    b12 = b12_check(f1, _india_fy_fn(job), ref.get("lambda_end"), combo_label, status=ref.get("status")) if f1 else None
+    return dict(label=combo_label, imp=imp["tag"], hist=[(round(a, 4), round(b, 4)) for a, b in res["hist"]], b12=b12,
+                steps=res["steps"], seconds=res["seconds"], termination=res.get("termination"), runaway=res.get("runaway"),
+                captured=bool(f1))
+
+
+def curve_prefix_match(new_hist, stored_hist, tol=5e-4):
+    """Second wave: does a re-run curve repeat the stored one step by step (lambda and control displacement, as stored to 4
+    decimals)? Returns (ok, n_compared, max |d lambda|, max relative |d disp|, first mismatching step or None)."""
+    n = min(len(new_hist), len(stored_hist))
+    dl_max = dd_max = 0.0
+    bad = None
+    for i in range(n):
+        (l1, d1), (l2, d2) = new_hist[i], stored_hist[i]
+        dl = abs(float(l1) - float(l2))
+        dd = abs(float(d1) - float(d2)) / max(1.0, abs(float(d2)))
+        dl_max, dd_max = max(dl_max, dl), max(dd_max, dd)
+        if bad is None and (dl > tol or dd > tol):
+            bad = i
+    ok = bad is None and n == len(new_hist) and n > 1
+    return ok, n, round(dl_max, 6), round(dd_max, 6), bad
+
+
 def sweep_with_retries(do_sweep, dlam, factors=(2, 4), what=""):
     """NL-30: a sweep that ends in SOLVER_FAILURE (a numerical stop with the structure still stiff) is re-run from the
     start with a smaller load step -- dlam/2, then dlam/4 (the caller scales max steps and the time limit with it). The
@@ -445,7 +496,7 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
                    solver_failures=solver_failure_summary(runs),
                    runs=[dict(label=r["combo"][0], imp=r["imp"], kind=r["summary"]["kind"], lambda_u=r["res"]["lambda_u"],
                               lambda_end=r["res"].get("lambda_end"), status=r["res"].get("status"), termination=r["res"].get("termination"),
-                              b12=r.get("b12"), stop_tangent_ratio=r["res"].get("stop_tangent_ratio"),
+                              b12=r.get("b12"), b12_refresh=r.get("b12_refresh"), stop_tangent_ratio=r["res"].get("stop_tangent_ratio"),
                               control_mode=r["res"].get("control_mode"), ladder_used=r["res"].get("ladder_used"),
                               retries=r["res"].get("retries"), runaway=r["res"].get("runaway"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
@@ -584,7 +635,7 @@ def _runs_from_results(d):
                    control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"), retries=r.get("retries"),
                    runaway=r.get("runaway"))
         runs.append(dict(combo=(r["label"],), summary=dict(kind=r["kind"]), res=res, cls=r["cls"], phi=r["phi"], check=r["check"], imp=r["imp"], state=r["state"],
-                         b12=r.get("b12")))
+                         b12=r.get("b12"), b12_refresh=r.get("b12_refresh")))
     return runs
 
 
@@ -640,6 +691,8 @@ def retry(args):
     d = json.load(open(os.path.join(out_dir, "ddm_results.json")))
     for r in d.get("runs") or []:
         reclassify_stored_run(r, (d.get("options") or {}).get("dlam") or 0.05)   # NL-36: stored runaways are retried too
+    if getattr(args, "b12_only", False):
+        return _b12_refresh(args, job, engine_dir, out_dir, d, t0)
     bad = [r["label"] for r in d.get("runs") or [] if r.get("status") == "SOLVER_FAILURE"]
     if getattr(args, "only_listed", False):           # only the named combinations (keep the stored failures as they are)
         bad = [lab for lab in bad if lab in (getattr(args, "combos", None) or [])]
@@ -755,6 +808,107 @@ def _record_rerun(opts_rep, key, rec):
     return hist
 
 
+def _retry_opts(o, india):
+    return dict(nsub=list(o.get("nsub") or (2, 2, 4)), residual=o.get("residual", "lehigh"), Fy=o.get("Fy") if not india else None,
+                hardening=o.get("hardening", 0.002), fast=bool(o.get("fast")), nip=o.get("nip", 5), bow=o.get("bow"), psi=o.get("psi"),
+                dlam=o.get("dlam", 0.05), max_steps=o.get("max_steps", 250), time_limit=o.get("time_limit", 2400.0),
+                rigid_end_offset=o.get("rigid_end_offset", False), india=india, strain_cap=o.get("strain_cap"),
+                bow_hollow=o.get("bow_hollow"))
+
+
+B12_REFRESH_BASIS = ("B-1.2 refreshed (second wave): the stored governing sweep -- same combination, imperfection case and "
+                     "load step (the last NL-30 rung where the sweep was retried) -- was run again on the current code only "
+                     "until lambda = 1 was passed, and the IS 800 B-1.2 check at lambda = 1 was redone with the current rule. "
+                     "The new curve repeats the stored one step by step up to lambda = 1, so the stored lambda_u, status and "
+                     "curve stand; only the B-1.2 row changes.")
+
+
+def _b12_refresh(args, job, engine_dir, out_dir, d, t0):
+    """`retry --b12-only --combos ...`: redo the B-1.2 check at lambda = 1 of the named combinations without re-running
+    their whole sweeps (a B-1.2 rule change such as NL-37 changes nothing else). Each named combination's stored
+    governing sweep is repeated up to lambda = 1 (_b12_worker); the new B-1.2 row replaces the stored one only when the
+    new curve repeats the stored curve step by step (curve_prefix_match) -- otherwise the code path has changed, the
+    stored row is kept and a full `retry --combos` is needed. The refresh is recorded per run (b12_refresh) and in
+    options.ddm_b12_refresh(_history)."""
+    labels = list(getattr(args, "combos", None) or [])
+    if not labels:
+        raise SystemExit("retry --b12-only needs --combos (the combinations whose B-1.2 row is to be refreshed)")
+    missing = [lab for lab in labels if not any(r["label"] == lab for r in d.get("runs") or [])]
+    if missing:
+        raise SystemExit("retry --combos: not in ddm_results.json: %s" % "; ".join(missing))
+    nm = ingest.load_package(job, engine_dir)
+    cfg = nm.cfg
+    india = _is_india_cfg(cfg)
+    if not india:
+        raise SystemExit("retry --b12-only: India packages only (IS 800 Annex B-1.2)")
+    o = dict(d.get("options") or {})
+    opts = _retry_opts(o, india)
+    _llr_setup(nm, cfg, opts, tuple(opts["nsub"]), opts["rigid_end_offset"], (o.get("imposed_load_reduction") or {}).get("mode") or "hr")
+    cases = loads.steltic_combos(cfg, nm=nm)
+    by_combo = {c[0]: c for c in cases}
+    gdirs = {"+X only": "one", "+X and +Y": "two", "±X and ±Y": "all"}.get(o.get("gravity_dirs"), "two")
+    tasks, stored = [], {}
+    for lab in labels:
+        r = next(x for x in d["runs"] if x["label"] == lab)
+        imps = [i for i in imperfections.cases_for(by_combo[lab], gravity_dirs=gdirs, psi=opts["psi"]) if i["tag"] == r.get("imp")]
+        if not imps:
+            print("   skip %s: imperfection case %s not among this combination's cases" % (lab, r.get("imp"))); continue
+        rt = r.get("retries") or []
+        dl = float(rt[-1]["dlam"]) if rt else float(opts["dlam"])
+        ref = dict(dlam=dl, k=float(opts["dlam"]) / dl, lambda_end=r.get("lambda_end"), status=r.get("status"))
+        tasks.append((job, engine_dir, lab, imps[0], dict(opts, _b12_only=ref)))
+        stored[lab] = r
+    print(">> B-1.2 refresh: %d combination(s) (%s) -> %d sweep(s) to lambda = 1 on 1 worker" % (
+        len(tasks), "; ".join(t[2] for t in tasks), len(tasks)), flush=True)
+    done = {}
+    for t in tasks:
+        res = _b12_worker(t)
+        r = stored[res["label"]]
+        ok, n, dl, dd, bad = curve_prefix_match(res["hist"], r.get("hist") or [])
+        rec = dict(date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=code_version(), imp=res["imp"], dlam=t[4]["_b12_only"]["dlam"],
+                   steps=res["steps"], seconds=res["seconds"], termination=res["termination"], curve_steps_compared=n,
+                   max_dlambda=dl, max_rel_ddisp=dd, curve_matches=ok, basis=B12_REFRESH_BASIS)
+        old_b = r.get("b12") or {}
+        if ok and res["captured"] and res["b12"]:
+            rec["b12_before"] = dict(ok=old_b.get("ok"), worst=max((g.get("dc_max") or 0 for g in old_b.get("groups") or []), default=None))
+            r["b12"] = res["b12"]
+            rec["replaced"] = True
+        else:
+            rec["replaced"] = False
+            rec["reason"] = ("lambda = 1 not reached in the refresh sweep" if not res["captured"] else
+                             "the new curve departs from the stored one at step %s (max d lambda %.4g, rel d disp %.4g): the "
+                             "code path has changed -- re-run the whole combination (retry --combos)" % (bad, dl, dd))
+        r["b12_refresh"] = rec
+        done[res["label"]] = rec
+        print("   %s %-40s imp %-3s %d steps %.0f s, curve %s (%d steps compared, max dλ %.2g) -> B-1.2 %s" % (
+            "refreshed" if rec["replaced"] else "KEPT     ", res["label"][:40], res["imp"], res["steps"], res["seconds"],
+            "matches" if ok else "DIFFERS", n, dl, ("ok=%s worst %.3f" % (r["b12"].get("ok"), max((g.get("dc_max") or 0) for g in r["b12"].get("groups") or [{}])))
+            if rec["replaced"] else rec["reason"]), flush=True)
+    runs = _runs_from_results(d)
+    R = cfg.get("seis", {}).get("R")
+    opts_rep = dict(o)
+    for k_ in ("imposed_load_reduction", "imposed_load_basis"):
+        if k_ in opts:
+            opts_rep[k_] = opts[k_]
+    opts_rep["nsub"] = tuple(opts_rep.get("nsub", (2, 2, 4)))
+    opts_rep["section_log"] = [tuple(x) for x in opts_rep.get("section_log", [])]
+    opts_rep["risk_category"] = None; opts_rep["india"] = True
+    opts_rep["gravity_gate"] = d.get("gravity_gate"); opts_rep["b11"] = d.get("b11_preconditions")
+    opts_rep.setdefault("n_cases", len(cases))
+    _record_rerun(opts_rep, "ddm_b12_refresh", dict(code="second wave: B-1.2 refresh to lambda = 1", combos=list(done),
+                                                    seconds=round(time.time() - t0), date=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                                    code_version=code_version(),
+                                                    result={k: ("replaced" if v["replaced"] else "kept: " + v["reason"][:80]) for k, v in done.items()}))
+    rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
+                         d.get("member_table", []), None, elapsed=d.get("elapsed_s"))
+    if not args.no_block:
+        report_ddm.write_block(job, block)
+    print(">> report:", rep)
+    _viewer(out_dir, nm, d.get("gate", {}), runs)
+    print(">> B-1.2 refresh elapsed %.0f s" % (time.time() - t0))
+    return rep
+
+
 def _viewer(out_dir, nm, gate, runs):
     """ddm_viewer_3d.html (Steltic viewer bundle: Pushover / NLRHA / DDM share one core). Never hides the report."""
     try:
@@ -822,6 +976,10 @@ def main(argv=None):
                    help="also re-run these combinations (exact labels) from the start on the current code and replace them")
     t.add_argument("--only-listed", action="store_true",
                    help="re-run only the --combos (stored SOLVER_FAILURE combinations not listed are kept as they are)")
+    t.add_argument("--b12-only", action="store_true",
+                   help="India: redo only the IS 800 B-1.2 check at lambda = 1 of the --combos (after a B-1.2 rule change): "
+                        "repeat each stored governing sweep up to lambda = 1, check that the curve repeats the stored one, "
+                        "replace the B-1.2 row; lambda_u, status and curve are kept")
     t.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2)))); t.add_argument("--no-block", action="store_true")
     s = sub.add_parser("selftest", help="column-curve regression + small frame")
     a = ap.parse_args(argv)
