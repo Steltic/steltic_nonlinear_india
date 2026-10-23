@@ -685,6 +685,7 @@ def retry(args):
     combinations -- e.g. NL-37, which changes only the B-1.2 check of combinations without earthquake); --only-listed
     re-runs only those."""
     t0 = time.time()
+    args._code_version = code_version()                 # the code the sweeps run on (taken at the start, not the end)
     job = os.path.abspath(args.job_dir)
     engine_dir = args.steltic_engine or os.environ.get("STELTIC_ENGINE_DIR")
     out_dir = args.out or job
@@ -767,7 +768,7 @@ def retry(args):
     opts_rep.setdefault("n_cases", len(cases))
     rec_ = dict(code="NL-30" if not getattr(args, "combos", None) else "NL-30 / re-run of named combinations", combos=bad,
                 sweeps=len(tasks), seconds=round(time.time() - t0), result={lab: gov[lab]["res"].get("status") for lab in gov},
-                date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=code_version())
+                date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=getattr(args, "_code_version", None) or code_version())
     _record_rerun(opts_rep, "ddm_rerun" if getattr(args, "combos", None) else "ddm_retry", rec_)
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
                          d.get("member_table", []), None, elapsed=d.get("elapsed_s"))
@@ -866,7 +867,8 @@ def _b12_refresh(args, job, engine_dir, out_dir, d, t0):
         res = _b12_worker(t)
         r = stored[res["label"]]
         ok, n, dl, dd, bad = curve_prefix_match(res["hist"], r.get("hist") or [])
-        rec = dict(date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=code_version(), imp=res["imp"], dlam=t[4]["_b12_only"]["dlam"],
+        rec = dict(date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=getattr(args, "_code_version", None) or code_version(),
+                   imp=res["imp"], dlam=t[4]["_b12_only"]["dlam"],
                    steps=res["steps"], seconds=res["seconds"], termination=res["termination"], curve_steps_compared=n,
                    max_dlambda=dl, max_rel_ddisp=dd, curve_matches=ok, basis=B12_REFRESH_BASIS)
         old_b = r.get("b12") or {}
@@ -898,7 +900,7 @@ def _b12_refresh(args, job, engine_dir, out_dir, d, t0):
     opts_rep.setdefault("n_cases", len(cases))
     _record_rerun(opts_rep, "ddm_b12_refresh", dict(code="second wave: B-1.2 refresh to lambda = 1", combos=list(done),
                                                     seconds=round(time.time() - t0), date=time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                                    code_version=code_version(),
+                                                    code_version=getattr(args, "_code_version", None) or code_version(),
                                                     result={k: ("replaced" if v["replaced"] else "kept: " + v["reason"][:80]) for k, v in done.items()}))
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
                          d.get("member_table", []), None, elapsed=d.get("elapsed_s"))
