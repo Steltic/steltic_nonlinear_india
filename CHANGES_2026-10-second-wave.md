@@ -79,7 +79,37 @@ to redo a B-1.2 check after a B-1.2 rule change.
 
 ## Re-runs (published copies in /home/claude/nl_rerun/<id>)
 
-RESULTS_TABLE
+Before = the published first-wave site index; after = this branch's results. Gravity λu is unchanged everywhere (the
+sweeps did not change). "Refresh" = `retry --b12-only` (B-1.2 redone from the stored governing sweep repeated to λ = 1;
+every curve repeated the stored one exactly, max |Δλ| 0); "full" = `retry --combos … --only-listed`.
+
+| Run | How (seconds) | Gate before → after | Gravity λu | B-1.2 worst before → after |
+|---|---|---|---|---|
+| IN_Ex19 stem | full, 5 combinations in 4 chunks (2 715 + 932 + 1 850 + 2 055) | complete_with_capacity_shortfall → **complete_with_solver_stops** (the NL-31-disclosed seismic stop kept) | 1.041 → 1.041 | **1.034 FAIL** gravity col BOX400X400X28, 1.5DL+1.5LL → **0.878** same column, 1.2DL+1.2LL+1.2EQ_Z+0.36EQ_Y (no reduction with earthquake); under 1.5DL+1.5LL 1.034 → 0.837 (r × fL × N_LL = 1 788 kN) |
+| IN_Ex19 main | no new DDM run (the 2026-10-18 first-wave LL re-run, reports regenerated) | complete_with_capacity_shortfall → **partial** (the stored runaway in 1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z, stated) | 1.041 → 1.041 | 1.035 FAIL → 0.875 BOX400X400X28, 1.2DL+1.2LL+1.2EQ_Z+0.36EQ_X |
+| IN_Ex11 | refresh, 5 combinations (86) | complete → complete | 1.214 | 0.887 gravity col WPB300X300X100.85 → 0.857 roof NPB450X190X67.16 (the column 0.887 → 0.782) |
+| IN_Ex15 | refresh, 5 combinations (424; 1.5DL+1.5LL at Δλ 0.0125, the third NL-30 rung of its stored sweep, 71 steps) | complete → complete | 1.173 | 0.902 gravity col WPB360X370X165.35 → 0.831 roof NPB550X210X105.52 (the column 0.902 → 0.755) |
+| IN_Ex17 | refresh, 5 combinations (859) | complete → complete | 1.306 | 0.908 floor WPB500X300X187.34 → 0.908 (a floor beam governs; the worst column 0.820 → 0.728) |
+| IN_Ex20 | refresh, 5 combinations (458) | complete → complete | 1.217 | 0.992 lateral col WPB400X400X239.62 → 0.929 floor WPB550X300X199.44 (the column 0.992 → 0.825) |
+| IN_Ex18 | full NL-30 `retry` of the stored runaway 1.2DL+1.2LL−1.2W_X (3 101): Δλ 0.05 → SOLVER_FAILURE, the runaway caught live at λ 1.668 (1 534 s); Δλ 0.025 → NO_LIMIT_POINT, post-peak budget at λ 1.669 (1 563 s), like its twin +W_X | complete (stale file; the index already counted 1 solver failure) → complete, solver failures 1 → 0 | 1.334 | 0.899 floor NPB600X220X154.47, 1.2DL+1.2LL+1.2EQ_Y[ea] → 0.899 (no 3.2.1 reduction in the Ex18 design) |
+
+Validation of the refresh: on a copy of IN_Ex19 main, whose five LL combinations were fully re-run on 2026-10-18,
+the refresh reproduced all 870 B-1.2 values (5 combinations × 29 member groups × N, M, M, D/C, V/Vd, N reduction) and
+the λ = 1 brackets exactly (/home/claude/nl_work/validate/IN_Ex19_main_b12refresh).
+
+IN_Ex19 main, 1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z — left as the stated solver stop:
+- No checkpoint: the OpenSees state lives in the sweep's process, `solver.sweep` has no save / restore and `retry`
+  writes ddm_results.json only at its end, so a sweep cannot be resumed in a second process.
+- The method's ladder only gets smaller: Δλ 0.05 → 0.025 → 0.0125, time limit 2 400 × k s. Its stored rungs:
+  0.05 stopped (step_exhausted, λ 1.330) after 5 668 s; 0.025 ran into the −788 runaway at λ 1.318 after 2 592 s. A
+  re-run repeats both (≈ 8 300 s) before the third rung, and the third rung's own time limit is 9 600 s, longer than
+  the 7 200 s a background process may run; a sweep step can also overrun its limit (the first rung ran 5 668 s against
+  2 400 s). Neither the whole ladder nor the third rung alone can be fitted honestly; skipping the stored rungs or
+  cutting the time limit would change the method.
+- The combination's B-1.2 is evaluated (λ = 1 was passed before the runaway): satisfied, 0.854. Its converged steps
+  reached λ 1.318 (and 1.330 in the first rung), so whatever the third rung found would not be below that; its
+  siblings (1.2DL+1.2LL±1.2EQ_Y[ea]−0.3EQ_Z) ended NO_LIMIT_POINT on the clock at λ 1.36 and its mirror
+  (−EQ_Y+0.3EQ_Z) at a ductility cap at λ 1.354. The gate stays **partial** and says why.
 
 ## Tests
 
