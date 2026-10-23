@@ -147,4 +147,6 @@ gold set (`snl report` now rewrites the stored NLRHA / pushover HTML in place). 
 - the gate reading the stored IN_Ex18 runaway; the cleaned out-of-plumb basis text.
 
 Full suite (STELTIC_ENGINE_DIR = the frozen HR engine e340df8, STELTIC_HR_ROOT = an export of steltic_india
-origin/main 251496d, under /home/claude/bin/heavy): TESTCOUNT.
+origin/main 251496d, under /home/claude/bin/heavy): **456 passed, 4 skipped, 0 failed** (first wave: 420 passed, 23
+skipped). The 4 skips: the two USA Ex18_R3 DDM fixtures (need the USA engine) and two NL-33 tests looking for an
+IN_Ex10 gold job under their own default path.
