@@ -51,6 +51,7 @@ def shed_basis(job):
                     ("occupancy use", r"[\"']use[\"']\s*:\s*[\"']([^\"']+)[\"']")):
         m = re.search(rx, src)
         if m and any(w in m.group(1).lower() for w in INDUSTRIAL_WORDS):
-            out.update(shed=True, basis="Industrial building (HR cfg %s '%s')" % (key, m.group(1)))
+            out.update(shed=True, basis="Industrial building (%s '%s' in the HR design input)" % (
+                "building type" if key == "building_type" else key.replace("_", " "), m.group(1)))
             return out
     return out

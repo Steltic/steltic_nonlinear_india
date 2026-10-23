@@ -13,10 +13,61 @@ from .record_set import BASIS_SENTENCE
 GM_BASIS_INDIA = dict(
     record_library="FEMA P-695 far-field set (22 pairs; PEER NGA) — record library (information)",
     selection_scaling=BASIS_SENTENCE,                  # second wave: 7.7.4 quoted from the corpus; the 0.9 rule is ours
-    tectonic_consistency="EOR to confirm (non-Indian crustal records); Indian/regional sets (e.g. PESMOS) can be supplied with --records-set",
+    tectonic_consistency="design engineer to confirm (non-Indian crustal records); Indian/regional sets (e.g. PESMOS) can be supplied with --records-set",
     target="IS 1893 elastic spectrum (DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g), 5 % damping, no R (D6)",
 )
 
+
+
+def _clean_source(t):
+    """'Rayleigh 2.5 % ... (hinge_params damping.xi_default (modelling assumption))' -> '... (modelling assumption)'."""
+    import re
+    t = re.sub(r"\(hinge_params [\w.]+ \(modelling assumption\)\)", "(modelling assumption)", str(t or ""))
+    return re.sub(r"hinge_params [\w.]+ ?", "", t).strip()
+
+
+def damping_text(d):
+    """2026-10 check fixes (finding 5): the NLRHA damping in words, not as a raw JSON object."""
+    if not isinstance(d, dict):
+        return "—" if d is None else str(d)
+    parts = []
+    if d.get("xi") is not None:
+        parts.append("ξ = %g %%%s" % (100 * float(d["xi"]), (" (cap %g %%)" % (100 * float(d["cap"]))) if d.get("cap") is not None else ""))
+    if d.get("basis"):
+        parts.append(_clean_source(d["basis"]))
+    if d.get("warning"):
+        parts.append("warning: %s" % d["warning"])
+    ref = d.get("reference") or {}
+    if ref.get("value") is not None:
+        parts.append("reference %g %% (%s; %s)" % (100 * float(ref["value"]), ref.get("clause") or "", ref.get("role") or ""))
+    return "; ".join(parts) or "—"
+
+
+def torsion_text(t):
+    """The accidental torsion in words, not as a raw JSON object."""
+    if not isinstance(t, dict):
+        return "—" if t is None else str(t)
+    if str(t.get("mode") or "").lower() == "off" or t.get("e_ratio") is None:
+        return "off%s" % ((" (%s)" % t["clause"]) if t.get("clause") else "")
+    sign = lambda v: "+" if (v or 0) >= 0 else "−"                # noqa: E731
+    return "eccentricity %g b, %s in X and %s in Y (%s)" % (float(t["e_ratio"]), sign(t.get("sx")), sign(t.get("sy")),
+                                                          t.get("clause") or "IS 1893 7.8.2")
+
+
+def refresh_model_paragraph(h):
+    """A stored DBE / MCE report: the raw JSON of damping and accidental torsion in section 6 in words (idempotent)."""
+    import html as _html, json as _json, re
+    m = re.search(r"; damping (\{.*?\}); accidental torsion (\{.*?\}); mass = ", h)
+    if not m:
+        return h
+    try:
+        d = _json.loads(_html.unescape(m.group(1)))
+        t = _json.loads(_html.unescape(m.group(2)))
+    except Exception:                                            # noqa: BLE001
+        return h
+    new = "; damping %s; accidental torsion %s; mass = " % (_html.escape(damping_text(d)), _html.escape(torsion_text(t)))
+    h = h[:m.start()] + new + h[m.end():]
+    return re.sub(r"spurious modes \[\]\.</p>", "spurious modes none.</p>", h)
 
 def _f(v, d=2):
     return "—" if v is None else "%.*f" % (d, v)
@@ -103,7 +154,7 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=
             _f(p["base_shear_kN"][0], 0), _f(p["base_shear_kN"][1], 0),
             "%s / %s" % (_f(p["peak_roof_mm"][0], 1), _f(p["peak_roof_mm"][1], 1))))
     H.append("</table><p>Scale-factor bounds: %s%s</p>" % (
-        gm.get("sf_bounds") if gm.get("sf_bounds") else "none set (the engineer may set nl_plan.gm_selection.sf_bounds).",
+        gm.get("sf_bounds") if gm.get("sf_bounds") else "none set (the design engineer may set them).",
         (" — " + "; ".join(gm.get("sf_warnings") or [])) if gm.get("sf_warnings") else ""))
     H.append("<h2>2 Storey drifts</h2><figure><img src='%s'></figure><table><tr><th>storey</th><th>h (mm)</th><th>mean X</th>"
              "<th>mean Y</th><th>max X</th><th>max Y</th></tr>" % fig_drift_is(summ))
@@ -143,7 +194,7 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=
     nv = summ["non_vacuous"]
     em = pj.get("elastic_members") or {}
     tr = pj.get("record_trim") or {}
-    H.append("<h2>Modelling disclosures (NL-21)</h2><ul>")
+    H.append("<h2>Modelling disclosures</h2><ul>")
     if em.get("n_elastic"):
         H.append("<li>%s. %d members elastic; largest first-yield ratio %.2f (%s); above 1.0: %s.</li>" % (
             html.escape(em.get("basis") or ""), em["n_elastic"], em.get("max_ratio") or 0.0, em.get("statistic"),
@@ -162,9 +213,9 @@ def write_level(outdir, pkg, gm, results, summ, modal, numerics, elapsed_s, prm=
         H.append("</table>")
     H.append("<h2>6 Model</h2><p>Plasticity %s; damping %s; accidental torsion %s; mass = IS seismic weight (gate %s); "
              "modes to 90 %% mass: T90 = %s s; spurious modes %s.</p>" % (
-                 pj["plasticity"], html.escape(json.dumps(numerics.get("damping"))), html.escape(json.dumps(numerics.get("torsion"))),
+                 pj["plasticity"], html.escape(damping_text(numerics.get("damping"))), html.escape(torsion_text(numerics.get("torsion"))),
                  "ok" if (pj["mass_gate"] or {}).get("ok") else "n/a", _f((modal or {}).get("T90"), 3),
-                 (modal or {}).get("spurious_modes")))
+                 ", ".join(str(x) for x in (modal or {}).get("spurious_modes") or []) or "none"))
     path = os.path.join(outdir, "nlrha_report.html")
     open(path, "w", encoding="utf-8").write("\n".join(H))
     return path

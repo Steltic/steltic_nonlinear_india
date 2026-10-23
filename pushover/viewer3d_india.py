@@ -147,9 +147,11 @@ function memberInfo(e){
 }
 function dirTable(){
   const d = D(); const r = [['Statement', `<i>${P.statement}</i>`], ['T1 (fibre model, push mode)', `${fmt(d.T1,3)} s`],
-    ['Vmax · at roof u', `${fmt(d.Vmax_kN,0)} kN · ${fmt(d.u_at_Vmax_mm,1)} mm`], ['V-bar_B (HR design, this direction)', d.VB_kN ? `${fmt(d.VB_kN,0)} kN` : '—'],
-    ['Vmax / V-bar_B', fmt(d.Vmax_over_VB,2)], ['Stop', d.stop||'—']];
-  for (const [k,t] of Object.entries(d.targets)) r.push([`${k}: Te · Sa · δt`, `${fmt(t.Te,3)} s · ${fmt(t.Sa,3)} g · ${fmt(t.u_mm,1)} mm`], [`${k}: V / VB · max drift`, `${fmt(t.V_over_VB,2)} · ${pct(t.max_drift||0)}`]);
+    ['Vmax · at roof u', `${d.lower_bound?'≥ ':''}${fmt(d.Vmax_kN,0)} kN · ${fmt(d.u_at_Vmax_mm,1)} mm${d.lower_bound?' (lower bound: the curve ended in a numerical stop)':''}`], ['V-bar_B (HR design, this direction)', d.VB_kN ? `${fmt(d.VB_kN,0)} kN` : '—'],
+    ['Vmax / V-bar_B', `${d.lower_bound?'≥ ':''}${fmt(d.Vmax_over_VB,2)}`], ['Stop', d.stop||'—']];
+  if (d.review) r.unshift(['UNDER REVIEW', `<b>${d.review}</b>`]);
+  const nr = d.targets_not_reached || [];
+  for (const [k,t] of Object.entries(d.targets)) r.push([`${k}: Te · Sa · δt`, `${fmt(t.Te,3)} s · ${fmt(t.Sa,3)} g · ${fmt(t.u_mm,1)} mm${nr.includes(k)?' (not reached)':''}`], [`${k}: V / VB · max drift${nr.includes(k)?' at the curve end':''}`, `${fmt(t.V_over_VB,2)} · ${pct(t.max_drift||0)}`]);
   document.getElementById('dirTable').innerHTML = rows(r);
 }
 function show(id, on){ const el = document.getElementById(id); if (el && el.style) el.style.display = on ? 'block' : 'none'; }
@@ -273,8 +275,8 @@ def data_from_run(pkg, runs: dict, results: dict, brace_dims: dict | None = None
 
 
 # ------------------------------------------------------------------ lite: from pushover_package.json (pre-NL-32 jobs)
-LITE_NOTE = ("Lite viewer, rebuilt from pushover_package.json: this job was run before NL-32, so the per-step member "
-             "states were not saved. Three snapshots (unloaded, IS-DBE and IS-MCE target); deformed shape from the saved "
+LITE_NOTE = ("Lite viewer, rebuilt from the stored pushover results: this job was run before the step-by-step viewer "
+             "existed, so the per-step member states were not saved. Three snapshots (unloaded, IS-DBE and IS-MCE target); deformed shape from the saved "
              "storey drifts; colours per member group (kind · section · level) from the saved group peaks. Re-run the "
              "pushover for the step-by-step viewer.")
 
@@ -325,7 +327,7 @@ def _lite_snapshot(keys, resp, eg=None):
         if not hit:
             if eg.get("n_elastic") and k[0] in ("col", "beam"):        # NL-21 gravity members: elastic, no fibre group
                 out[gid] = dict(state="elastic", info=[
-                    ["Model", "elastic gravity member (NL-21): gravity-only, pinned beam or HR gravity column"],
+                    ["Model", "elastic gravity member: gravity-only, pinned beam or HR gravity column"],
                     ["First-yield ratio, worst elastic member, whole push this direction", "%.2f (limit 1.0)" % (eg.get("max_ratio") or 0)],
                     ["Elastic members above first yield", ", ".join(str(t) for t in eg.get("flagged_elastic") or []) or "none"]])
             continue
@@ -399,10 +401,31 @@ def data_from_package(pkg, ppkg: dict) -> dict:
 
 
 # ------------------------------------------------------------------ render / persist / rebuild
+def annotate(outdir, data: dict) -> dict:
+    """2026-10 check fixes (findings 1, 2, 4): per direction, from the stored package and the review record -- whether
+    Vmax is a lower bound (printed with '≥'), the targets the curve did not reach, and the 'under review' summary.
+    Stop messages in mm. Returns `data` (changed in place)."""
+    try:
+        pp = json.load(open(os.path.join(outdir, "pushover_package.json"), encoding="utf-8"))
+    except Exception:                                              # noqa: BLE001
+        pp = {}
+    from .report_india import _lower_bound, stop_reason_mm
+    from .review import directions_under_review
+    rv = directions_under_review(os.path.dirname(os.path.abspath(outdir)))
+    for d, dd in (data.get("dirs") or {}).items():
+        pd = (pp.get("directions") or {}).get(d) or {}
+        dd["lower_bound"] = bool(_lower_bound(pd)) if pd else False
+        dd["targets_not_reached"] = [lv for lv, n in (pd.get("nsp") or {}).items() if n.get("reached_target") is False]
+        dd["review"] = (rv.get(d) or {}).get("summary")
+        dd["stop"] = stop_reason_mm(dd.get("stop"))
+    return data
+
+
 def write(outdir, pkg, data: dict) -> str:
     """Render pushover/pushover_viewer_3d.html from viewer data (full or lite) and refresh the bundle hub."""
     if not data.get("dirs"):
         raise RuntimeError("no pushover direction to show")
+    annotate(outdir, data)
     model = _mm_model(pkg)
     mode = "step by step" if data["mode"] == "full" else "lite (rebuilt from the package)"
     meta = dict(title=f"{pkg.name} · Pushover (IS 1893 elastic DBE / MCE targets)", subtitle=f"{pkg.basis.system or ''}",
@@ -447,7 +470,12 @@ def ensure(job_dir, force=False) -> str | None:
         if not os.path.exists(pp):
             return None
         html = os.path.join(out, HTML_FILE)
-        if os.path.exists(html) and not force and os.path.getmtime(html) >= os.path.getmtime(pp):
+        rv = os.path.join(out, "pushover_review.json")
+        # 2026-10 check fixes: a viewer written before the annotations ("lower_bound") or before the review record is
+        # rebuilt once from the same stored data (deterministic; a few tenths of a second)
+        if os.path.exists(html) and not force and os.path.getmtime(html) >= os.path.getmtime(pp) \
+                and (not os.path.exists(rv) or os.path.getmtime(html) >= os.path.getmtime(rv)) \
+                and '"lower_bound"' in open(html, encoding="utf-8", errors="replace").read():
             return html
         ppkg = json.load(open(pp, encoding="utf-8"))
         if str(ppkg.get("jurisdiction") or "").lower() != "india":

@@ -1496,15 +1496,26 @@ def write_complete_gate(job_dir: str) -> dict:
     st = design_status(job_dir=job_dir, evidence={"from_artifact": True})
     art = st["artefact_gate"]
     chk = art.get("checks") or {}
-    notes = []
-    if chk.get("ddm_solver_failures"):
-        notes.append("DDM: %d sweep(s) stopped numerically (SOLVER_FAILURE)%s; %d disclosed (NL-31), the rest block COMPLETE"
-                     % (chk["ddm_solver_failures"], (", %d of them numerical runaways (NL-36)" % chk["ddm_runaway_steps"])
-                        if chk.get("ddm_runaway_steps") else "", len(chk.get("ddm_solver_stops_disclosed") or [])))
+    # 2026-10 check fixes: the notes and the reason are public text (the site index prints them) -- plain words, no
+    # ticket ids; the pushover targets a curve did not reach and the pushover directions under review are named too
+    try:
+        from snl import gate_reason as GR
+        notes = GR.notes(job_dir)
+    except Exception:                                   # noqa: BLE001 -- the gate must still be written
+        GR, notes = None, []
+        if chk.get("ddm_solver_failures"):
+            notes.append("DDM: %d sweep(s) stopped numerically; no capacity is reported for them"
+                         % chk["ddm_solver_failures"])
     payload = dict(jurisdiction=JURISDICTION, status=st["status"], reasons=st["reasons"], checks=art.get("checks"),
                    notes=notes, inputs_sha256=art.get("inputs_sha256"),
                    statement="Gate on analysis artefacts only; IS 1893 provides no NL acceptance criteria (results informative).",
                    generated=__import__("time").strftime("%Y-%m-%dT%H:%M:%S"))
+    if GR is not None:
+        try:
+            gr = GR.gate_reason(job_dir, gate=payload)
+            payload.update(label=gr["label"], reason_text=gr["text"])
+        except Exception:                               # noqa: BLE001
+            pass
     with open(os.path.join(job_dir, "complete_gate.json"), "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=1, default=str)
     write_complete_gate_disclosures(job_dir, job_dir=job_dir, evidence={"from_artifact": True})
