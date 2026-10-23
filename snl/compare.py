@@ -263,7 +263,8 @@ def ddm_headline(ddm):
         b12_member=("%s %s" % (worst[1].get("role"), worst[1].get("section")) if worst else None),
         b12_combo=(worst[2] if worst else None),
         b11_sections_compact=b11.get("ok"),
-        b11_lateral_restraint=b11.get("lateral_restraint"),
+        b11_lateral_restraint=(str(b11["lateral_restraint"]).replace("EOR statement", "design engineer's statement")
+                               if b11.get("lateral_restraint") else None),      # results stored before the first wave
         imposed_load_basis=(ddm.get("options") or {}).get("imposed_load_basis"))
 
 

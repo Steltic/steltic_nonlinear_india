@@ -416,7 +416,7 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
              'sub-elements (column / beam / brace). Rolled I-sections carry root-fillet fibres so A, I<sub>x</sub> and Z<sub>p</sub> '
              'equal the IS 808 catalogue values of the HR design (NL-26).</li>' % (o.get("nip", 5), *o.get("nsub", (2, 2, 4))))
     P.append('<li>Steel01, E = 200 000 MPa, hardening b = %.3f; f<sub>y</sub> per section from IS 2062 (Part 1):2025 Table 3 by thickness band '
-             '(expected-strength factor 1.0 unless the EOR sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
+             '(expected-strength factor 1.0 unless the design engineer sets one) — the same steel as the pushover and NLRHA models.</li>' % o.get("hardening", 0.002))
     P.append('<li>Residual stress pattern: %s.</li>' % _h(o.get("residual")))
     if o.get("imposed_load_basis"):
         P.append('<li><b>%s</b>%s</li>' % (_h(o["imposed_load_basis"]), _h(_imposed_basis_by_combo(runs, o))))
@@ -466,7 +466,7 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
         P.append('<p>B-1.1 preconditions: sections %s (IS 800 Table 2); lateral restraint: %s. <i>%s</i></p>' % (
             "all plastic/compact" if b11.get("ok") else "NOT all plastic/compact: " + ", ".join(
                 "%s %s" % (x["section"], x["cls"]) for x in b11.get("sections", []) if x.get("cls") not in ("plastic", "compact")),
-            _h(b11.get("lateral_restraint")), _h(b11.get("quote"))))
+            _h(str(b11.get("lateral_restraint") or "").replace("EOR statement", "design engineer's statement")), _h(b11.get("quote"))))
     # 3 capacity table
     P.append('<h2>3 · Load factor by combination</h2>' + _solver_failure_html(runs) + '<div class="tw"><table><tr><th>combination</th><th>kind</th><th>imperf.</th>'
              '<th>λ first yield</th><th>λ<sub>u</sub> / status</th><th>φ<sub>s</sub>·λ<sub>u</sub> (literature φ<sub>s</sub>, information)</th>'
