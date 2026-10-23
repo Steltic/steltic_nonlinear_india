@@ -11,7 +11,11 @@ current index: its order, titles and links are kept, and runs it does not list a
 number comes from the packages; nothing is typed in.
 
 What each example's "results" carries (2026-10 first wave):
-  gate, gate_notes             complete_gate.json status and notes (solver failures are stated, never silent)
+  gate, gate_notes             complete_gate.json status and notes (solver failures are stated, never silent);
+                               2026-10 check fixes: gate_label and gate_reason_text (snl/gate_reason.py: what stopped,
+                               in which combination, whether a capacity is reported, why it blocks or does not), no
+                               ticket ids; pushover vmax_*_text_x/y ("≥" on a lower bound), mce_target_text_x/y where
+                               the IS-MCE target was not reached, under_review_x/y + review_x/y (pushover/review.py)
   pushover                     per direction Vmax/VB and Vmax/W, whether the curve ended in a numerical stop (Vmax a
                                lower bound) and whether the IS-MCE target displacement was reached; second wave: `shed`
                                (snl/shed.py: single storey or industrial use in the HR package) with `headline` vmax_w --
@@ -82,10 +86,16 @@ def record_set_name(nl_pkg, lv_pkgs):
     return ("%s, amplitude-scaled to the IS 1893 spectrum" % (lib.split(" (")[0] or ", ".join(sorted(user)))) if (lib or user) else None
 
 
+def _ge(lb):
+    return "≥ " if lb else ""
+
+
 def pushover_results(job):
     from snl.shed import shed_basis
+    from pushover import review as RV
     po = _j(os.path.join(job, "pushover", "pushover_package.json")) or {}
     sb = shed_basis(job)
+    rv = RV.directions_under_review(job)
     out = dict(shed=sb["shed"], shed_basis=sb["basis"],
                headline=("vmax_w" if sb["shed"] else "vmax_vb"),
                vmax_vb_note=("on a shed VB (the R-reduced IS 1893 design base shear) is small, so Vmax/VB is large and is "
@@ -96,10 +106,32 @@ def pushover_results(job):
         out["vmax_vb_" + k] = _r(cap.get("Vmax_over_VB"), 1)
         out["vmax_w_" + k] = _r(cap.get("Vmax_over_W"), 3)
         tail = cap.get("tail_status") or (dd.get("tail") or {}).get("status")
-        out["vmax_lower_bound_" + k] = (tail == "lower_bound") or str(dd.get("stop_reason") or "").startswith("solver")
+        lb = (tail == "lower_bound") or str(dd.get("stop_reason") or "").startswith("solver")
+        out["vmax_lower_bound_" + k] = lb
+        # check fixes, finding 2: preformatted text with "≥" where Vmax is a lower bound, "under review" where it is
+        if d in rv:
+            out["vmax_vb_text_" + k] = out["vmax_w_text_" + k] = "under review"
+        else:
+            out["vmax_vb_text_" + k] = ("%s%.1f" % (_ge(lb), cap["Vmax_over_VB"])) if cap.get("Vmax_over_VB") is not None else None
+            out["vmax_w_text_" + k] = ("%s%.2f" % (_ge(lb), cap["Vmax_over_W"])) if cap.get("Vmax_over_W") is not None else None
         mce = (dd.get("nsp") or {}).get("IS-MCE") or {}
         if mce:
             out["mce_target_reached_" + k] = bool(mce.get("reached_target"))
+            if mce.get("reached_target") is False:         # check fixes, finding 1
+                end = ((dd.get("response") or {}).get("IS-MCE") or {}).get("roof_disp_mm")
+                if end is None and cap.get("u_end_in") is not None:
+                    end = float(cap["u_end_in"]) * 25.4
+                out["mce_target_text_" + k] = (
+                    ("IS-MCE target not reached: the curve ended in a numerical stop at %.0f mm of the %.1f mm target; the "
+                     "values shown are at the curve end" % (end, mce["target_disp_mm"]))
+                    if (end is not None and mce.get("target_disp_mm")) else
+                    "IS-MCE target not reached: the curve ended in a numerical stop before it; the values shown are at the curve end")
+        out["under_review_" + k] = d in rv
+        if d in rv:                                        # check fixes, finding 4
+            out["review_" + k] = rv[d].get("summary")
+    if any(out.get("vmax_lower_bound_" + d.lower()) for d in (po.get("directions") or {})):
+        out["vmax_lower_bound_note"] = ("≥ marks a lower bound: the curve ended in a numerical stop before it lost "
+                                        "strength, so the peak base shear is not established")
     return out
 
 
@@ -176,8 +208,8 @@ def ddm_results(job):
                 b11_lateral_restraint=("confirmed" if lateral_ok else (h["b11_lateral_restraint"] or "not checked")),
                 imposed_load_basis=h["imposed_load_basis"],
                 reclassified_runaways=n_re,
-                reclassified_note=("%d stored sweep(s) read as numerical runaways (NL-36); the DDM run predates the guard "
-                                   "and is due a re-run" % n_re) if n_re else None)
+                reclassified_note=("%d stored sweep(s) read as numerical runaways by the plausibility bounds of the "
+                                   "method; the DDM run predates those bounds and is due a re-run" % n_re) if n_re else None)
 
 
 def meta_line(res):
@@ -185,11 +217,14 @@ def meta_line(res):
     parts = []
     vb = [p.get("vmax_vb_x"), p.get("vmax_vb_y")]
     w = [p.get("vmax_w_x"), p.get("vmax_w_y")]
+    # check fixes: "≥" on a lower bound, "under review" instead of the number (findings 2 and 4)
+    vbt = [p.get("vmax_vb_text_x"), p.get("vmax_vb_text_y")]
+    wt = [p.get("vmax_w_text_x"), p.get("vmax_w_text_y")]
     if p.get("shed") and any(v is not None for v in w):        # second wave: no Vmax/VB headline on a shed
-        parts.append("Pushover Vmax/W %s" % " / ".join("%.2f" % v for v in w if v is not None))
+        parts.append("Pushover Vmax/W %s" % " / ".join(t or "%.2f" % v for v, t in zip(w, wt) if v is not None))
     elif any(v is not None for v in vb):
-        parts.append("Pushover Vmax/VB %s (Vmax/W %s)" % (" / ".join("%.1f" % v for v in vb if v is not None),
-                                                          " / ".join("%.2f" % v for v in w if v is not None)))
+        parts.append("Pushover Vmax/VB %s (Vmax/W %s)" % (" / ".join(t or "%.1f" % v for v, t in zip(vb, vbt) if v is not None),
+                                                          " / ".join(t or "%.2f" % v for v, t in zip(w, wt) if v is not None)))
     if n.get("drift_dbe_pct") is not None:
         lv = n.get("levels") or {}
         pairs = sorted({(L or {}).get("pairs") for L in lv.values()})
@@ -209,7 +244,13 @@ def meta_line(res):
 
 def flag_line(res):
     d = res.get("ddm") or {}
+    p = res.get("pushover") or {}
     out = []
+    for k in ("x", "y"):                                   # check fixes, findings 1 and 4
+        if p.get("review_" + k):
+            out.append(p["review_" + k])
+        elif p.get("mce_target_text_" + k):
+            out.append("Pushover %s: %s." % (k.upper(), p["mce_target_text_" + k]))
     if d.get("b12_ok") is False and (d.get("b12_dc") or 0) > 1.0:
         out.append("DDM: IS 800 Annex B-1.2 section check at λ = 1 not satisfied: %s, D/C %s under %s." % (
             d.get("b12_member"), d.get("b12_dc_text"), d.get("b12_combo")))
@@ -217,8 +258,11 @@ def flag_line(res):
         out.append("DDM: λ = 1 not reached in %d combination(s), so the IS 800 Annex B-1.2 check is not satisfied there."
                    % d["b12_lambda1_not_reached"])
     if d.get("solver_failures"):
-        out.append("DDM: %d sweep(s) stopped numerically (SOLVER_FAILURE%s); their λ is not a capacity." % (
-            d["solver_failures"], (", %d numerical runaway(s)" % d["runaway_steps"]) if d.get("runaway_steps") else ""))
+        out.append("DDM: %d sweep%s stopped numerically%s; %s λ is not a capacity." % (
+            d["solver_failures"], "" if d["solver_failures"] == 1 else "s",
+            ((" (a numerical runaway)" if d["solver_failures"] == 1 else " (%d of them numerical runaways)" % d["runaway_steps"])
+             if d.get("runaway_steps") else ""),
+            "its" if d["solver_failures"] == 1 else "their"))
     if d.get("gravity_lambda") is not None and d["gravity_lambda"] < 1.0:
         out.append("DDM: gravity λu %s is below 1.0." % d["gravity_lambda_text"])
     return " ".join(out) or None
@@ -226,7 +270,13 @@ def flag_line(res):
 
 def run_entry(job, prev=None, rid=None):
     gate = _j(os.path.join(job, "complete_gate.json")) or {}
-    res = dict(gate=gate.get("status"), gate_notes=gate.get("notes") or [], pushover=pushover_results(job),
+    # check fixes, finding 3: the gate's reason in plain words (snl/gate_reason.py), and notes without ticket ids even
+    # when complete_gate.json was written by older code
+    from snl.gate_reason import gate_reason
+    from snl.public_text import scrub
+    gr = gate_reason(job, gate=gate) if gate else None
+    res = dict(gate=gate.get("status"), gate_label=(gr or {}).get("label"), gate_reason_text=(gr or {}).get("text"),
+               gate_notes=[scrub(x) for x in (gate.get("notes") or [])], pushover=pushover_results(job),
                nlrha=nlrha_results(job), ddm=ddm_results(job))
     e = dict(prev or {})
     rid = rid or e.get("id")
@@ -242,8 +292,18 @@ def run_entry(job, prev=None, rid=None):
         e["flag"] = fl
     else:
         e.pop("flag", None)
-    e["results"] = res
+    e["results"] = _scrubbed(res)
     return e
+
+
+def _scrubbed(x):
+    """Every string of an index entry as public text (no ticket ids, no 'EOR'): stored strings written by older code."""
+    from snl.public_text import scrub
+    if isinstance(x, dict):
+        return {k: _scrubbed(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [_scrubbed(v) for v in x]
+    return scrub(x) if isinstance(x, str) else x
 
 
 def find_runs(root):

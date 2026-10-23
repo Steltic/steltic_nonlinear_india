@@ -502,15 +502,17 @@ def summary(p):
     if p.get("source") == "rolled":
         b = p.get("basis") or {}
         spc = b.get("spacings_mm") or {}
-        return ("Rolled-section restraints (NL-38, from the HR cfg%s): rafters %d lateral (roof-diaphragm ties) + %d "
+        return ("Rolled-section restraints (from the HR design input%s): rafters %d lateral (roof-diaphragm ties) + %d "
                 "torsional (fly braces at %s mm along the slope); columns %d lateral (studs on %d column elements at "
-                "Ky x L, no torsional); %d HR elements split at a station; %d one-flange (purlin / girt only) stations "
+                "Ky·L, no torsional); %d HR elements split at a station; %d one-flange (purlin / girt only) stations "
                 "not modelled (conservative); warping lengths %s mm"
-                % ((", brief spacing for " + ", ".join(b["brief_fallback"])) if b.get("brief_fallback") else "",
+                % (("; %s spacing from the project brief" % ", ".join(b["brief_fallback"])) if b.get("brief_fallback") else "",
                    c["rafter_lateral"], c["rafter_torsion"], ("%.0f" % spc["fly"]) if spc.get("fly") else "—",
                    c["column_lateral"], c["studs"], c["split_elements"], c["not_modelled_one_flange"],
                    "-".join("%.0f" % v for v in (c.get("warping_length_mm") or [])) or "none"))
-    return ("PEB restraints (NL-33, cfg['flange_braces'] as peb_build / D-T1): rafters %d lateral (roof-diaphragm ties) "
+    return ("PEB restraints (the purlin, girt and fly-brace stations of the HR design, read as the HR design reads "
+            "them: Steltic design ruling D-T1, lateral-torsional buckling checked segment by segment between "
+            "restraints): rafters %d lateral (roof-diaphragm ties) "
             "+ %d torsional; columns %d lateral (wall-line studs, %d columns) + %d torsional; canopies %d torsional; %d HR "
             "elements split at a station; %d one-flange (purlin / girt only) stations not modelled (conservative); "
             "warping lengths %s mm"

@@ -289,7 +289,7 @@ def test_rolled_plan_ex9():
     assert cols and all(s["kinds"] == ["lateral"] for s in cols)            # lateral only (HR column LTB: element L)
     assert {round(s["at_mm"]) for s in cols} >= {3000, 6000, 1875}           # Ky 0.375 x 8 m / x 5 m
     assert p["basis"]["spacings_mm"] == dict(fly=3000.0, purlin=1500.0, girt=1500.0)
-    assert "Rolled-section restraints (NL-38" in PR.summary(p)
+    assert "Rolled-section restraints (from the HR design input" in PR.summary(p)    # check fixes: no ticket id
 
 
 def test_no_rolled_plan_without_sloped_rafters_or_restrained_columns():
@@ -431,7 +431,8 @@ def test_site_index_builder(tmp_path):
     ids = [e["id"] for e in idx["examples"]]
     assert ids == ["IN_Ex10_SCBF_bigbox_flexdiaphragm_Indore", "IN_Ex19_EBF_12levels_Tplan_Guwahati/units/stem"]
     e = idx["examples"][0]
-    assert e["title"] == "Ex 10 · big box" and "flag" not in e
+    assert e["title"] == "Ex 10 · big box" and e["flag"] != "old flag"
+    assert e["flag"].startswith("Pushover Y: IS-MCE target not reached")    # check fixes, finding 1: said, not only flagged
     r = e["results"]
     n = r["nlrha"]
     assert n["record_set"] == "FEMA P-695 far-field set, amplitude-scaled to the IS 1893 spectrum"

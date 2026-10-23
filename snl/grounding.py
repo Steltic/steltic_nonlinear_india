@@ -12,7 +12,7 @@ D3 / D7; nlrha.india_authority.hinge_analogue_status found:false):
   collected   `snl collect` read the IS specification values the analyses rely on (IS 2062 fy / fu, IS 18168
               Ry / Ru, the IS 800 Section 12 joint-rotation capacity, IS 1893 Z / I / Sa/g / damping) out of
               the IS corpus and checked every one against the cell it came from. The backbones stay
-              modelling assumptions (information / EOR inputs), never acceptance criteria.
+              modelling assumptions (information / design engineer's inputs), never acceptance criteria.
   unverified  nobody has looked.
 
 The record Revise leaves lives at the JOB ROOT, in revise_evidence.json, which the analysis run never writes
@@ -110,9 +110,8 @@ def clause_citations(ev: dict | None) -> list[str]:
 MARK = 'data-provenance'
 
 
-HINGE_NOTE = ("The hinge backbones in hinge_params_used.json are modelling assumptions (information / EOR input): "
-              "IS 800:2007, IS 1893 (Part 1):2016 and IS 18168:2023 tabulate none, and they are not acceptance criteria. "
-              "IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information.")
+# 2026-10 check fixes: no file name and no "EOR" on a public page (snl.public_text keeps the old wording for refreshes)
+from .public_text import HINGE_NOTE  # noqa: E402
 
 
 def _collected_line(prm: dict) -> str:
@@ -120,7 +119,7 @@ def _collected_line(prm: dict) -> str:
     if not spec_collected(prm):
         return ""
     src = "; ".join("%s: %s" % (g, (r or {}).get("source") or "") for g, r in (ic.get("groups") or {}).items())
-    return " IS specification values collected by <code>snl collect</code>%s: %s." % (
+    return " IS specification values collected from the IS corpus%s: %s." % (
         (" on " + _esc(str(ic.get("asked")))) if ic.get("asked") else "", _esc(src or "see hinge_params_collected.json"))
 
 

@@ -224,6 +224,12 @@ def floor3(x):
     return None if x is None else _m.floor(float(x) * 1000.0 + 1e-9) / 1000.0
 
 
+def ceil3(x):
+    """3 decimals, rounded UP: a demand ratio of 1.0004 must never read 1.000."""
+    import math as _m
+    return None if x is None else _m.ceil(float(x) * 1000.0 - 1e-9) / 1000.0
+
+
 def ddm_headline(ddm):
     """NL-36 / first wave: the DDM figures the summaries and the site index publish -- gravity lambda_u (the headline:
     >= 1 means the collapse load exceeds the IS 800 factored load), the minimum phi_s x lambda_u (US/AU reliability
@@ -289,6 +295,8 @@ def build_india(job, out_name="four_analyses.html"):
     rows = []
     notes_rs = []
     notes = []                                            # second wave: sentences under the table (record set, phi_s, shed)
+    from pushover import review as _RV
+    review = _RV.directions_under_review(job)                # 2026-10 check fixes, finding 4: "under review"
     if po.get("directions"):
         p = {}
         for d, dd in po["directions"].items():
@@ -306,17 +314,32 @@ def build_india(job, out_name="four_analyses.html"):
                     vr = "V/W = %.3f" % (float(r["base_shear_kN"]) / W_sh)
                 else:
                     vr = "V/VB = %s" % fmt(r.get("V_over_VB"))
+                resp = "δt = %.1f mm; %s; max storey drift %.3f %%" % (n.get("target_disp_mm") or 0, vr, 100 * (r.get("max_story_drift") or 0))
+                if n.get("reached_target") is False:          # check fixes, finding 1: never a curve-end value as a response
+                    end = r.get("roof_disp_mm")
+                    if end is None and (dd.get("capacity") or {}).get("u_end_in") is not None:
+                        end = float(dd["capacity"]["u_end_in"]) * 25.4
+                    resp = ("δt = %.1f mm: target NOT reached — the curve ended in a numerical stop %s, so the "
+                            "values that follow are at the curve end, not at the target: %s; max storey drift %.3f %%"
+                            % (n.get("target_disp_mm") or 0, ("at %.0f mm" % end) if end is not None else "before it", vr,
+                               100 * (r.get("max_story_drift") or 0)))
+                if d in review:
+                    resp = "UNDER REVIEW (see the note below) — " + resp
                 rows.append(("Pushover %s %s" % (d, lv), "Sa(Te=%.3f s) = %.3f g (elastic, no R)" % (n.get("Te") or 0, n.get("Sa") or 0),
-                             "δt = %.1f mm; %s; max storey drift %.3f %%" % (n.get("target_disp_mm") or 0, vr, 100 * (r.get("max_story_drift") or 0))))
+                             resp))
         caps = [(d, dd.get("capacity") or {}) for d, dd in po["directions"].items()]
         if any(c.get("Vmax_kN") is not None for _, c in caps):
-            vw = " / ".join("%.3f" % c["Vmax_over_W"] for _, c in caps if c.get("Vmax_over_W") is not None)
-            vb = " / ".join("%.1f" % c["Vmax_over_VB"] for _, c in caps if c.get("Vmax_over_VB") is not None)
             lb = [d for d, dd in po["directions"].items() if vmax_lower_bound(dd)]
+            ge = lambda d: "≥ " if d in lb else ""             # check fixes, finding 2: a lower bound reads as one
+            vw = " / ".join("%s%.3f" % (ge(d), c["Vmax_over_W"]) for d, c in caps if c.get("Vmax_over_W") is not None)
+            vb = " / ".join("%s%.1f" % (ge(d), c["Vmax_over_VB"]) for d, c in caps if c.get("Vmax_over_VB") is not None)
             rows.append(("Pushover strength Vmax (%s)" % " / ".join(d for d, _ in caps),
-                         " / ".join("%.0f kN" % c["Vmax_kN"] for _, c in caps if c.get("Vmax_kN") is not None),
-                         ("Vmax/W = %s (strength coefficient)" % vw) + ("" if shed["shed"] else "; Vmax/VB = %s" % vb)
-                         + ("; %s: lower bound (the curve ended in a numerical stop)" % ", ".join(lb) if lb else "")))
+                         " / ".join("%s%.0f kN" % (ge(d), c["Vmax_kN"]) for d, c in caps if c.get("Vmax_kN") is not None),
+                         ("Vmax/W%s %s (strength coefficient)" % (":" if lb else " =", vw))
+                         + ("" if shed["shed"] else "; Vmax/VB%s %s" % (":" if lb else " =", vb))
+                         + ("; ≥ marks a lower bound (%s: the curve ended in a numerical stop before it lost strength, so the "
+                            "peak is not established)" % ", ".join(lb) if lb else "")
+                         + "".join("; %s: UNDER REVIEW (see the note below)" % d for d, _ in caps if d in review)))
             if shed["shed"]:
                 notes.append("%s: VB, the R-reduced IS 1893 design base shear, is small for a light shed (%s), so V/VB is "
                              "large (Vmax/VB = %s) and is not a measure of the structure's reserve. V/W (W = %s kN, the IS 1893 "
@@ -325,7 +348,11 @@ def build_india(job, out_name="four_analyses.html"):
                                                                          if v is not None) if (db.get("VB_x_kN") or db.get("VB_y_kN"))
                                  else ("VB = %.1f kN" % db["VB_kN"] if db.get("VB_kN") else "VB not recorded"), vb,
                                  "{:,.0f}".format(W_sh) if W_sh else "?"))
+        for d in sorted(review):
+            notes.append(_RV.note_text(job, d))
         summ["pushover"] = p
+        summ["pushover_review"] = {d: dict(summary=e.get("summary"), date=_RV.load(job).get("date"))
+                                   for d, e in review.items()} or None
     if nl.get("levels"):
         summ["nlrha"] = nl["levels"]
         from nlrha import record_set as RSET
@@ -380,51 +407,70 @@ def build_india(job, out_name="four_analyses.html"):
             pn = _PHI.india_note(ph, hd.get("phi_lambda_u"), hd["min_phi_lambda"], html_=True)
             if pn:
                 notes.append(pn)
-        rows.append(("DDM solver failures", "numerical stops (NL-24 / NL-36)",
-                     ("none" if not hd["solver_failures"] else "%d sweep(s)%s: %s -- not capacities" % (
-                         hd["solver_failures"], (", %d numerical runaway(s)" % hd["runaway_steps"]) if hd["runaway_steps"] else "",
+        rows.append(("DDM solver failures", "sweeps that stopped numerically (not a structural limit)",
+                     ("none" if not hd["solver_failures"] else "%d sweep%s%s: %s — not capacities; see the completeness gate above" % (
+                         hd["solver_failures"], "" if hd["solver_failures"] == 1 else "s",
+                         ((" (a numerical runaway)" if hd["solver_failures"] == 1 else ", %d of them a numerical runaway" % hd["runaway_steps"])
+                          if hd["runaway_steps"] else ""),
                          "; ".join(hd["solver_failure_labels"][:6])))))
         if hd.get("imposed_load_basis"):
             rows.append(("DDM imposed-load basis", "IS 875 (Part 2) 3.2.1", hd["imposed_load_basis"]))
-        for r in ddm.get("runs") or []:
+        for r in ddm.get("runs") or []:               # check fixes, finding 14: 3 decimals rounded DOWN, as the headline
             ra = (r.get("runaway") or {}).get("criterion")
             rows.append(("DDM %s" % r.get("label"), r.get("status") or "?",
-                         ("λu = %.3f" % r["lambda_u"]) if r.get("lambda_u") is not None else (
-                             "SOLVER_FAILURE: numerical runaway (%s); λ reached %.3f, not a capacity" % (ra, r.get("lambda_end") or 0) if ra else
-                             "%s (λ reached %.3f)" % (r.get("status") or "NO_LIMIT_POINT", r.get("lambda_end") or 0))))
+                         ("λu = %.3f" % floor3(r["lambda_u"])) if r.get("lambda_u") is not None else (
+                             "SOLVER_FAILURE: numerical runaway (%s); λ reached %.3f, not a capacity" % (
+                                 str(ra).replace("lambda ", "λ "), floor3(r.get("lambda_end") or 0)) if ra else
+                             "%s (λ reached %.3f%s)" % (r.get("status") or "NO_LIMIT_POINT", floor3(r.get("lambda_end") or 0),
+                                                        ", not a capacity" if r.get("status") == "SOLVER_FAILURE" else ""))))
         b12 = ddm.get("b12_check") or {}
         rows.append(("IS 800 B-1.2 section check at λ = 1", "code check (members; connections not checked)",
                      "satisfied" if b12.get("ok") else (
                          "not evaluated for %d combination(s) (numerical stop before λ = 1); no evaluated combination fails"
                          % (b12.get("n_not_evaluated") or 0) if b12.get("ok") is None and b12 else
-                         ("NOT satisfied: %s %.3f (%s)" % (hd["b12_member"], hd["b12_dc"] or 0, hd["b12_combo"]) if hd["b12_dc"] else "NOT satisfied / not run"))))
+                         ("NOT satisfied: %s %.3f (%s)" % (str(hd["b12_member"]).replace("_", " "), ceil3(hd["b12_dc"] or 0), hd["b12_combo"])
+                          if hd["b12_dc"] else "NOT satisfied / not run"))))
         rows.append(("IS 800 B-1.1 preconditions", "compact sections, full lateral restraint",
                      "sections %s; full lateral restraint: %s" % (
                          "all plastic / compact" if hd["b11_sections_compact"] else "NOT all plastic / compact (outside B-1.1 scope, information only)",
                          hd["b11_lateral_restraint"] or "not checked")))
+    # check fixes, finding 3: the completeness gate and its reason in plain words on the page itself. The gate needs the
+    # fresh summary (it checks the package hashes the summary recorded), so the summary is written first, then the gate,
+    # then the page.
+    summ["notes"] = notes
+    json.dump(summ, open(os.path.join(job, "snl_summary.json"), "w"), indent=1, default=str)
+    gr = None
+    try:
+        IA.write_complete_gate(job)
+        from .gate_reason import gate_reason
+        gr = gate_reason(job)
+        summ["gate"] = gr["status"]
+        summ["gate_reason"] = dict(label=gr["label"], text=gr["text"])
+    except Exception:                                   # noqa: BLE001 -- never lose the sheet over the gate text
+        pass
     H = ["<!doctype html><meta charset='utf-8'><title>Four analyses (IS)</title><style>body{font-family:Georgia,serif;max-width:1000px;margin:24px auto;padding:0 16px}"
-         "table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #bbb;padding:4px 6px;text-align:left}.s{background:#fff4d6;padding:8px 12px;font-weight:bold}</style>",
+         "table{border-collapse:collapse;width:100%;font-size:13px}td,th{border:1px solid #bbb;padding:4px 6px;text-align:left}.s{background:#fff4d6;padding:8px 12px;font-weight:bold}"
+         ".g{border-left:5px solid #888;background:#f4f4f4;padding:8px 12px;margin:10px 0}.g.partial,.g.complete_with_capacity_shortfall{border-color:#b3261e}"
+         ".g.complete_with_solver_stops{border-color:#b8860b}.g.complete{border-color:#2e7d32}</style>",
          "<h1>%s — linear design + pushover + NLRHA + advanced analysis</h1>" % html.escape(os.path.basename(os.path.abspath(job))),
          "<p>IS 1893 (Part 1):2016 + Amd 1–2 · IS 800:2007 · %s (linear design only)</p>" % html.escape(design_header(db)),
-         "<div class='s'>%s</div>" % stmt,
-         "<p>NL targets used: IS 1893 elastic spectrum — DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g (no R).</p>",
-         "<table><tr><th>analysis</th><th>demand</th><th>response (information)</th></tr>"]
-    H += ["<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % tuple(html.escape(str(x)) for x in r) for r in rows]
+         "<div class='s'>%s</div>" % stmt]
+    if gr:
+        H.append("<div class='g %s' id='completeness'><b>Completeness gate: %s.</b> %s</div>" % (
+            html.escape(str(gr["status"] or "")), html.escape(gr["label"]), html.escape(gr["text"])))
+    H += ["<p>NL targets used: IS 1893 elastic spectrum — DBE = (Z/2)·I·Sa/g, MCE = Z·I·Sa/g (no R).</p>",
+          "<table><tr><th>analysis</th><th>demand</th><th>response (information)</th></tr>"]
+    from .public_text import scrub                     # check fixes: stored strings may still carry ticket ids / 'EOR'
+    H += ["<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % tuple(html.escape(scrub(str(x))) for x in r) for r in rows]
     H.append("</table>")
     if notes:
-        H.append("<h2>Notes</h2><ul>%s</ul>" % "".join("<li>%s</li>" % html.escape(x) for x in notes))
+        H.append("<h2>Notes</h2><ul>%s</ul>" % "".join("<li>%s</li>" % html.escape(scrub(x)) for x in notes))
     if nl.get("levels") and notes_rs:
         H.append("<h2 id='record-set'>Ground-motion record set (NLRHA)</h2><ul>%s</ul>" % "".join(
             "<li>%s</li>" % html.escape(x) for x in notes_rs))
-    summ["notes"] = notes
-    H.append("<p>Inputs (sha256): %s</p>" % html.escape(json.dumps(summ["inputs_sha256"])))
+    # check fixes, finding 5: the package fingerprints stay in snl_summary.json (the gate's freshness check), not on the page
     open(os.path.join(job, out_name), "w", encoding="utf-8").write("\n".join(H))
     json.dump(summ, open(os.path.join(job, "snl_summary.json"), "w"), indent=1, default=str)
-    try:
-        st = IA.write_complete_gate(job)
-        summ["gate"] = st["status"]
-    except Exception:
-        pass
     return os.path.join(job, out_name)
 
 

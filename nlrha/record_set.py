@@ -144,15 +144,15 @@ def disclosure(levels, lib=None):
             (" This run's pairs come from %s." % "; ".join("%s %s" % e for e in used)) if used else ""))
         out.append("The set holds no Indian or Himalayan records (magnitudes M %s, rupture distances %s km, site classes %s "
                    "in the US letters of the library index, %s), so near-field and long-duration effects of Indian earthquakes "
-                   "are not represented. Indian or regional records can be supplied with --records-set." % (
+                   "are not represented. Indian or regional record sets can be supplied in place of this one." % (
                        _range(*lib["M"]), _range(*lib["r_rup_km"]), " / ".join(lib["site_classes"]),
                        ("no record flagged as a near-fault pulse" if not lib["n_pulse"] else "%d flagged as near-fault pulses" % lib["n_pulse"])))
     else:
-        out.append("Record set: %s (supplied with --records-set). The tool does not check the tectonic origin of user "
+        out.append("Record set: %s (supplied by the user). The tool does not check the tectonic origin of user "
                    "records; the engineer confirms that they suit the site." % (set_name or "not recorded"))
     lvs = [lv for lv in ("DBE", "MCE") if lv in L] + [lv for lv in L if lv not in ("DBE", "MCE")]
     if first:
-        out.append("Selection and scaling (nlrha ground_motions.select_and_scale): at each level the %s pairs whose "
+        out.append("Selection and scaling (the tool's selection rule): at each level the %s pairs whose "
                    "maximum-direction (RotD100) spectrum best fits the shape of the target over T = %s s are used; each pair "
                    "has one scale factor for both components, its own geometric-mean fit to the target times one common "
                    "factor (%s), so that the suite mean is at least 0.9 × the target at every period in that range and not "
@@ -176,7 +176,7 @@ def disclosure(levels, lib=None):
     if sfr:
         b = [L[lv].get("sf_bounds") for lv in lvs if L[lv].get("sf_bounds")]
         out.append("Scale factors: %s; %s." % (sfr, ("bounds %s" % b[0]) if b else
-                                                "no scale-factor bounds were set (the engineer may set nl_plan.gm_selection.sf_bounds)"))
+                                                "no scale-factor bounds were set (the design engineer may set them)"))
     return out
 
 
@@ -257,12 +257,15 @@ def refresh_reports(nlrha_dir, shed=None):
             continue
         h0 = h = open(p, encoding="utf-8").read()
         h = h.replace(html.escape(OLD_BASIS), html.escape(BASIS_SENTENCE))
-        h = h.replace("<p>Scale-factor bounds: None</p>", "<p>Scale-factor bounds: none set (the engineer may set "
-                      "nl_plan.gm_selection.sf_bounds).</p>")
+        h = h.replace("<p>Scale-factor bounds: None</p>", "<p>Scale-factor bounds: none set (the design engineer may "
+                      "set them).</p>")
         h = h.replace("<th>records (converged)</th>", "<th>record pairs (converged)</th>")
         h = _insert(h, block)
         if rel == "nlrha_report.html" and shed:
             h = _shed_note_index(h, nlrha_dir, levels, shed)
+        from snl.public_text import scrub_html          # 2026-10 check fixes: no ticket ids, no 'EOR', no JSON keys
+        from .report_india import refresh_model_paragraph
+        h = refresh_model_paragraph(scrub_html(h))
         if h != h0:
             open(p, "w", encoding="utf-8").write(h)
             changed.append(p)

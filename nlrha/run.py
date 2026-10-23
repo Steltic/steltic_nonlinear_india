@@ -55,7 +55,7 @@ def arias_window(a1, a2, dt, lo=0.001, hi=0.995):
 
 TRIM_BASIS = ("record trimmed to its significant duration: 5-95 % Arias intensity of the two scaled components "
               "together, with a 1 s pre-pad from the record start where available, then a zero-acceleration "
-              "free-vibration tail (NL-21)")
+              "free-vibration tail")
 
 
 def residual_drift(acc, n, at_end, converged=True):

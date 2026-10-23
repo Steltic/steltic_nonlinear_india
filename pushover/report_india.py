@@ -119,10 +119,98 @@ def shed_note_html(shed):
                 (", %s kN" % format(round(shed["W_kN"]), ",")) if shed.get("W_kN") else "", SHED_MARK_END))
 
 
+def footer_words(verified, collected):
+    """The provenance footer in words (was 'hinge_params verified=False; IS specification values collected=True')."""
+    return "%s; %s" % ("the hinge parameters are verified" if str(verified) == "True" or verified is True else
+                       "the hinge parameters are not verified against an IS table (none exists)",
+                       "the IS specification values were collected from the IS corpus" if str(collected) == "True" or collected is True
+                       else "the IS specification values were not collected")
+
+
+REVIEW_MARK_START = "<!-- steltic:pushover-review -->"
+REVIEW_MARK_END = "<!-- /steltic:pushover-review -->"
+LOWER_BOUND_WORDS = "a lower bound: the curve ended in a numerical stop before it lost strength, so the peak is not established"
+
+
+def _lower_bound(dd):
+    cap = (dd or {}).get("capacity") or {}
+    tail = cap.get("tail_status") or ((dd or {}).get("tail") or {}).get("status")
+    return tail == "lower_bound" or str((dd or {}).get("stop_reason") or "").startswith("solver")
+
+
+def _direction_segment(h, d):
+    """(start, end) of direction d's section-3 block: its '<p><b>d</b>' line up to the end of its response table."""
+    i = h.find("<p><b>%s</b>" % d)
+    if i < 0:
+        return None
+    j = h.find("</table>", i)
+    return (i, j + len("</table>")) if j > 0 else None
+
+
+def _check_fixes(h, pkg, review):
+    """2026-10 check fixes on the report text (findings 1, 2, 4, 5, 6): '≥' on a lower-bound Vmax, the IS target a
+    curve did not reach, 'under review' (pushover/review.py), '—' for a steel without a thickness band, no ticket ids,
+    no 'EOR'. Every value comes from the stored package; idempotent."""
+    import re
+    from snl.public_text import scrub_html
+    dirs = (pkg or {}).get("directions") or {}
+    for d, dd in dirs.items():
+        if _lower_bound(dd):                                # finding 2
+            seg = _direction_segment(h, d)
+            if seg:
+                a, b = seg
+                line_end = h.find("</p>", a)
+                line = h[a:line_end]
+                if "Vmax = " in line:
+                    new = line.replace("Vmax = ", "Vmax ≥ ", 1)
+                    new = re.sub(r"(Vmax/(?:VB|W)) = ", r"\1 ≥ ", new)
+                    new = new.replace("; curve end", " — %s; curve end" % LOWER_BOUND_WORDS, 1)
+                    h = h[:a] + new + h[line_end:]
+        for lv, n in (dd.get("nsp") or {}).items():         # finding 1
+            if n.get("reached_target") is not False:
+                continue
+            r = (dd.get("response") or {}).get(lv) or {}
+            end = r.get("roof_disp_mm")
+            if end is None and (dd.get("capacity") or {}).get("u_end_in") is not None:
+                end = float(dd["capacity"]["u_end_in"]) * IN_TO_MM
+            h = re.sub(r"(<tr><td>%s</td><td>%s</td>(?:<td>[^<]*</td>){8})<td>NO</td>" % (re.escape(d), re.escape(lv)),
+                       lambda m: m.group(1) + "<td>NO — the curve ended at %.0f mm</td>" % (end or 0), h)
+            seg = _direction_segment(h, d)
+            if seg:
+                a, b = seg
+                part = h[a:b].replace("<tr><td>%s</td>" % lv, "<tr><td>%s (curve end: the %.1f mm target was not "
+                                      "reached; values at the curve end)</td>" % (lv, n.get("target_disp_mm") or 0), 1)
+                h = h[:a] + part + h[b:]
+            h = h.replace("<h3>%s %s — member groups" % (d, lv),
+                          "<h3>%s %s at the curve end (%.0f mm; target not reached) — member groups" % (d, lv, end or 0), 1)
+    # finding 4: the review note at the top, 'UNDER REVIEW' on the direction's line; removed when the record goes
+    if REVIEW_MARK_START in h and REVIEW_MARK_END in h:
+        h = h[:h.index(REVIEW_MARK_START)] + h[h.index(REVIEW_MARK_END) + len(REVIEW_MARK_END):]
+    h = re.sub(r" <span class='rv'>\(UNDER REVIEW[^<]*\)</span>", "", h)
+    if review:
+        from .review import note_text_of
+        block = "%s%s%s" % (REVIEW_MARK_START, "".join(
+            "<div class='stmt' style='border-left-color:#b3261e;background:#fdecea'>%s</div>" % html.escape(
+                note_text_of(e)) for d, e in sorted(review.items())), REVIEW_MARK_END)
+        h = h.replace("<h2>1 Capacity curves</h2>", block + "<h2>1 Capacity curves</h2>", 1)
+        for d in review:
+            h = h.replace("<p><b>%s</b>:" % d, "<p><b>%s</b> <span class='rv'>(UNDER REVIEW, see the note at the top)</span>:" % d, 1)
+    h = re.sub(r" -- hinge_params verified=(True|False|None); IS specification values collected=(True|False)\.",
+               lambda m: " -- %s." % footer_words(m.group(1), m.group(2)), h)
+    # finding 5: no 'None' in the steel table (YSt 310 tubes have no IS 2062 thickness band)
+    i = h.find("<h2>4 Steel by section</h2>")
+    if i >= 0:
+        j = h.find("</table>", i)
+        if j > 0:
+            h = h[:i] + h[i:j].replace("<td>None</td>", "<td>—</td>") + h[j:]
+    return scrub_html(h)                                    # findings 3 and 6: no ticket ids, no 'EOR'
+
+
 def refresh_report(pushover_dir, shed=None):
     """Report-only refresh of a stored India pushover report: stop messages in mm ('u=17.27 in' -> 'u = 439 mm', the
     first-wave fix, which reached only re-run pushovers) and, on a shed, the note above section 3 and Vmax/W before
-    Vmax/VB in each direction's line. Idempotent; returns True when the file changed."""
+    Vmax/VB in each direction's line; 2026-10 check fixes (`_check_fixes`): '≥' on a lower-bound Vmax, the target a curve
+    did not reach, 'under review', no 'None', no ticket ids, no 'EOR'. Idempotent; returns True when the file changed."""
     import re
     p = os.path.join(pushover_dir, "pushover_report.html")
     if not os.path.exists(p):
@@ -137,6 +225,12 @@ def refresh_report(pushover_dir, shed=None):
             h = h.replace("<h2>3 Response at δt (interpolated)</h2>", "<h2>3 Response at δt (interpolated)</h2>" + note, 1)
         h = re.sub(r"\(Vmax/VB = ([^,()]+), Vmax/W = ([^()]+?)\)",
                    lambda m: "(Vmax/W = %s; Vmax/VB = %s, VB R-reduced, see the note above)" % (m.group(2), m.group(1)), h)
+    try:
+        pkg = json.load(open(os.path.join(pushover_dir, "pushover_package.json"), encoding="utf-8"))
+    except Exception:                                       # noqa: BLE001
+        pkg = {}
+    from .review import directions_under_review
+    h = _check_fixes(h, pkg, directions_under_review(os.path.dirname(os.path.abspath(pushover_dir))))
     if h != h0:
         open(p, "w", encoding="utf-8").write(h)
         return True
@@ -168,7 +262,7 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
         elastic_members=_elastic_block(results, stats),
         params_verified=prm.get("verified"), params_state=_state(prm, out), spec_values_collected=bool(prm.get("spec_values_collected")),
         brace_backbone_note=("post-buckling brace backbone shape: modelling assumption (literature-based; IS 800 / "
-                             "IS 18168 give no brace hysteresis) -- information, EOR input"),
+                             "IS 18168 give no brace hysteresis) -- information, design engineer's input"),
         directions={},
     )
     for d, run in runs.items():
@@ -268,8 +362,11 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
                  % (html.escape(em.get("basis") or ""), em["n_elastic"], em.get("max_ratio") or 0.0,
                     html.escape(", ".join(str(t) for t in em.get("flagged_elastic") or []) or "none")))
     h.append("<p class='note'>Analysis %.0f s. Hinge / brace backbone shapes are modelling assumptions (literature-based; "
-             "IS 800, IS 1893 and IS 18168 tabulate none) -- hinge_params verified=%s; IS specification values collected=%s.</p>"
-             % (seconds, prm.get("verified"), bool(prm.get("spec_values_collected"))))
+             "IS 800, IS 1893 and IS 18168 tabulate none) -- %s.</p>" % (seconds, footer_words(prm.get("verified"), prm.get("spec_values_collected"))))
     hp = os.path.join(out, "pushover_report.html")
     open(hp, "w", encoding="utf-8").write("\n".join(h))
+    try:                                                     # 2026-10 check fixes: the same text as a refreshed report
+        refresh_report(out)
+    except Exception:                                        # noqa: BLE001 -- never lose a report over its wording
+        pass
     return hp
