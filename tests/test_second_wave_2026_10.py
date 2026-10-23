@@ -266,3 +266,17 @@ def test_stored_basis_text_is_cleaned_for_the_report():
            "psi = 1/200 (equivalence, EOR to confirm)")
     t = _stored_text(old)
     assert "0.5 % of" in t and "%%" not in t and "design engineer to confirm" in t and "EOR" not in t
+
+
+def test_gate_reads_stored_runaways_through_the_guard(tmp_path):
+    """IN_Ex18 as published (2026-10-04 set): 1.2DL+1.2LL-1.2W_X stored as a DUCTILITY_CAP after a lambda -732 step. The
+    gate now reads it through the NL-36 guard, as the report and the site index do: a runaway reason, never 'complete'."""
+    src = _gold(NL_GOLD, "_SMF_podium_11levels_Kochi")
+    d = json.load(open(os.path.join(src, "ddm_results.json")))
+    if not any(r["label"] == "1.2DL+1.2LL-1.2W_X" and r.get("status") == "DUCTILITY_CAP" for r in d["runs"]):
+        pytest.skip("gold no longer holds the stored runaway")
+    job = _copy_run(src, str(tmp_path / "IN_Ex18"))
+    from nlrha import india_authority as IA
+    st = IA.design_status(job_dir=job, evidence={"from_artifact": True})
+    rs = " ".join(st["artefact_gate"]["reasons"])
+    assert "1.2DL+1.2LL-1.2W_X" in rs and "runaway" in rs and st["status"] != "complete"
