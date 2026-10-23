@@ -61,6 +61,18 @@ to redo a B-1.2 check after a B-1.2 rule change.
   re-analysis, the NLRHA reports and viewer (record set, record pairs) and the pushover report (stop messages in mm —
   the first-wave fix had reached only re-run pushovers — and, on a shed, Vmax/W first). Idempotent.
 
+## Smaller fixes found on the way
+
+- The completeness gate (`nlrha/india_authority.py`) reads stored DDM results through the NL-36 runaway guard, as the
+  report and the site index already did: the 2026-10-04 IN_Ex18 package stores its −732 step as a "ductility cap", and
+  `snl report` wrote "complete" for it while the index counted a solver failure.
+- B-1.1 text: "design engineer's statement required" also for results stored before the first wave (they say "EOR").
+- The out-of-plumb basis no longer prints a literal "0.5 %%" (a string that was never %-formatted) and says "design
+  engineer to confirm"; stored results are cleaned on display. "Unless the design engineer sets one" for the
+  expected-strength factor.
+- `retry` log lines say which combinations are SOLVER_FAILURE and which are named, and the old status of a replaced run;
+  the code version is taken at the start of the re-run.
+
 ## DDM: `retry --b12-only` and the chunked re-run record (`steltic_ddm/cli.py`, `solver.py`)
 
 - `retry --b12-only --combos …` (India): redoes only the IS 800 B-1.2 check at λ = 1 of the named combinations after a
@@ -111,6 +123,15 @@ IN_Ex19 main, 1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z — left as the stated solver stop
   siblings (1.2DL+1.2LL±1.2EQ_Y[ea]−0.3EQ_Z) ended NO_LIMIT_POINT on the clock at λ 1.36 and its mirror
   (−EQ_Y+0.3EQ_Z) at a ductility cap at λ 1.354. The gate stays **partial** and says why.
 
+## Site build
+
+The site build's nonlinear step (scratchpad `sitebuild/build_nl.sh`) works unchanged with this code. A second-wave
+variant, /home/claude/nl_work/build_nl2.sh, also copies the refreshed `nlrha/` and `pushover/` pages, rebuilds every
+run's ddm_report.html from its ddm_results.json into a temporary folder (`steltic_ddm report --out`, so the φs note
+reaches the runs that were not re-run, without rewriting stored results) and takes the PEB runs from a copy of the PEB
+gold set (`snl report` now rewrites the stored NLRHA / pushover HTML in place). Run into a scratch folder it built all
+24 runs and the index (24 examples) in about a minute.
+
 ## Tests
 
 `tests/test_second_wave_2026_10.py` (package tests skip without the NL gold sets):
@@ -122,4 +143,8 @@ IN_Ex19 main, 1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z — left as the stated solver stop
 - the shed rule; the shed meta line without Vmax/VB;
 - the φs note; the DDM report notes and the per-combination imposed-load basis;
 - the IN_Ex1 PEB four-analyses page (header, V/W, record pairs, analyses, record set, φs) and the idempotent refresh of
-  its NLRHA / pushover pages and viewer; the IN_Ex15 page (Vmax/VB kept, lower bound, φs·λu below 1 explained).
+  its NLRHA / pushover pages and viewer; the IN_Ex15 page (Vmax/VB kept, lower bound, φs·λu below 1 explained);
+- the gate reading the stored IN_Ex18 runaway; the cleaned out-of-plumb basis text.
+
+Full suite (STELTIC_ENGINE_DIR = the frozen HR engine e340df8, STELTIC_HR_ROOT = an export of steltic_india
+origin/main 251496d, under /home/claude/bin/heavy): TESTCOUNT.
