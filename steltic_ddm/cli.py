@@ -711,13 +711,10 @@ def retry(args):
     opts_rep["risk_category"] = rc; opts_rep["india"] = india
     opts_rep["gravity_gate"] = d.get("gravity_gate"); opts_rep["b11"] = d.get("b11_preconditions")
     opts_rep.setdefault("n_cases", len(cases))
-    rec_ = dict(code="NL-30" if not getattr(args, "combos", None) else "NL-30 / first-wave re-run", combos=bad,
+    rec_ = dict(code="NL-30" if not getattr(args, "combos", None) else "NL-30 / re-run of named combinations", combos=bad,
                 sweeps=len(tasks), seconds=round(time.time() - t0), result={lab: gov[lab]["res"].get("status") for lab in gov},
-                date=time.strftime("%Y-%m-%dT%H:%M:%S"))
-    if getattr(args, "combos", None):
-        opts_rep["ddm_rerun"] = rec_                  # the original NL-30 retry record (if any) is kept
-    else:
-        opts_rep["ddm_retry"] = rec_
+                date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=code_version())
+    _record_rerun(opts_rep, "ddm_rerun" if getattr(args, "combos", None) else "ddm_retry", rec_)
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
                          d.get("member_table", []), None, elapsed=d.get("elapsed_s"))
     if not args.no_block:
@@ -726,6 +723,36 @@ def retry(args):
     _viewer(out_dir, nm, d.get("gate", {}), runs)
     print(">> retry elapsed %.0f s" % (time.time() - t0))
     return rep
+
+
+def code_version():
+    """The NL repository commit the run used ('<short sha>', '+dirty' with uncommitted changes), or None."""
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        sha = subprocess.run(["git", "-C", root, "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+        if not sha:
+            return None
+        dirty = subprocess.run(["git", "-C", root, "status", "--porcelain", "--untracked-files=no"], capture_output=True,
+                               text=True, timeout=10).stdout.strip()
+        return sha + ("+dirty" if dirty else "")
+    except Exception:                                                  # noqa: BLE001
+        return None
+
+
+def _record_rerun(opts_rep, key, rec):
+    """Second wave: a re-run split into several `retry` calls (one combination each, to keep every process under the
+    box's 2 h limit) keeps every call's record. opts[key] is the latest call; opts[key + '_history'] lists them all,
+    oldest first, starting with the record that was there before (e.g. the first-wave Ex19 re-run)."""
+    hist = list(opts_rep.get(key + "_history") or [])
+    prev = opts_rep.get(key)
+    if prev and prev not in hist:
+        hist.append(prev)
+    hist.append(rec)
+    opts_rep[key] = rec
+    opts_rep[key + "_history"] = hist
+    return hist
 
 
 def _viewer(out_dir, nm, gate, runs):
