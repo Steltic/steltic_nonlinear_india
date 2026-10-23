@@ -356,6 +356,13 @@ def _solver_failure_html(runs):
                 "" if sum(1 for r in sf if r["res"].get("runaway")) == 1 else "s", rows))
 
 
+def _stored_text(s):
+    """Basis strings stored in ddm_results.json by earlier code: a literal '%%' (a string that was never %-formatted) and
+    'EOR' (second wave: 'design engineer' in report text)."""
+    return str(s or "").replace("%%", "%").replace("EOR to confirm", "design engineer to confirm").replace(
+        "EOR input", "design engineer's input")
+
+
 def _phi_s_notes_html(runs):
     """Second wave (review E_NL item 15): where each phi_s used comes from, and that it is not an IS 800 factor; when the
     smallest phi_s x lambda_u is below 1.0, what that does and does not mean."""
@@ -447,7 +454,7 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
                  'one; %s mm).</li>' % (
                      _h(pr.get("summary") or ""), "–".join("%.0f" % v for v in ((pr.get("counts") or {}).get("warping_length_mm") or []))))
     P.append('<li>Out-of-plumb ψ = 1/%d — %s. Member bow %s (hollow sections 1/%d).</li>' % (
-        round(1 / o.get("psi", 1 / 200)), _h(o.get("psi_basis") or ""), _h(o.get("bow_basis") or ""),
+        round(1 / o.get("psi", 1 / 200)), _h(_stored_text(o.get("psi_basis"))), _h(o.get("bow_basis") or ""),
         round(1 / (o.get("bow_hollow") or o.get("bow", 1 / 1000)))))
     P.append('<li>Combinations: IS 800:2007 Table 4 combinations from load_plan (IS 875 / IS 1893), applied proportionally and scaled by λ.</li>')
     P.append('<li>λ<sub>u</sub> is reported only at a detected limit point: LIMIT_POINT (λ falls over ≥ 2 converged steps — negative tangent), '
@@ -544,7 +551,7 @@ def ddm_block_india(nm, gate, runs, sensitivity, options, member_table):
         "basis": ["IS 800:2007 4.1.1, 4.3.6, Table 34, Annex B-1.1 / B-1.2", "IS 2062 (Part 1):2025 Table 3",
                   "phi_s: literature (Zhang, Shayan, Rasmussen & Ellingwood 2016) -- information only, not calibrated for IS 800 Table 4"],
         "model": {"material": "Steel01 fy per section (IS 2062 Table 3) E=200000 MPa b=%.3f" % options.get("hardening", 0.002),
-                  "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), options.get("psi_basis")),
+                  "out_of_plumb": "1/%d (%s)" % (round(1 / options.get("psi", 1 / 200)), _stored_text(options.get("psi_basis"))),
                   "out_of_straightness": options.get("bow_basis"), "units": "N, mm, MPa",
                   **({"peb_restraints": options["peb_restraints"].get("summary")} if options.get("peb_restraints") else {}),
                   **({"imposed_load": options["imposed_load_basis"]} if options.get("imposed_load_basis") else {})},

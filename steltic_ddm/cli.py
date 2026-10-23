@@ -268,9 +268,9 @@ def run(args):
                 rigid_end_offset=rigid_off, india=india, strain_cap=args.strain_cap,
                 n_combos_default=n_default, n_combos_run=len(kept),
                 bow_hollow=(args.bow_hollow if args.bow_hollow is not None else (1 / 500.0 if india else None)),
-                psi_basis=("IS 800:2007 4.3.6: notional horizontal force 0.5 %% of factored gravity load -> equivalent "
-                           "out-of-plumb psi = 1/200 (equivalence, EOR to confirm)" if india and args.psi is None else
-                           ("EOR input psi = 1/%d" % round(1 / psi))),
+                psi_basis=("IS 800:2007 4.3.6: notional horizontal force 0.5 % of factored gravity load -> equivalent "
+                           "out-of-plumb psi = 1/200 (equivalence, design engineer to confirm)" if india and args.psi is None else
+                           ("design engineer's input psi = 1/%d" % round(1 / psi))),
                 bow_basis=("IS 800:2007 Table 34 straightness 0.001L (0.002L hollow sections)" if india else "L/1000"))
     from . import peb_restraints as _PR                # NL-33: the PEB out-of-plane restraint system (None otherwise)
     _pp = _PR.plan(nm, cfg)

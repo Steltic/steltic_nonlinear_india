@@ -258,3 +258,11 @@ def test_ddm_report_notes_phi_s_and_partial_imposed_basis():
     runs[1]["b12"].update(red)
     assert RD._imposed_basis_by_combo(runs, o) == ""
     assert RD._imposed_basis_by_combo(runs, dict(imposed_load_reduction=dict(applied=False))) == ""
+
+
+def test_stored_basis_text_is_cleaned_for_the_report():
+    from steltic_ddm.report_ddm import _stored_text
+    old = ("IS 800:2007 4.3.6: notional horizontal force 0.5 %% of factored gravity load -> equivalent out-of-plumb "
+           "psi = 1/200 (equivalence, EOR to confirm)")
+    t = _stored_text(old)
+    assert "0.5 % of" in t and "%%" not in t and "design engineer to confirm" in t and "EOR" not in t
