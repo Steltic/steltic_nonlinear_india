@@ -373,7 +373,9 @@ def build_india(job, out_name="four_analyses.html"):
                              ("%.2f" % ph["phi_s"]) if ph.get("phi_s") is not None else "?", ph.get("cls") or "?"),
                          "%.3f (3 decimals, rounded down; %s; information only, no pass/fail)%s" % (
                              hd["min_phi_lambda"], hd.get("phi_combo") or "?",
-                             " — below 1.0 only through φs; see the note below" if hd["min_phi_lambda"] < 1.0 else "")))
+                             ("" if hd["min_phi_lambda"] >= 1.0 else
+                              " — below 1.0 only through φs (λu %.3f ≥ 1.0); see the note below" % floor3(hd["phi_lambda_u"])
+                              if (hd.get("phi_lambda_u") or 0) >= 1.0 else " — λu itself is below 1.0; see the DDM rows"))))
             from steltic_ddm import phi_s as _PHI
             pn = _PHI.india_note(ph, hd.get("phi_lambda_u"), hd["min_phi_lambda"], html_=True)
             if pn:

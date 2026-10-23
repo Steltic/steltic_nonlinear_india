@@ -181,6 +181,7 @@ def india_note(phi, lam_u=None, value=None, html_=False):
     if value is not None and value < 1.0:
         out += (" A value below 1.0 does not mean the design fails: the IS 800 code check of the advanced analysis is the "
                 "Annex B-1.2 section check at lambda = 1%s." % (
-                    (", and %s = %.3f >= 1.0 means the collapse load exceeds the IS 800 factored load" % (lam_s, lam_u))
+                    (", and %s = %.3f >= 1.0 means the collapse load exceeds the IS 800 factored load" % (
+                        lam_s, __import__("math").floor(float(lam_u) * 1000.0 + 1e-9) / 1000.0))      # rounded down
                     if (lam_u is not None and lam_u >= 1.0) else ""))
     return out.replace("lambda = 1", "λ = 1").replace(" x ", " × ").replace(">=", "≥") if html_ else out

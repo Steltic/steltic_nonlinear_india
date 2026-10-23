@@ -236,7 +236,7 @@ def test_multistorey_four_analyses_keeps_vmax_vb(tmp_path):
     compare.build(job)
     h = open(os.path.join(job, "four_analyses.html"), encoding="utf-8").read()
     assert "V/VB = " in h and "Vmax/VB = " in h and "lower bound" in h            # Ex15 X and Y ended in solver stops
-    assert "below 1.0 only through φs" in h and "does not mean the design fails" in h   # phi_s x lambda_u 0.939
+    assert "below 1.0 only through φs (λu 1.173" in h and "does not mean the design fails" in h   # phi_s x lambda_u 0.939
 
 
 def test_ddm_report_notes_phi_s_and_partial_imposed_basis():
