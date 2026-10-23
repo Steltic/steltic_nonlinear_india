@@ -721,8 +721,9 @@ def retry(args):
     by_combo = {c[0]: c for c in cases}
     gdirs = {"+X only": "one", "+X and +Y": "two", "±X and ±Y": "all"}.get(o.get("gravity_dirs"), "two")
     tasks = [(job, engine_dir, lab, imp, opts) for lab in bad for imp in imperfections.cases_for(by_combo[lab], gravity_dirs=gdirs, psi=opts["psi"])]
-    print(">> NL-30 retry: %d combination(s) with SOLVER_FAILURE (%s) -> %d sweep(s) on %d worker(s)" % (
-        len(bad), "; ".join(bad), len(tasks), args.workers), flush=True)
+    sf_ = [r["label"] for r in d.get("runs") or [] if r.get("status") == "SOLVER_FAILURE" and r["label"] in bad]
+    print(">> NL-30 retry: %d combination(s) -- %d SOLVER_FAILURE%s, %d named (--combos) -- -> %d sweep(s) on %d worker(s): %s" % (
+        len(bad), len(sf_), "" if len(sf_) == 1 else "s", len(bad) - len(sf_), len(tasks), args.workers, "; ".join(bad)), flush=True)
     results = []
     if args.workers > 1 and len(tasks) > 1:
         with mp.get_context("spawn").Pool(min(args.workers, len(tasks))) as pool:
@@ -752,7 +753,7 @@ def retry(args):
                           material=("CFS-P" if PA.is_portal(cfg) else "HR"), risk_category=rc)
         runs[i] = dict(combo=c, summary=summ, res=r["res"], cls=r["cls"], phi=ph, check=_check(ph, r["res"], india),
                        imp=r["imp"], state=r["state"], b12=r.get("b12"))
-        print("   replaced %-40s %s -> %s (lambda_end %.3f)" % (r["label"][:40], "SOLVER_FAILURE", r["res"].get("status"),
+        print("   replaced %-40s %s -> %s (lambda_end %.3f)" % (r["label"][:40], old["res"].get("status") or "?", r["res"].get("status"),
                                                                 r["res"]["lambda_end"]), flush=True)
     opts_rep = dict(o)
     for k_ in ("imposed_load_reduction", "imposed_load_basis"):
