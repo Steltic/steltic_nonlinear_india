@@ -616,6 +616,42 @@ class FiberSectionBuilder:
         self.log.append((aggTag, label, "LINK", 0, "shear Vp %.1f kN on Vz, fibre section %d" % (Vp_N / 1e3, fibreTag)))
         return rec
 
+    def link_shear_spring(self, label, fy_MPa, e_len, box=False, hardening=0.005):
+        """EBF link shear yielding as ONE shear spring at the middle of the link (third wave, P1): the material of a
+        zeroLength between the two halves of the link, acting on their relative displacement across the link (the
+        beam's local z). Same strength and stiffness as link_aggregator, per unit relative displacement:
+        V_pL = fy A_wL / sqrt(3) (IS 18168:2023 11.2), K = G A_wL / e, so the link rotation is the spring
+        deformation / e and gamma_y = V_pL / (K e) = fy / (sqrt(3) G).
+
+        Why not the aggregated section any more: with the shear on the sections of ONE force-based element, a shear
+        that varies along the link (the gravity load on it) lets the element's local iteration accept a false state
+        once the link yields -- the end sections yield in OPPOSITE directions (+/-0.4 rad), their shear strains cancel
+        in the element deformations, so the element's energy test passes while the sections are out of equilibrium by
+        about 2 V_pL and the link drops its shear. A single spring has no such mode. `e_len` is the link length in the
+        model's length unit. Returns (material tag, record)."""
+        from pushover import india_materials as IM
+        sp = IM.section_props_mm(label)
+        d, tf, tw = float(sp["d"]), float(sp["tf"]), float(sp["tw"])
+        Aw_mm2 = (2.0 if box else 1.0) * (d - 2.0 * tf) * tw
+        Vp_N = float(fy_MPa) * Aw_mm2 / math.sqrt(3.0)
+        G_MPa_ = E_MPA / 2.6
+        if self.units == "N-mm":
+            Vp, GA = Vp_N, G_MPa_ * Aw_mm2
+        else:
+            Vp, GA = Vp_N / 4448.2216152605, (G_MPa_ / 6.894757293168361) * Aw_mm2 / MM_PER_IN ** 2
+        K = GA / float(e_len)
+        mt = self.next_mat; self.next_mat += 1
+        if self.elastic:
+            self.ops.uniaxialMaterial("Elastic", mt, K)
+        else:
+            self.ops.uniaxialMaterial("Steel01", mt, Vp, K, hardening)
+        rec = dict(section=label, Aw_mm2=Aw_mm2, fy_MPa=float(fy_MPa), Vp_kN=Vp_N / 1e3, gamma_y=float(fy_MPa) / math.sqrt(3.0) / G_MPa_,
+                   hardening=hardening, clause="IS 18168:2023 11.2 a) V_pL = fy A_wL / sqrt(3) (Pu/Py <= 0.15)",
+                   hardening_basis="modelling assumption (no IS link hysteresis)", model="shear_spring", e=float(e_len),
+                   spring_mat=mt)
+        self.log.append((mt, label, "LINK", 0, "shear spring Vp %.1f kN, K = G Aw / e (e = %.3f)" % (Vp_N / 1e3, float(e_len))))
+        return mt, rec
+
     def build(self, secTag, label, kind, axis=None, warping_length=None):
         lab = str(label).upper().replace(" ", "")
         if lab.startswith("BOX"):

@@ -194,6 +194,7 @@ class GMNIAModel:
     def build(self, with_mass=False):
         nm = self.nm
         self.elems, self.sub_nodes, self.secs, self.sec_props, self.pins = [], {}, {}, {}, []
+        self._link_builders, self.links = {}, {}
         ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 6)
         for t in nm.nodes:
             ops.node(t, *self._coord(t))
@@ -421,12 +422,11 @@ class GMNIAModel:
             props = bld.build(tag, m.section, m.kind, axis=axis, warping_length=wl)
             if bld is not self.builder:
                 self.builder.log.extend(bld.log[-1:])
-            if link:                                  # NL-10: IS 18168 11.2 shear yielding aggregated on the fibres
+            if link:                                  # NL-10 / third wave P1: the shear yielding is the mid-length spring
                 fy_mpa = fy if (self.fy_fn is not None or getattr(self, "_fibre_units", "kip-in") == "N-mm") else fy * 6.894757293168361
-                props["link"] = bld.link_aggregator(900000 + tag, tag, m.section, fy_mpa)
-                ops.beamIntegration("Lobatto", tag, 900000 + tag, self.nip)
-            else:
-                ops.beamIntegration("Lobatto", tag, tag, self.nip)
+                props["link_fy_MPa"] = fy_mpa         # (_add_link): the halves carry flexure only
+                self._link_builders[tag] = bld
+            ops.beamIntegration("Lobatto", tag, tag, self.nip)
             self.secs[key] = tag
             self.sec_props[tag] = dict(label=m.section, kind=m.kind, Fy=fy, **props)
         return self.secs[key]
@@ -497,11 +497,37 @@ class GMNIAModel:
         except (TypeError, ValueError):
             return 0.0
 
+    LINK_ELE0 = 96_000_000                       # EBF link shear springs (pushover.fibre_model.LINK_ZL_BASE)
+
+    def _add_link(self, m, tr):
+        """Third wave, P1: an EBF link is two flexural fibre halves joined at mid-length by the IS 18168 11.2 shear
+        spring (pushover.fibre_model.link_spring) -- the pushover / NLRHA link model. The old single force-based element
+        with the shear aggregated on its sections accepted a false state once the link yielded under its gravity load
+        (end sections yielding in opposite directions, the link shedding its shear)."""
+        from pushover.fibre_model import link_spring
+        p1, p2 = self._coord(m.n1), self._coord(m.n2)
+        L = math.dist(p1, p2)
+        secTag = self._section(m)
+        bld = self._link_builders.get(secTag, self.builder)
+        fy_mpa = self.sec_props[secTag].get("link_fy_MPa")
+        zl, rec = link_spring(ops, bld, m.tag, m.n1, m.n2, p1, p2, self.VECXZ[tr], m.section, fy_mpa,
+                              RIGID_MAT_T=1, RIGID_MAT_R=2, ele_base=self.LINK_ELE0)
+        etype = "dispBeamColumn" if self.fast else "forceBeamColumn"
+        extra = () if self.fast else ("-iter", 20, 1e-8)
+        halves = ((m.n1, rec["na"]), (rec["nb"], m.n2))
+        for s, (a, b) in enumerate(halves):
+            tag = SUB_ELE0 + m.tag * 100 + s
+            ops.element(etype, tag, a, b, tr, secTag, *extra)
+            self.elems.append(dict(tag=tag, mtag=m.tag, kind=m.kind, role=m.role, section=m.section, secTag=secTag,
+                                   s=s, n1=a, n2=b, L=L / 2.0, dirn=m.dirn, span=(s * L / 2.0, (s + 1) * L / 2.0), Lm=L))
+        self.sub_nodes[m.tag] = [m.n1, rec["na"], m.n2]
+        self.links[m.tag] = rec
+
     def _add_member(self, m):
         nsub = {"col": self.nsub_col, "beam": self.nsub_beam, "brace": self.nsub_brace}[m.kind]
-        if getattr(m, "role", "") == "link":
-            nsub = 1                                  # a link is one force-based element (shear is uniform along it)
         tr = self._transf_for(m)
+        if getattr(m, "role", "") == "link" and not (m.relz or m.rely):
+            return self._add_link(m, tr)
         p1, p2 = self._coord(m.n1), self._coord(m.n2)
         L = math.dist(p1, p2)
         bv, bmag = self._bow_vector(m)

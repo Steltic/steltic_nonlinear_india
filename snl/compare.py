@@ -328,18 +328,37 @@ def build_india(job, out_name="four_analyses.html"):
                 rows.append(("Pushover %s %s" % (d, lv), "Sa(Te=%.3f s) = %.3f g (elastic, no R)" % (n.get("Te") or 0, n.get("Sa") or 0),
                              resp))
         caps = [(d, dd.get("capacity") or {}) for d, dd in po["directions"].items()]
-        if any(c.get("Vmax_kN") is not None for _, c in caps):
-            lb = [d for d, dd in po["directions"].items() if vmax_lower_bound(dd)]
+        from pushover import vmax_policy as _VP              # third wave, P10: the strength up to the IS-MCE target
+        hv = {}
+        for d, dd in po["directions"].items():
+            h = _VP.vmax_to_target(dd)
+            if h is None and (dd.get("capacity") or {}).get("Vmax_kN") is not None:   # no IS-MCE target: whole curve
+                c = dd["capacity"]
+                h = dict(Vmax_kN=c["Vmax_kN"], Vmax_over_VB=c.get("Vmax_over_VB"), Vmax_over_W=c.get("Vmax_over_W"),
+                         lower_bound=vmax_lower_bound(dd), beyond=None, target_mm=None)
+            if h is not None:
+                hv[d] = h
+                if d in p:
+                    p[d]["vmax_to_target"] = {k: v for k, v in h.items() if k != "basis"}
+        if hv:
+            lb = [d for d, h in hv.items() if h.get("lower_bound")]
             ge = lambda d: "≥ " if d in lb else ""             # check fixes, finding 2: a lower bound reads as one
-            vw = " / ".join("%s%.3f" % (ge(d), c["Vmax_over_W"]) for d, c in caps if c.get("Vmax_over_W") is not None)
-            vb = " / ".join("%s%.1f" % (ge(d), c["Vmax_over_VB"]) for d, c in caps if c.get("Vmax_over_VB") is not None)
-            rows.append(("Pushover strength Vmax (%s)" % " / ".join(d for d, _ in caps),
-                         " / ".join("%s%.0f kN" % (ge(d), c["Vmax_kN"]) for d, c in caps if c.get("Vmax_kN") is not None),
+            vw = " / ".join("%s%.3f" % (ge(d), h["Vmax_over_W"]) for d, h in hv.items() if h.get("Vmax_over_W") is not None)
+            vb = " / ".join("%s%.1f" % (ge(d), h["Vmax_over_VB"]) for d, h in hv.items() if h.get("Vmax_over_VB") is not None)
+            capped = any(h.get("target_mm") is not None for h in hv.values())
+            rows.append(("Pushover strength Vmax%s (%s)" % (" up to the IS-MCE target" if capped else "", " / ".join(hv)),
+                         " / ".join("%s%.0f kN" % (ge(d), h["Vmax_kN"]) for d, h in hv.items()),
                          ("Vmax/W%s %s (strength coefficient)" % (":" if lb else " =", vw))
                          + ("" if shed["shed"] else "; Vmax/VB%s %s" % (":" if lb else " =", vb))
-                         + ("; ≥ marks a lower bound (%s: the curve ended in a numerical stop before it lost strength, so the "
-                            "peak is not established)" % ", ".join(lb) if lb else "")
-                         + "".join("; %s: UNDER REVIEW (see the note below)" % d for d, _ in caps if d in review)))
+                         + ("; ≥ marks a lower bound (%s: the curve ended in a numerical stop before the IS-MCE target, so "
+                            "the strength up to it is not established)" % ", ".join(lb) if lb else "")
+                         + "".join("; %s: UNDER REVIEW (see the note below)" % d for d in hv if d in review)))
+            if capped:
+                notes.append(_VP.BASIS)
+                for d, h in hv.items():
+                    bt = _VP.beyond_text(d, h) if d not in review else None
+                    if bt:
+                        notes.append("Pushover " + bt + ".")
             if shed["shed"]:
                 notes.append("%s: VB, the R-reduced IS 1893 design base shear, is small for a light shed (%s), so V/VB is "
                              "large (Vmax/VB = %s) and is not a measure of the structure's reserve. V/W (W = %s kN, the IS 1893 "
@@ -348,6 +367,12 @@ def build_india(job, out_name="four_analyses.html"):
                                                                          if v is not None) if (db.get("VB_x_kN") or db.get("VB_y_kN"))
                                  else ("VB = %.1f kN" % db["VB_kN"] if db.get("VB_kN") else "VB not recorded"), vb,
                                  "{:,.0f}".format(W_sh) if W_sh else "?"))
+        for d, dd in po["directions"].items():                # third wave, P10: Te below T1 is flagged
+            tn = _VP.te_note(d, _VP.te_flags(dd))
+            if tn:
+                notes.append(tn)
+                if d in p:
+                    p[d]["te_below_t1"] = True
         for d in sorted(review):
             notes.append(_RV.note_text(job, d))
         summ["pushover"] = p

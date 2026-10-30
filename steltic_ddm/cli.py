@@ -47,10 +47,11 @@ def _worker(args):
                                                            strain_cap=opts.get("strain_cap"), capture_lambda1=india),
                                  opts["dlam"], opts.get("retry_factors", (2, 4)), "%s imp %s" % (combo_label[:40], imp["tag"]))
     cls = solver.classify(res, g)
-    b12 = None
+    b12 = packed = None
     if india:
-        from .india_checks import b12_check
+        from .india_checks import b12_check, pack_forces
         f1 = res.pop("forces_at_1", None)
+        packed = pack_forces(f1)                     # P10 (third wave): stored, so a B-1.2 rule change needs no sweep
         if opts.get("_llr_plan"):                     # NL-37: IS 875-2 3.2.1 on the column axial force, as the HR design
             from .imposed_reduction import reduce_forces
             f1 = reduce_forces(f1, opts["_llr_plan"], combo[2], getattr(combo, "meta", None))
@@ -84,7 +85,8 @@ def _worker(args):
                                 disp={str(t): [round(v, 4) for v in dd] for t, dd in f["disp"].items()},
                                 mem={str(m): [round(r, 2), round(fr, 2)] for m, (r, fr) in f["mem"].items()},
                                 buckled=[int(t) for t in f["buckled"]]) for f in res.get("frames", [])]
-    return dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12)
+    return dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12,
+                forces_at_1=packed)
 
 
 def _b12_worker(args):
@@ -110,15 +112,16 @@ def _b12_worker(args):
         res = solver.sweep(g, combo, pres, dlam=ref["dlam"], max_steps=int(opts["max_steps"] * ref["k"]), verbose=True,
                            time_limit=opts["time_limit"] * ref["k"], strain_cap=opts.get("strain_cap"), capture_lambda1=True,
                            stop_after_lambda1=True)
-    from .india_checks import b12_check
+    from .india_checks import b12_check, pack_forces
     f1 = res.pop("forces_at_1", None)
+    packed = pack_forces(f1)
     if f1 and opts.get("_llr_plan"):
         from .imposed_reduction import reduce_forces
         f1 = reduce_forces(f1, opts["_llr_plan"], combo[2], getattr(combo, "meta", None))
     b12 = b12_check(f1, _india_fy_fn(job), ref.get("lambda_end"), combo_label, status=ref.get("status")) if f1 else None
     return dict(label=combo_label, imp=imp["tag"], hist=[(round(a, 4), round(b, 4)) for a, b in res["hist"]], b12=b12,
                 steps=res["steps"], seconds=res["seconds"], termination=res.get("termination"), runaway=res.get("runaway"),
-                captured=bool(f1))
+                captured=bool(f1), forces_at_1=packed)
 
 
 def curve_prefix_match(new_hist, stored_hist, tol=5e-4):
@@ -335,7 +338,7 @@ def run(args):
         ph = phi_s.choose(summ["kind"], R, r["cls"]["cls"], governed_by_braces=gov_braces, hss_braces=hss, material=mat, risk_category=rc)
         chk = _check(ph, r["res"], india)
         runs.append(dict(combo=c, summary=summ, res=r["res"], cls=r["cls"], phi=ph, check=chk,
-                         imp=r["imp"], state=r["state"], b12=r.get("b12")))
+                         imp=r["imp"], state=r["state"], b12=r.get("b12"), forces_at_1=r.get("forces_at_1")))
     # member table from the governing strength combination per group
     member_table = []
     groups = sorted({(m.role, m.section) for m in nm.members})
@@ -491,12 +494,14 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
     opts_json.pop("gravity_gate", None); opts_json.pop("b11", None)
     json.dump(dict(job=job, jurisdiction=("india" if opts_rep.get("india") else None), options=opts_json, gate=gate,
                    gravity_gate=opts_rep.get("gravity_gate"), b11_preconditions=opts_rep.get("b11"), b12_check=b12,
+                   member_index=(_member_index(nm) if opts_rep.get("india") else None),
                    statement=("IS 1893 (Part 1):2016 provides no acceptance criteria for nonlinear analysis; results are for information. "
                               "IS 800 Annex B-1.2 section capacities are the code check." if opts_rep.get("india") else None),
                    solver_failures=solver_failure_summary(runs),
                    runs=[dict(label=r["combo"][0], imp=r["imp"], kind=r["summary"]["kind"], lambda_u=r["res"]["lambda_u"],
                               lambda_end=r["res"].get("lambda_end"), status=r["res"].get("status"), termination=r["res"].get("termination"),
-                              b12=r.get("b12"), b12_refresh=r.get("b12_refresh"), stop_tangent_ratio=r["res"].get("stop_tangent_ratio"),
+                              b12=r.get("b12"), b12_refresh=r.get("b12_refresh"), forces_at_1=r.get("forces_at_1"),
+                              stop_tangent_ratio=r["res"].get("stop_tangent_ratio"),
                               control_mode=r["res"].get("control_mode"), ladder_used=r["res"].get("ladder_used"),
                               retries=r["res"].get("retries"), runaway=r["res"].get("runaway"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
@@ -507,6 +512,14 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
                    sensitivity=sens, member_table=member_table, elapsed_s=(elapsed if elapsed is not None else round(time.time() - t0))),
               open(os.path.join(out_dir, "ddm_results.json"), "w"), indent=1, default=str)
     return rep, block
+
+
+def _member_index(nm):
+    from .india_checks import member_index
+    try:
+        return member_index(nm)
+    except Exception:                                  # noqa: BLE001 -- a report rebuild without the package members
+        return None
 
 
 def b12_summary(rows12):
@@ -635,7 +648,7 @@ def _runs_from_results(d):
                    control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"), retries=r.get("retries"),
                    runaway=r.get("runaway"))
         runs.append(dict(combo=(r["label"],), summary=dict(kind=r["kind"]), res=res, cls=r["cls"], phi=r["phi"], check=r["check"], imp=r["imp"], state=r["state"],
-                         b12=r.get("b12"), b12_refresh=r.get("b12_refresh")))
+                         b12=r.get("b12"), b12_refresh=r.get("b12_refresh"), forces_at_1=r.get("forces_at_1")))
     return runs
 
 
@@ -753,7 +766,7 @@ def retry(args):
         ph = phi_s.choose(summ["kind"], R, r["cls"]["cls"], governed_by_braces=gov_braces, hss_braces=hss,
                           material=("CFS-P" if PA.is_portal(cfg) else "HR"), risk_category=rc)
         runs[i] = dict(combo=c, summary=summ, res=r["res"], cls=r["cls"], phi=ph, check=_check(ph, r["res"], india),
-                       imp=r["imp"], state=r["state"], b12=r.get("b12"))
+                       imp=r["imp"], state=r["state"], b12=r.get("b12"), forces_at_1=r.get("forces_at_1"))
         print("   replaced %-40s %s -> %s (lambda_end %.3f)" % (r["label"][:40], old["res"].get("status") or "?", r["res"].get("status"),
                                                                 r["res"]["lambda_end"]), flush=True)
     opts_rep = dict(o)
@@ -875,6 +888,7 @@ def _b12_refresh(args, job, engine_dir, out_dir, d, t0):
         if ok and res["captured"] and res["b12"]:
             rec["b12_before"] = dict(ok=old_b.get("ok"), worst=max((g.get("dc_max") or 0 for g in old_b.get("groups") or []), default=None))
             r["b12"] = res["b12"]
+            r["forces_at_1"] = res.get("forces_at_1")
             rec["replaced"] = True
         else:
             rec["replaced"] = False

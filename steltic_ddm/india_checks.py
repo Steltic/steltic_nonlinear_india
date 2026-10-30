@@ -87,6 +87,66 @@ def member_forces(g, lam_scale=1.0):
     return out
 
 
+FORCE_FIELDS = ("N_abs", "N_comp", "N_top", "M_major", "M_minor", "V")
+FORCE_UNITS = "kN (N_abs, N_comp, N_top, V) and kN·m (M_major, M_minor), 0.1 resolution; N_comp / N_top compression +"
+
+
+def member_index(nm) -> dict:
+    """{tag: [kind, role, section]} of the HR members -- stored once in ddm_results.json (`member_index`) so that each
+    run's packed forces at lambda = 1 carry only numbers."""
+    return {str(m.tag): [m.kind, m.role, m.section] for m in nm.members}
+
+
+def pack_forces(f1) -> dict | None:
+    """P10 (third wave): the GMNIA member forces at lambda = 1 (forces_at_lambda, BEFORE any imposed-load reduction)
+    in a compact form for ddm_results.json, so a change of the B-1.2 rule can be re-applied without re-running the
+    sweeps (b12_from_stored)."""
+    if not f1:
+        return None
+    m = {}
+    for tag, f in f1.items():
+        if str(tag).startswith("_") or not isinstance(f, dict):
+            continue
+        row = []
+        for k in FORCE_FIELDS:
+            v = f.get(k)
+            row.append(None if v is None else round(float(v) / (1e6 if k.startswith("M_") else 1e3), 1))
+        m[str(tag)] = row
+    return dict(fields=list(FORCE_FIELDS), units=FORCE_UNITS, lambda_basis=f1.get("_lambda"), m=m,
+                basis="GMNIA member forces at lambda = 1 (max over the member's sub-element ends), before the IS 875-2 "
+                      "3.2.1 column imposed-load reduction")
+
+
+def unpack_forces(packed, index) -> dict | None:
+    """Inverse of pack_forces (N, N·mm), with kind / role / section from the run's member_index."""
+    if not packed or not packed.get("m"):
+        return None
+    fields = packed.get("fields") or list(FORCE_FIELDS)
+    out = {}
+    for tag, row in packed["m"].items():
+        kind, role, sec = (index or {}).get(str(tag), [None, None, None])
+        f = dict(kind=kind, role=role, section=sec)
+        for k, v in zip(fields, row):
+            f[k] = None if v is None else float(v) * (1e6 if k.startswith("M_") else 1e3)
+        out[int(tag)] = f
+    if packed.get("lambda_basis"):
+        out["_lambda"] = packed["lambda_basis"]
+    return out
+
+
+def b12_from_stored(run: dict, index: dict, fy_fn, llr_plan=None, fL=None, meta=None) -> dict | None:
+    """Re-apply the CURRENT B-1.2 rule (b12_check, and the IS 875-2 3.2.1 reduction when `llr_plan` is given) to a stored
+    run's forces at lambda = 1 -- no sweep. None when the run stored no forces (lambda = 1 not reached, or a result
+    written before the third wave)."""
+    f1 = unpack_forces(run.get("forces_at_1"), index)
+    if not f1:
+        return None
+    if llr_plan:
+        from .imposed_reduction import reduce_forces
+        f1 = reduce_forces(f1, llr_plan, fL, meta)
+    return b12_check(f1, fy_fn, run.get("lambda_end"), run.get("label"), status=run.get("status"))
+
+
 def forces_at_lambda(prev, cur, lam_target=1.0):
     """NL-25: member forces at `lam_target` from two converged states (lam, member_forces) either side of it, linear in
     lambda per member and quantity; with no earlier state the later one is scaled by lam_target / lam. The result
