@@ -209,7 +209,8 @@ def test_peb_four_analyses_page(tmp_path):
     assert "design VB 29.9 / 39.8 kN (X / Y), W 956 kN, R 4 / 3 (X / Y)" in h
     assert "VB — kN" not in h and "R None" not in h and "W 0.0 kN" not in h
     assert "V/VB" not in h.split("<h2>Notes</h2>")[0]                     # no V/VB in the table of a shed
-    assert "V/W = " in h and "Vmax/W: 1.972 / ≥ 1.847" in h                # check fixes: Y is a lower bound
+    # third wave (P10): Vmax/W up to the IS-MCE target (both reached: no lower bound); X Te below T1 is flagged
+    assert "V/W = " in h and "Vmax/W = 0.189 / 0.138" in h and "below the elastic period T1" in h
     assert "11 record pairs (two horizontal components each), 11 converged" in h
     assert "run at DBE and at MCE: 22 analyses, 22 converged" in h
     assert "no Indian or Himalayan records" in h and "sp3risk.com" in h
@@ -235,7 +236,8 @@ def test_multistorey_four_analyses_keeps_vmax_vb(tmp_path):
     from snl import compare
     compare.build(job)
     h = open(os.path.join(job, "four_analyses.html"), encoding="utf-8").read()
-    assert "V/VB = " in h and "Vmax/VB: ≥ " in h and "lower bound" in h          # Ex15 X and Y ended in solver stops
+    # Ex15 X and Y ended in solver stops, but long after their IS-MCE targets: the headline is not a lower bound
+    assert "V/VB = " in h and "Vmax/VB = 3.0 / 2.0" in h and "≥ marks a lower bound" not in h
     assert "below 1.0 only through φs (λu 1.173" in h and "does not mean the design fails" in h   # phi_s x lambda_u 0.939
 
 

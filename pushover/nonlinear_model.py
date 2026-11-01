@@ -440,7 +440,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
     for e in m.elements:
         if "etype" in e:                                    # raw (non-elasticBeamColumn) element
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
-            if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
+            if e["etype"] in ("Truss", "truss", "corotTruss") and kind in ("brace", "truss") and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
                 spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
                 mat += 1; HM.make_brace_material(mat, spec, prm)
@@ -455,7 +455,7 @@ def build_nonlinear(pkg, prm, PG, verbose=True, member_nseg=None, plasticity=Non
         sec = pkg.schedule.get(e["tag"], {}).get("section")
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
-        if kind == "brace" and sec:                          # elasticBeamColumn brace (steltic default builder) -> pin-ended nonlinear truss
+        if kind in ("brace", "truss") and sec:               # elasticBeamColumn brace (steltic default builder) -> pin-ended nonlinear truss
             spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
             mat += 1; HM.make_brace_material(mat, spec, prm)
             ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)

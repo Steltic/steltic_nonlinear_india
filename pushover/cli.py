@@ -277,9 +277,18 @@ def _run_india(args, pkg, t0):
             J.begin(name, NM.ops)
         from snl import checkpoint as CK
         try:
-            run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
-                              tail_strategies=strategies, recorder=rec, target_estimator=estimator,
-                              stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
+            try:
+                run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
+                                  tail_strategies=strategies, recorder=rec, target_estimator=estimator,
+                                  stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
+            except CK.ReplayDiverged as ex:                         # the replay left the journal: this direction, live
+                print("  [%s] replay diverged (%s) -- the direction is restarted live" % (d, ex), flush=True)
+                J.restart_live(name, NM.ops)
+                hinges, stats = NM.build_nonlinear(pkg, prm, PG)
+                rec = MR.MemberRecorder(pkg, hinges, stats)
+                run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
+                                  tail_strategies=strategies, recorder=rec, target_estimator=estimator,
+                                  stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
         except CK.ChunkExpired as ex:
             print(">> RESUME pushover %s: %s -- run the same command again" % (d, ex), flush=True)
             raise SystemExit(CK.EXIT_RESUME)

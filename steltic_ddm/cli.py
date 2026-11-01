@@ -49,9 +49,16 @@ def _worker(args):
             return J.done(name)                          # a finished rung of an earlier chunk
         if J is not None:
             J.begin(name, solver.ops)
+        from snl import checkpoint as CK_
         try:
-            r_ = solver.sweep(g, combo, pres, dlam=dl, max_steps=int(opts["max_steps"] * k), verbose=True,
-                              time_limit=opts["time_limit"] * k, strain_cap=opts.get("strain_cap"), capture_lambda1=india)
+            try:
+                r_ = solver.sweep(g, combo, pres, dlam=dl, max_steps=int(opts["max_steps"] * k), verbose=True,
+                                  time_limit=opts["time_limit"] * k, strain_cap=opts.get("strain_cap"), capture_lambda1=india)
+            except CK_.ReplayDiverged as ex:              # the replay left the journal: start this rung again, live
+                print("   replay diverged (%s) -- %s restarted live" % (ex, name), flush=True)
+                J.restart_live(name, solver.ops)
+                r_ = solver.sweep(g, combo, pres, dlam=dl, max_steps=int(opts["max_steps"] * k), verbose=True,
+                                  time_limit=opts["time_limit"] * k, strain_cap=opts.get("strain_cap"), capture_lambda1=india)
         finally:
             if J is not None:
                 J.end()

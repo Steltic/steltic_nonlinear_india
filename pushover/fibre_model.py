@@ -21,6 +21,7 @@ SEG_ELE_BASE = 80_000_000
 FIB_SEC_BASE = 90_000_000
 FIB_PIN_NODE = 92_000_000
 FIB_PIN_ELE = 93_000_000
+AXIAL_KINDS = ("brace", "truss")   # third wave (IN_Ex21): truss members (diagonals, verticals, knee braces) as braces
 LINK_NODE_BASE = 95_000_000     # EBF link mid nodes: + tag*10 + 1 (end of the first half) | + 2 (start of the second)
 LINK_ZL_BASE = 96_000_000       # EBF link shear springs: + tag
 
@@ -174,6 +175,8 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
             from . import india_sections as _ISEC
             if _ISEC.is_box(lab):
                 bld.box_plates(tag, lab, axis=axis)
+            elif _ISEC.is_double_angle(lab):                 # third wave: IN_Ex21 double-angle truss chords
+                bld.double_angle(tag, lab, axis=axis)
             elif _ISEC.is_welded_i(lab):                      # NL-33: welded plate I / tapered-I segment
                 bld.welded_i_plates(tag, lab, axis=axis, nf_flange=nf_flange, nf_web=nf_web)
             elif IMAT.is_tube(lab):
@@ -239,7 +242,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
             if e["etype"] == "ElasticTimoshenkoBeam" and sec and (pkg.schedule.get(e["tag"]) or {}).get("role") == "link":
                 _link(e, sec)
                 continue
-            if e["etype"] in ("Truss", "truss", "corotTruss") and kind == "brace" and sec and str(sec).upper() != "GHOST":
+            if e["etype"] in ("Truss", "truss", "corotTruss") and kind in AXIAL_KINDS and sec and str(sec).upper() != "GHOST":
                 p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]; _, L = _dir_vec(p1, p2)
                 spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
                 mat += 1; HM.make_brace_material(mat, spec, prm)
@@ -258,7 +261,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         sec = pkg.schedule.get(e["tag"], {}).get("section")
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
-        if kind == "brace" and sec:
+        if kind in AXIAL_KINDS and sec:
             spec = HM.brace_spec(sec, L, prm, india=brace_india(pkg, sec, e["tag"]))
             mat += 1; HM.make_brace_material(mat, spec, prm)
             ops.element("corotTruss", e["tag"], e["n1"], e["n2"], spec.A, mat)

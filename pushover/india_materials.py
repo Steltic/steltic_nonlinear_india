@@ -86,6 +86,15 @@ def section_props_mm(section: str) -> dict:
     from . import sections_db as SDB
     from . import india_sections as ISEC
     bx = ISEC.get_mm(section)
+    if bx is not None and bx.get("section_type") == "double_angle":     # third wave: two IS 808 angles back to back
+        out = dict(label=bx["label"], type="DOUBLE_ANGLE", box=False, welded_i=False, double_angle=True, tube=False)
+        for k in ("A", "rx", "ry", "r_min", "d", "bf", "tf", "tw", "Zx", "Zy", "Sx", "Sy", "Ix", "Iy", "J", "Aw"):
+            out[k] = float(bx[k])
+        for k in ("component", "gap_mm", "connected_leg", "leg_connected_mm", "leg_outstanding_mm", "t_mm", "A1_mm2",
+                  "c_back_mm", "c_toe_mm"):
+            out[k] = bx[k]
+        out["source"] = bx["source"]
+        return out
     if bx is not None:                     # NL-4 / NL-33: HR built-up box or welded plate I -- exact plate values (mm)
         box = bx.get("section_type") == "box"
         out = dict(label=bx["label"], type="BOX" if box else "WELDED_I", box=box, welded_i=not box, tube=False)
@@ -316,7 +325,7 @@ def buckling_classes(sp: dict, hollow_forming: str = "hot_rolled") -> dict:
         c = "a" if str(hollow_forming).lower().startswith("hot") else "b"
         return {"zz": c, "yy": c, "basis": "Table 10 hollow section, %s" % hollow_forming}
     typ = str(sp.get("type") or "").upper()
-    if typ in ("ISA", "MC", "LC", "JC", "SC", "MPC", "ISLC", "ISMC") or typ.endswith("C") and typ not in ("NPB", "WPB"):
+    if typ in ("ISA", "MC", "LC", "JC", "SC", "MPC", "ISLC", "ISMC", "DOUBLE_ANGLE") or typ.endswith("C") and typ not in ("NPB", "WPB"):
         return {"zz": "c", "yy": "c", "basis": "Table 10 channel/angle"}
     h, b, tf = sp.get("d") or 0.0, sp.get("bf") or 1.0, sp.get("tf") or 0.0
     if h / b > 1.2:

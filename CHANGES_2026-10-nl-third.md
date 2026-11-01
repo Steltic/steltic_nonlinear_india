@@ -51,6 +51,13 @@ drift, where L/e × drift gives 0.02–0.10 rad. The Y pushovers lost 12–52 % 
   the halves stiffness-proportional damping and not the spring.
 - The DDM GMNIA model uses the same link (`GMNIAModel._add_link`).
 - `FiberSectionBuilder.link_aggregator` is kept for its unit test but is no longer used by a model.
+- DDM: the spring's rigid DOFs are 1000 × the half link's own axial and flexural stiffness.
+  - The model-wide K_TRANS / K_ROT (1e9 / 1e10) are rigid in kip-in, but not in the India N-mm GMNIA: 4EI/(e/2) of a
+    900 mm WPB400 link is 1e12 N·mm/rad.
+  - With them the spring was a hinge at mid-link. The IN_Ex19 stem gravity-transfer gate caught it: link M 0.28 × HR,
+    70 of 396 comparisons outside ±5 %.
+  - The gate now passes as in October.
+  - The pushover / NLRHA model runs in kip-in, where RIGID_T / RIGID_R are 1e4 × these stiffnesses.
 
 **Tests.** `tests/test_third_wave_2026_10.py`:
 - the one-bay EBF along X and along Y, in 20 and 100 steps:
@@ -165,6 +172,16 @@ cannot be saved half-way, but they are deterministic, and a failed `analyze` rev
   params files, and the run options.
 - A resume recomputes the converged steps only. A run whose converged steps alone take longer than a chunk cannot
   progress this way.
+- **Limit found.** A failed `analyze` is not perfectly state-neutral in OpenSees:
+  - on the one-bay EBF with forced failures, the replayed curve differs from the uninterrupted one by 4.5e-13
+    (relative);
+  - on IN_Ex15 Y, at a near-singular step (u ≈ 1,000 mm, 9 step halvings), the NewtonLineSearch attempt that
+    converged after three failed attempts in the original failed in the replay (journal call 86).
+- The fingerprint check catches this (ReplayDiverged). The rung, or the pushover direction, then restarts live in the
+  same chunk (`Journal.restart_live`): correct, but that chunk gains nothing. So the journal carries a run across a
+  chunk boundary only when its hard steps come after the boundary; otherwise it is a safe no-op.
+- An exact state checkpoint was tried with OpenSees' own `database File` + `save` / `restore` on the same EBF: the
+  save works, but the restore fails ("database failed to restore state").
 
 **Options.**
 - `python -m pushover run … --checkpoint-dir D --chunk-seconds S`

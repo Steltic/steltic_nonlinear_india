@@ -322,7 +322,7 @@ class GMNIAModel:
                 axis, yp = self.local_axes(self._coord(m.n1), self._coord(m.n2), self._transf_for(m))
                 g0 = new_node(xyz); ops.fix(g0, 1, 1, 1, 1, 1, 1)
                 zl(g0, n, self.TORSION_MAT, 4, orient=(axis, yp)); made["torsion"] += 1
-            if "lateral" in st["kinds"] and st["member_kind"] == "rafter":
+            if "lateral" in st["kinds"] and st["member_kind"] in ("rafter", "truss_top_chord", "truss_bottom_chord"):
                 if not masters:
                     made["missing"] += 1
                     continue
@@ -510,8 +510,19 @@ class GMNIAModel:
         secTag = self._section(m)
         bld = self._link_builders.get(secTag, self.builder)
         fy_mpa = self.sec_props[secTag].get("link_fy_MPa")
+        # the spring's "rigid" DOFs: 1000 x the half-link's own axial / flexural stiffness. The model-wide K_TRANS /
+        # K_ROT (1e9 / 1e10) are rigid in kip-in but NOT in the India N-mm model (4 E I / (e/2) of a 900 mm
+        # WPB400 link is 1e12 N-mm/rad): they made a hinge at mid-link (IN_Ex19 stem gate: link M 0.28 x HR)
+        from pushover import india_materials as IM
+        sp = IM.section_props_mm(m.section)
+        nmm = getattr(self, "_fibre_units", "kip-in") == "N-mm"
+        s2, s4 = (1.0, 1.0) if nmm else (25.4 ** 2, 25.4 ** 4)
+        I = max(float(sp.get("Ix") or 0.0), float(sp.get("Iy") or 0.0)) / s4
+        kt, kr = 1e3 * bld.E * float(sp["A"]) / s2 / (L / 2.0), 1e3 * 4.0 * bld.E * I / (L / 2.0)
+        mt_t = bld.next_mat; bld.next_mat += 1; ops.uniaxialMaterial("Elastic", mt_t, kt)
+        mt_r = bld.next_mat; bld.next_mat += 1; ops.uniaxialMaterial("Elastic", mt_r, kr)
         zl, rec = link_spring(ops, bld, m.tag, m.n1, m.n2, p1, p2, self.VECXZ[tr], m.section, fy_mpa,
-                              RIGID_MAT_T=1, RIGID_MAT_R=2, ele_base=self.LINK_ELE0)
+                              RIGID_MAT_T=mt_t, RIGID_MAT_R=mt_r, ele_base=self.LINK_ELE0)
         etype = "dispBeamColumn" if self.fast else "forceBeamColumn"
         extra = () if self.fast else ("-iter", 20, 1e-8)
         halves = ((m.n1, rec["na"]), (rec["nb"], m.n2))

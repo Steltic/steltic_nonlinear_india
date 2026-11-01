@@ -77,6 +77,8 @@ def vmax_to_target(dd, VB_kN=None, W_kN=None, level=LEVEL) -> dict | None:
         break
     if best is None:
         return None
+    if (((dd or {}).get("nsp") or {}).get(level) or {}).get("reached_target") is False:
+        reached = False                                        # the NSP says the curve ended before the target
     cap = (dd or {}).get("capacity") or {}
     if VB_kN is None and cap.get("V_design_kip"):
         VB_kN = float(cap["V_design_kip"]) * KIP_TO_KN
@@ -85,7 +87,15 @@ def vmax_to_target(dd, VB_kN=None, W_kN=None, level=LEVEL) -> dict | None:
         if n.get("W_kip"):
             W_kN = float(n["W_kip"]) * KIP_TO_KN
     full = cap.get("Vmax_kN")
+    if VB_kN is None and full and cap.get("Vmax_over_VB"):          # VB not stored: from the stored ratio
+        VB_kN = float(full) / float(cap["Vmax_over_VB"])
+    if W_kN is None and full and cap.get("Vmax_over_W"):
+        W_kN = float(full) / float(cap["Vmax_over_W"])
     u_full = (float(cap["u_at_Vmax_in"]) * 25.4) if cap.get("u_at_Vmax_in") is not None else None
+    if full is None or u_full is None:                         # not in the capacity block: from the curve
+        i_pk = max(range(len(V)), key=lambda i: V[i])
+        full = V[i_pk] if full is None else full
+        u_full = u[i_pk] if u_full is None else u_full
     beyond = None
     if full is not None and u_full is not None and u_full > t and float(full) > best * (1.0 + 1e-6):
         beyond = dict(Vmax_kN=float(full), u_mm=u_full, lower_bound=full_lower_bound(dd),

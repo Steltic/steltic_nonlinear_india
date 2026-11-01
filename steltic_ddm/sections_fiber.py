@@ -652,8 +652,91 @@ class FiberSectionBuilder:
         self.log.append((mt, label, "LINK", 0, "shear spring Vp %.1f kN, K = G Aw / e (e = %.3f)" % (Vp_N / 1e3, float(e_len))))
         return mt, rec
 
+    def double_angle(self, secTag, label, axis="z", n_leg=10, n_t=2):
+        """Third wave (IN_Ex21): two IS 808 angles back to back on a gusset (pushover.india_sections double_angle, the
+        steltic_india formulae). Connected legs against the gusset (the truss plane, local x-z for a beam with its
+        depth along local z), outstanding legs normal to it at the top of the section (an assumption: the HR record
+        does not fix up / down; the elastic properties do not depend on it). Leg strips of n_leg x n_t fibres; fibre
+        areas scaled to the catalogue area (root fillets), torsion G x 2 J1. axis 'y' turns the depth to local y."""
+        from pushover import india_sections as IS_
+        p = IS_.get_mm(label)
+        if not p or p.get("section_type") != "double_angle":
+            raise ValueError("%s is not a registered double angle" % label)
+        sc = 1.0 if self.units == "N-mm" else 1.0 / MM_PER_IN
+        Dc, Bo, t, g = p["leg_connected_mm"], p["leg_outstanding_mm"], p["t_mm"], p["gap_mm"]
+        z_top = p["c_toe_mm"]                         # the outstanding legs' outer face above the centroid
+        strips = []                                   # (width coordinate, depth coordinate, area) in mm
+        for sgn in (+1.0, -1.0):
+            for i in range(n_leg):                    # connected leg: depth Dc, thickness t next to the gusset
+                zc = z_top - (i + 0.5) * Dc / n_leg
+                for j in range(n_t):
+                    strips.append((sgn * (g / 2.0 + (j + 0.5) * t / n_t), zc, Dc / n_leg * t / n_t))
+            wo = Bo - t                               # outstanding leg beyond the connected leg's thickness
+            for i in range(n_leg):
+                yc = sgn * (g / 2.0 + t + (i + 0.5) * wo / n_leg)
+                for j in range(n_t):
+                    strips.append((yc, z_top - (j + 0.5) * t / n_t, wo / n_leg * t / n_t))
+        k = p["A"] / sum(a for _, _, a in strips)     # catalogue area (root fillets) over the strips
+        zbar = sum(z * a for _, z, a in strips) / sum(a for _, _, a in strips)   # the strips' own centroid
+        self.ops.section("Fiber", secTag, "-GJ", self.G * p["J"] * sc ** 4)
+        m = self._mat(0.0)
+        for w, z, a in strips:
+            dz = (z - zbar) * sc
+            if axis == "y":
+                self.ops.fiber(dz, w * sc, a * k * sc * sc, m)
+            else:
+                self.ops.fiber(w * sc, dz, a * k * sc * sc, m)
+        self.log.append((secTag, label, "DOUBLE_ANGLE", len(strips), "2 x %s, gap %g mm, leg %s connected"
+                         % (p["component"], g, p["connected_leg"])))
+        return dict(A=p["A"] * sc ** 2, Ix=p["Ix"] * sc ** 4, Iy=p["Iy"] * sc ** 4, d=Dc * sc, bf=(2 * Bo + g) * sc,
+                    tf=t * sc, tw=t * sc, nfib=len(strips), double_angle=True)
+
+    def single_angle(self, secTag, label, axis="z", n_leg=10, n_t=2):
+        """Third wave (IN_Ex21 truss webs and knee braces): one IS 808 angle (pushover.india_materials
+        section_props_mm). Leg d along the local depth axis, leg bf along the width, both from the heel; fibres about
+        the strips' own centroid, so the section's inclined principal axes (v-v the weakest, r_min) follow from the
+        fibre positions. Areas scaled to the catalogue area (root fillets), torsion G J. The fibre beam-column has no
+        warping degree of freedom and works about the centroid, not the shear centre at the heel: torsional-flexural
+        buckling of the angle is not represented (the design's IS 800 7.5.1.2 equivalent slenderness covers it)."""
+        from pushover import india_materials as IM
+        p = IM.section_props_mm(label)
+        if not p or str(p.get("type")) != "ISA":
+            raise ValueError("%s is not an IS 808 angle" % label)
+        sc = 1.0 if self.units == "N-mm" else 1.0 / MM_PER_IN
+        D, B, t = float(p["d"]), float(p["bf"]), float(p["tf"])
+        strips = []                                       # (width coordinate, depth coordinate, area) in mm
+        for i in range(n_leg):                            # leg d (depth), thickness t at the heel
+            for j in range(n_t):
+                strips.append(((j + 0.5) * t / n_t, (i + 0.5) * D / n_leg, D / n_leg * t / n_t))
+        wo = B - t
+        for i in range(n_leg):                            # leg bf beyond the first leg's thickness
+            for j in range(n_t):
+                strips.append((t + (i + 0.5) * wo / n_leg, (j + 0.5) * t / n_t, wo / n_leg * t / n_t))
+        a0 = sum(a for _, _, a in strips)
+        k = float(p["A"]) / a0
+        ybar = sum(w * a for w, _, a in strips) / a0
+        zbar = sum(z * a for _, z, a in strips) / a0
+        self.ops.section("Fiber", secTag, "-GJ", self.G * float(p["J"]) * sc ** 4)
+        m = self._mat(0.0)
+        Iyy = Izz = Iyz = 0.0
+        for w, z, a in strips:
+            dw, dz = (w - ybar), (z - zbar)
+            Iyy += a * k * dz * dz; Izz += a * k * dw * dw; Iyz += a * k * dw * dz
+            if axis == "y":
+                self.ops.fiber(dz * sc, dw * sc, a * k * sc * sc, m)
+            else:
+                self.ops.fiber(dw * sc, dz * sc, a * k * sc * sc, m)
+        Iv = 0.5 * (Iyy + Izz) - math.sqrt((0.5 * (Iyy - Izz)) ** 2 + Iyz ** 2)
+        self.log.append((secTag, label, "ANGLE", len(strips), "%gx%gx%g, legs from the heel" % (D, B, t)))
+        return dict(A=float(p["A"]) * sc ** 2, Ix=Iyy * sc ** 4, Iy=Izz * sc ** 4, Iv=Iv * sc ** 4, d=D * sc, bf=B * sc,
+                    tf=t * sc, tw=t * sc, nfib=len(strips), angle=True)
+
     def build(self, secTag, label, kind, axis=None, warping_length=None):
         lab = str(label).upper().replace(" ", "")
+        if _custom_kind(lab) == "double_angle":       # third wave (IN_Ex21 angle trusses)
+            return self.double_angle(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
+        if lab.startswith("ISA"):                     # third wave (IN_Ex21 truss webs, knee braces)
+            return self.single_angle(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
         if lab.startswith("BOX"):
             return self.box_plates(secTag, lab, axis=(axis or ("y" if kind == "col" else "z")))
         if lab.startswith("WI") or _custom_kind(lab) == "welded_i":

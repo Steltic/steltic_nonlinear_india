@@ -23,6 +23,15 @@ journal (`done`) and are not replayed at all.
 
 Cost of a resume: the converged steps are recomputed; the failed ones are not. A run whose CONVERGED steps alone take
 more than a chunk cannot progress this way -- `progress_possible` says so, and the orchestrator reports it.
+
+Limit found on the real models (third wave): a failed `analyze` is NOT perfectly state-neutral in OpenSees. On the
+one-bay EBF with forced failures the replayed run differs from the uninterrupted one by 4.5e-13 (relative); on IN_Ex15 Y
+at a near-singular step (u = 1 000 mm, 9 step halvings) the NewtonLineSearch attempt that converged after three failed
+attempts in the original failed in the replay (call 86). The fingerprint check catches this (ReplayDiverged), and the
+caller then restarts the segment live (`restart_live`): correct, but that chunk gains nothing. So the journal resumes
+runs whose hard steps lie after the last chunk boundary, and is a safe no-op otherwise. An exact state checkpoint was
+tried with OpenSees' own `database File` + `save` / `restore`: the save works, the restore fails on these models
+("database failed to restore state").
 """
 from __future__ import annotations
 
@@ -127,6 +136,14 @@ class Journal:
         global ACTIVE
         ACTIVE = self
         return self
+
+    def restart_live(self, name, ops):
+        """After ReplayDiverged: drop the segment's journal and start it again live (the caller re-runs its piece)."""
+        self.end()
+        self.data["segments"][name] = []
+        self.data["diverged"] = int(self.data.get("diverged") or 0) + 1
+        self.save()
+        return self.begin(name, ops)
 
     def end(self):
         global ACTIVE

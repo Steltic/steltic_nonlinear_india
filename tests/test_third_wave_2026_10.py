@@ -405,3 +405,160 @@ def test_orchestrator_runs_steps_in_order_and_resumes(tmp_path):
 def argparse_ns(**kw):
     import argparse
     return argparse.Namespace(**kw)
+
+
+def test_a_diverged_replay_restarts_live(tmp_path):
+    """restart_live drops the segment and runs it again live: the result is the uninterrupted one."""
+    from snl import checkpoint as CK
+    path = str(tmp_path / "j.ckpt")
+    o1 = _FakeOps(set())
+    J = CK.Journal(path, key="k", max_live_calls=2).begin("seg", o1)
+    with pytest.raises(CK.ChunkExpired):
+        _scripted_run(o1, 4)
+    J.end()
+    o2 = _FakeOps(set(), t0=5.0)
+    J2 = CK.Journal(path, key="k").begin("seg", o2)
+    with pytest.raises(CK.ReplayDiverged):
+        _scripted_run(o2, 4)
+    o3 = _FakeOps(set(), t0=5.0)
+    J2.restart_live("seg", o3)
+    out = _scripted_run(o3, 4)
+    J2.end()
+    assert out == _scripted_run(_FakeOps(set(), t0=5.0), 4) and J2.data["diverged"] == 1
+
+
+# ------------------------------------------------------------------ IN_Ex21: angle-truss shed (truss members, double angles)
+EX21 = os.environ.get("STELTIC_EX21_JOB", os.path.join(GOLD, "IN_Ex21_MSME_angle_truss_shed_Hosur"))
+
+
+def test_double_angle_properties_are_the_hr_ones():
+    """2ISA70X70X6 on an 8 mm gusset, connected leg D: the HR model's element properties (A 1 630 mm2, in-plane
+    I 760 000 mm4 in the beam's major slot, out-of-plane I 1 667 845 mm4)."""
+    from pushover import india_sections as IS_, india_materials as IM
+    p = IS_.register_double_angle("2ISA70X70X6", "ISA70X70X6", 8.0, "D")
+    assert p["A"] == pytest.approx(1630.0) and p["Ix"] == pytest.approx(760000.0)
+    assert p["Iy"] == pytest.approx(1667844.8, rel=1e-6) and p["r_min"] == pytest.approx(math.sqrt(760000.0 / 1630.0))
+    sp = IM.section_props_mm("2ISA70X70X6")
+    assert sp["type"] == "DOUBLE_ANGLE" and sp["double_angle"] and not sp["welded_i"]
+    assert IM.buckling_classes(sp)["zz"] == "c"
+    b = IM.brace_strengths("2ISA70X70X6", 1500.0, 250.0)
+    assert b["r_mm"] == pytest.approx(math.sqrt(760000.0 / 1630.0)) and b["A_mm2"] == pytest.approx(1630.0)
+
+
+def test_double_angle_fibre_section_stiffness():
+    """The fibre section of a double angle (a cantilever chord along X, depth along local z) has the registry's
+    in-plane and out-of-plane EI within 5 % (strips scaled to the catalogue area; fillets left out)."""
+    import openseespy.opensees as ops
+    from pushover import india_sections as IS_
+    from steltic_ddm.sections_fiber import FiberSectionBuilder
+    p = IS_.register_double_angle("2ISA70X70X6", "ISA70X70X6", 8.0, "D")
+    L = 2000.0
+    for dof, I in ((3, p["Ix"]), (2, p["Iy"])):          # tip load along global Z (in plane), along Y (out of plane)
+        ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 6)
+        ops.node(1, 0, 0, 0); ops.node(2, L, 0, 0); ops.fix(1, 1, 1, 1, 1, 1, 1)
+        ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)
+        b = FiberSectionBuilder(ops, Fy=250.0, units="N-mm", residual="none")
+        b.double_angle(1, "2ISA70X70X6", axis="z")
+        ops.beamIntegration("Lobatto", 1, 1, 5)
+        ops.element("forceBeamColumn", 1, 1, 2, 1, 1)
+        ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1)
+        f = [0.0] * 6; f[dof - 1] = 100.0; ops.load(2, *f)
+        ops.constraints("Plain"); ops.numberer("Plain"); ops.system("BandGeneral"); ops.test("NormDispIncr", 1e-10, 20)
+        ops.algorithm("Newton"); ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+        assert ops.analyze(1) == 0
+        I_fib = 100.0 * L ** 3 / (3.0 * 200000.0 * abs(ops.nodeDisp(2, dof)))
+        assert I_fib == pytest.approx(I, rel=0.05), (dof, I_fib, I)
+    ops.wipe()
+
+
+def test_truss_members_are_nonlinear_axial_members(tmp_path):
+    """A member of kind `truss` (IN_Ex21 diagonals, verticals and knee braces) gets the brace backbone, as `brace`."""
+    from pushover import nonlinear_model as NM, hinge_models as HM
+    os.environ["SNL_PLASTICITY"] = "fibre"
+    pkg = _ebf_pkg("X", str(tmp_path))
+    for t in (41, 42):
+        pkg.schedule[t] = dict(member="truss", section=BRACE, role="truss_knee_brace")
+    hinges, stats = NM.build_nonlinear(pkg, HM.load_params(None, jurisdiction="india"), {}, verbose=False, plasticity="fibre")
+    assert stats["brace_nonlinear"] == 2 and {h["kind"] for t, h in hinges.items() if t in (41, 42)} == {"brace"}
+
+
+def test_ex21_package_builds():
+    """The IN_Ex21 gold (when present): every truss member is a nonlinear axial member, the double-angle chords are
+    fibre members, and the gravity analysis converges."""
+    if not os.path.isdir(EX21):
+        pytest.skip("IN_Ex21 gold job not available")
+    import contextlib, io
+    from collections import Counter
+    from pushover import package_reader as PR, nonlinear_model as NM, hinge_models as HM
+    os.environ["SNL_PLASTICITY"] = "fibre"
+    with contextlib.redirect_stdout(io.StringIO()):
+        pkg = PR.load(EX21)
+        prm = HM.load_params(None, jurisdiction="india")
+        loads, gtable = NM.gravity_loads(pkg, prm)
+        PG = NM.column_gravity_axials(pkg, loads)
+        hinges, stats = NM.build_nonlinear(pkg, prm, PG, verbose=False, plasticity="fibre")
+        ok = NM._apply_gravity(loads)
+    roles = Counter((pkg.schedule.get(h["ele"]) or {}).get("role") for h in hinges.values() if h["kind"] == "brace")
+    n_truss = sum(1 for r in pkg.schedule.values() if r.get("member") == "truss")
+    assert sum(v for k, v in roles.items() if str(k).startswith("truss_")) == n_truss and roles["truss_knee_brace"] > 0
+    assert ok == 0
+
+
+def test_single_angle_fibre_section_buckles_about_v_v():
+    """IS 808 single angle (IN_Ex21 webs and knee braces) in the DDM: the fibre section's weakest principal stiffness
+    is the catalogue v-v one (A r_min^2) within 6 %, from a cantilever loaded normal to the v-v axis."""
+    import openseespy.opensees as ops
+    from pushover import india_materials as IM
+    from steltic_ddm.sections_fiber import FiberSectionBuilder
+    p = IM.section_props_mm("ISA60X60X6")
+    Iv_cat = p["A"] * p["r_min"] ** 2
+    L, F = 2000.0, 100.0
+    ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 6)
+    ops.node(1, 0, 0, 0); ops.node(2, L, 0, 0); ops.fix(1, 1, 1, 1, 1, 1, 1)
+    ops.geomTransf("Linear", 1, 0.0, 0.0, 1.0)                 # local y = global Y, local z = global Z
+    b = FiberSectionBuilder(ops, Fy=250.0, units="N-mm", residual="none")
+    r = b.single_angle(1, "ISA60X60X6", axis="z")
+    assert r["Iv"] == pytest.approx(Iv_cat, rel=0.06) and r["Ix"] == pytest.approx(p["Ix"], rel=0.06)
+    ops.beamIntegration("Lobatto", 1, 1, 5); ops.element("forceBeamColumn", 1, 1, 2, 1, 1)
+    u = (1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0))           # along the symmetry line u-u (heel to centroid): bending about v-v
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(2, 0.0, F * u[0], F * u[1], 0.0, 0.0, 0.0)
+    ops.constraints("Plain"); ops.numberer("Plain"); ops.system("BandGeneral"); ops.test("NormDispIncr", 1e-10, 20)
+    ops.algorithm("Newton"); ops.integrator("LoadControl", 1.0); ops.analysis("Static")
+    assert ops.analyze(1) == 0
+    d = ops.nodeDisp(2, 2) * u[0] + ops.nodeDisp(2, 3) * u[1]
+    assert F * L ** 3 / (3.0 * 200000.0 * d) == pytest.approx(Iv_cat, rel=0.06)
+    ops.wipe()
+
+
+def test_bottom_chord_ties_read_from_the_design():
+    """The bottom-chord tie stations: a declared list wins; else every Ly the design used (member_overrides); else none."""
+    from steltic_ddm import peb_restraints as PR
+    cfg = {"member_overrides": {"truss_bottom_chord:2ISA70X70X6": {"Ly_mm": 4500.0}}}
+    assert PR._bottom_chord_ties(cfg, {}, 0.0, 18000.0)[0] == [4500.0, 9000.0, 13500.0]
+    assert PR._bottom_chord_ties(cfg, {"bottom_chord_ties_mm": [6000.0, 12000.0]}, 0.0, 18000.0) == \
+        ([6000.0, 12000.0], "roof plane bottom_chord_ties_mm")
+    assert PR._bottom_chord_ties({}, {}, 0.0, 18000.0) == ([], None)
+
+
+def test_ex21_ddm_truss_restraints_and_gate():
+    """IN_Ex21 gold (when present) in the DDM GMNIA: purlins at the 11 inner top-chord panel points of each inner truss
+    (the gable trusses are tied by the HR model), bottom-chord ties at 4.5 / 9.0 / 13.5 m, the column girts / fly
+    braces; angle fibres; the gravity gate within +/-5 % of the HR forces."""
+    if not os.path.isdir(EX21):
+        pytest.skip("IN_Ex21 gold job not available")
+    import contextlib, io, shutil, tempfile
+    from steltic_ddm import ingest, loads, india_checks as IC, peb_restraints as PR
+    d = tempfile.mkdtemp(); job = os.path.join(d, "ex21")
+    shutil.copytree(EX21, job, ignore=shutil.ignore_patterns("figs", "report.html", "viewer_3d.html", "rag", "secondary"))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            nm = ingest.load_package(job, os.environ.get("STELTIC_ENGINE_DIR"))
+            pl = PR.plan(nm, nm.cfg)
+            combos = [c for c in loads.prune(loads.steltic_combos(nm.cfg, nm=nm)) if c[0] == "1.5DL+1.5LL"]
+            g = IC.gravity_gate(nm, nm.cfg, combos)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    c = pl["counts"]
+    assert c["truss_top_chord_lateral"] == 5 * 11 and c["truss_bottom_chord_lateral"] == 7 * 3
+    assert c["column_lateral"] > 0 and pl["truss_basis"][0]["bottom_chord_ties_mm"] == [4500.0, 9000.0, 13500.0]
+    assert not [r for r in g["rows"] if not r["ok"]]

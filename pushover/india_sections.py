@@ -127,6 +127,51 @@ def register_tapered_i(name, D_start_mm, D_end_mm, bf_mm, tf_mm, tw_mm, n_seg=8,
     return rec
 
 
+def double_angle_props_mm(angle, gap_mm, connected_leg="D") -> dict:
+    """Third wave (IN_Ex21): two IS 808 angles back to back on a gusset of thickness gap_mm -- the formulae of steltic_india
+    sections.register_double_angle (MSME branch): the connected legs lie against the gusset, in the truss plane.
+      x (in-plane bending, the engine's major slot): Ix = 2 I1 about the component's own axis;
+      y (out of plane, about the gusset centre): Iy = 2 (I1' + A1 (c + g/2)^2), c = the component centroid from the back
+      of its connected leg; Zx = 2 Zp1, Zy = 2 A1 (c + g/2); J = 2 J1; r_min = sqrt(min(Ix, Iy) / A).
+    Component values from the IS 808:2021 row (mm columns)."""
+    from . import sections_db as SDB
+    p1 = SDB.props(angle)
+    if str(p1.get("Type") or "").upper() != "ISA":
+        raise ValueError("double angle: component %r is not an IS 808 angle" % angle)
+    g = float(gap_mm)
+    A1, t = float(p1["A_si_mm2"]), float(p1["tw_mm"])
+    leg = str(connected_leg or "D").upper()
+    if leg == "D":
+        Dc, Bo, I_in1, I_out1 = float(p1["D_mm"]), float(p1["B_mm"]), float(p1["Izz_si_mm4"]), float(p1["Iyy_si_mm4"])
+        c_back, c_toe_in, Zp_in1 = float(p1["Cz_mm"]), float(p1["Cy_mm"]), float(p1["Zpz_mm3"])
+    elif leg == "B":
+        Dc, Bo, I_in1, I_out1 = float(p1["B_mm"]), float(p1["D_mm"]), float(p1["Iyy_si_mm4"]), float(p1["Izz_si_mm4"])
+        c_back, c_toe_in, Zp_in1 = float(p1["Cy_mm"]), float(p1["Cz_mm"]), float(p1["Zpy_mm3"])
+    else:
+        raise ValueError("double angle: connected_leg must be 'D' or 'B', not %r" % connected_leg)
+    A, Ix = 2.0 * A1, 2.0 * I_in1
+    a = c_back + g / 2.0
+    Iy = 2.0 * (I_out1 + A1 * a ** 2)
+    return {"_units": "mm", "section_type": "double_angle", "Type": "DOUBLE_ANGLE", "A": A, "Ix": Ix, "Iy": Iy,
+            "Zx": 2.0 * Zp_in1, "Zy": 2.0 * A1 * a, "Sx": Ix / max(Dc - c_toe_in, c_toe_in), "Sy": Iy / (Bo + g / 2.0),
+            "rx": math.sqrt(Ix / A), "ry": math.sqrt(Iy / A), "r_min": math.sqrt(min(Ix, Iy) / A), "d": Dc,
+            "bf": 2.0 * Bo + g, "tf": t, "tw": t, "J": 2.0 * float(p1.get("It_mm4") or 0.0), "Cw": 0.0, "Aw": 2.0 * Dc * t,
+            "Mass_kg_m": 2.0 * float(p1.get("Mass_kg_m") or A1 * 7850.0 / 1e6), "component": normalize_label(angle),
+            "gap_mm": g, "connected_leg": leg, "leg_connected_mm": Dc, "leg_outstanding_mm": Bo, "t_mm": t, "A1_mm2": A1,
+            "c_back_mm": c_back, "c_toe_mm": c_toe_in, "welded": False}
+
+
+def register_double_angle(name, angle, gap_mm, connected_leg="D", source=None) -> dict:
+    p = double_angle_props_mm(angle, gap_mm, connected_leg)
+    p["label"] = normalize_label(name)
+    p["source"] = source or "two IS 808 %s back to back, %g mm gusset (HR package custom_sections)" % (angle, float(gap_mm))
+    CUSTOM[p["label"]] = p
+    return p
+
+
+_DA_RE = re.compile(r"^2(ISA\d+(?:\.\d+)?X\d+(?:\.\d+)?X\d+(?:\.\d+)?)$")
+
+
 def register_custom_sections(custom: dict | None, origin: str = "cfg_snapshot.json") -> list:
     """{name: {'type': 'box' | 'welded_I' | 'tapered_I', ...}} -> registry. Returns the labels registered.
     box: B_mm, D_mm, tf_mm, tw_mm; welded_I: D_mm, bf_mm, tf_mm, tw_mm; tapered_I: D_start_mm, D_end_mm, bf_mm, tf_mm,
@@ -147,6 +192,9 @@ def register_custom_sections(custom: dict | None, origin: str = "cfg_snapshot.js
                                      n_seg=spec.get("n_seg") or 8, round_mm=spec.get("round_mm", 1.0),
                                      source="segment of %s" % src)
             out.extend(rec["segments"])
+        elif typ == "double_angle":                   # third wave (IN_Ex21 angle-truss shed)
+            register_double_angle(nm, spec["angle"], spec.get("gap_mm") or 0.0, spec.get("connected_leg") or "D", source=src)
+            out.append(normalize_label(nm))
         else:
             raise KeyError("custom section %r: type %r is not supported (box | welded_I | tapered_I, HR contract)"
                            % (nm, spec.get("type")))
@@ -196,7 +244,16 @@ def get_mm(label) -> dict | None:
         return from_label(key)
     if key.startswith("WI"):
         return welded_i_from_label(key)
+    mo = _DA_RE.match(key)
+    if mo:                                         # 2ISA... not declared: the HR label, gap unknown -> 0 (VERIFY)
+        return register_double_angle(key, mo.group(1), 0.0, source="two IS 808 %s back to back, gap not declared in the "
+                                     "package (0 mm assumed -- VERIFY)" % mo.group(1))
     return None
+
+
+def is_double_angle(label) -> bool:
+    p = get_mm(label)
+    return p is not None and p.get("section_type") == "double_angle"
 
 
 def is_box(label) -> bool:
@@ -216,11 +273,13 @@ def props_in(label) -> dict | None:
         return None
     s = MM_PER_IN
     box = p.get("section_type") == "box"
-    out = {"Type": "BOX" if box else "WELDED_I", "A": p["A"] / s ** 2, "Ix": p["Ix"] / s ** 4, "Iy": p["Iy"] / s ** 4,
+    da = p.get("section_type") == "double_angle"
+    out = {"Type": "BOX" if box else ("DOUBLE_ANGLE" if da else "WELDED_I"), "A": p["A"] / s ** 2, "Ix": p["Ix"] / s ** 4, "Iy": p["Iy"] / s ** 4,
            "J": p["J"] / s ** 4, "Zx": p["Zx"] / s ** 3, "Zy": p["Zy"] / s ** 3, "Sx": p["Sx"] / s ** 3,
            "Sy": p["Sy"] / s ** 3, "rx": p["rx"] / s, "ry": p["ry"] / s, "d": p["d"] / s, "bf": p["bf"] / s,
            "tf": p["tf"] / s, "tw": p["tw"] / s, "Cw": (p.get("Cw") or 0.0) / s ** 6, "A_si_mm2": p["A"],
-           "Mass_kg_m": p["Mass_kg_m"], "box": box, "welded_i": not box,
+           "Mass_kg_m": p["Mass_kg_m"], "box": box, "welded_i": not box and not da, "double_angle": da,
+           "r_min_mm": p.get("r_min"),
            "custom_section": p["label"], "custom_note": p["source"], "_source_csv": "HR custom_sections"}
     out["h_tw"] = (p["d"] - 2 * p["tf"]) / p["tw"]
     out["bf_2tf"] = p["bf"] / (2 * p["tf"])

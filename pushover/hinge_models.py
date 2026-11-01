@@ -262,7 +262,7 @@ def brace_spec(section: str, L_in: float, prm: dict, india: dict | None = None) 
     default 1.0) with Pye = A·fye and Pcr = A·chi·fye on the IS 800 7.1.2.1 curve (no AISC E3, no Ry, no 1.14)."""
     p = SDB.props(section); bp = prm["brace_axial"]
     A, r = p["A"], min(p["rx"], p["ry"])
-    if isinstance(p.get("r_min_mm"), float) and 0 < p["r_min_mm"] / 25.4 < r:   # third wave: single angle about v-v
+    if isinstance(p.get("r_min_mm"), float) and 0 < p["r_min_mm"] / 25.4 < r:   # third wave: an angle about its weakest axis
         r = p["r_min_mm"] / 25.4
     KLr = bp["K_effective"] * L_in / r
     if india:
