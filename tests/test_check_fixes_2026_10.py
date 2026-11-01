@@ -202,9 +202,10 @@ def test_pushover_refresh_lower_bound_target_review_none(tmp_path):
     po = os.path.join(job, "pushover")
     assert refresh_report(po)
     h = open(os.path.join(po, "pushover_report.html"), encoding="utf-8").read()
-    # third wave (P10): the old line is the whole-curve peak (information); the headline is the table above it
-    assert "<p><b>X</b>: whole-curve peak (information) Vmax = 14500 kN (Vmax/VB = 14.50" in h   # captured, no "≥"
-    assert "Pushover strength (headline): Vmax up to the IS-MCE target displacement" in h
+    # third wave (P10, review M1): the old line is the peak of the analysed curve (information); the headline is the
+    # table above it, read up to the IS-MCE target
+    assert "<p><b>X</b>: peak of the analysed curve (information) Vmax = 14500 kN (Vmax/VB = 14.50" in h   # no "≥"
+    assert "Pushover headline, read up to the IS-MCE target displacement" in h
     assert "Vmax ≥ 8000 kN (Vmax/VB ≥ 8.00, Vmax/W ≥ 0.400) — a lower bound" in h
     assert "<td>NO — the curve ended at" in h and "IS-MCE (curve end: the 120.0 mm target was not reached" in h
     assert "Y IS-MCE at the curve end" in h
@@ -226,8 +227,10 @@ def test_index_pushover_fields(tmp_path):
     from pushover import review as RV
     job = _job_with_package(tmp_path, _package(reached_mce=False))
     p = B.pushover_results(job)
-    # third wave (P10): up to the IS-MCE target (120 mm) 12.0; the whole-curve 14,500 kN is information beyond it
-    assert p["vmax_vb_text_x"] == "12.0" and not p["vmax_lower_bound_x"] and "14,500 kN" in p["vmax_beyond_text_x"]
+    # third wave (P10, review M1): X still rises at its IS-MCE target (120 mm): the base shear there, V(δt)/VB 12.0, is
+    # not a strength (no Vmax text); the 14,500 kN peak of the analysed curve is information beyond it
+    assert p["headline_kind_x"] == "at_target" and p["vmax_vb_text_x"] is None and p["v_target_vb_text_x"] == "12.0"
+    assert not p["vmax_lower_bound_x"] and "14,500 kN" in p["peak_analysed_text_x"]
     assert p["vmax_vb_text_y"].startswith("≥ ") and p["vmax_lower_bound_y"] and "lower bound" in p["vmax_lower_bound_note"]
     assert p["mce_target_reached_y"] is False and "not reached" in p["mce_target_text_y"]
     assert not p["under_review_y"]
@@ -276,9 +279,9 @@ def test_four_analyses_and_index_on_an_ebf_run(tmp_path):
     compare.build(job)
     h = open(os.path.join(job, "four_analyses.html"), encoding="utf-8").read()
     assert "Completeness gate: " in h and "Inputs (sha256)" not in h and "NL-" not in h and "EOR" not in h
-    # third wave (P10): Vmax up to the IS-MCE target -- both targets were reached, so no lower bound any more
-    assert "Pushover strength Vmax up to the IS-MCE target (X / Y)" in h and "Vmax/VB = 3.0 / 2.0" in h
-    assert "≥ marks a lower bound" not in h and "the curve continues to" in h
+    # third wave (P10, review M1): both curves still rise at their IS-MCE targets: the base shear at δt, not a strength
+    assert "Pushover headline up to the IS-MCE target (X / Y)" in h and "V(δt)/VB = 3.0 / 2.0" in h
+    assert "Vmax/VB = 3.0" not in h and "≥ marks a lower bound" not in h and "the peak of the analysed curve is" in h
     assert "UNDER REVIEW (see the note below)" in h and "Pushover Y under review" in h
     assert "sweeps that stopped numerically" in h
     summ = json.load(open(os.path.join(job, "snl_summary.json")))

@@ -10,8 +10,9 @@ Evidence (`evidence(pkg, d, ...)`):
   * the largest one-step loss of base shear before Vmax (a sudden loss in a pushover of a ductile frame needs an
     explanation: a brace buckling, a fracture -- or a modelling fault);
   * where Vmax is reached (roof displacement, and as a share of the height) and how far that is beyond the IS-MCE target;
-  * the bilinear fit: Te = T1 sqrt(Ki / Ke) with Ki the secant at 0.3 Vmax (pushover.postprocess.initial_stiffness); a
-    Ki below the initial slope (Te below T1) means the fit took Ki on the curve after a loss of strength;
+  * the bilinear fit: Te = T1 sqrt(Ki / Ke) with Ki the initial slope of the curve (pushover.postprocess.initial_stiffness,
+    review M2; packages before it used the secant at 0.3 Vmax); Te below T1 in a stored package means its Ki was taken
+    on the curve after a loss of stiffness;
   * the EBF link rotations at the IS-DBE / IS-MCE targets against the storey drift. A mid-span (chevron) link of length
     e in a bay of length L rotates about L / e times the storey drift (rigid-plastic kinematics); a link rotation many
     times that is not compatible with the frame's deformation. The other push direction of the same model is the

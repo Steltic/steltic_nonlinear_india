@@ -12,9 +12,16 @@ from . import ingest, loads, phi_s, report_ddm, solver, transfer_gate, imperfect
 from .model_gmnia import GMNIAModel
 
 
+TASK_DONE = "task"           # review H1: the journal entry holding a finished sweep's whole _worker result
+
+
 def _worker(args):
     """One sweep in its own process (openseespy is a process singleton)."""
     job, engine_dir, combo_label, imp, opts = args
+    J = _journal_for(job, combo_label, imp, opts)       # third wave: resumable sweep (snl.checkpoint), None without
+    if J is not None and J.done(TASK_DONE) is not None:
+        return J.done(TASK_DONE)                         # review H1: finished in an earlier chunk -- the whole result,
+        #                                                  nothing ingested or built (classify needs a prepared model)
     if engine_dir and engine_dir not in sys.path:
         sys.path.insert(0, engine_dir)
     import io, contextlib
@@ -41,7 +48,6 @@ def _worker(args):
                    rigid_end_offset=opts.get("rigid_end_offset", False),
                    fy_fn=(_india_fy_fn(job) if india else None), bow_hollow=opts.get("bow_hollow"))
     buf = io.StringIO()
-    J = _journal_for(job, combo_label, imp, opts)       # third wave: resumable sweep (snl.checkpoint), None without
 
     def one(dl, k):
         name = "dlam=%.6g" % dl
@@ -111,8 +117,11 @@ def _worker(args):
                                 disp={str(t): [round(v, 4) for v in dd] for t, dd in f["disp"].items()},
                                 mem={str(m): [round(r, 2), round(fr, 2)] for m, (r, fr) in f["mem"].items()},
                                 buckled=[int(t) for t in f["buckled"]]) for f in res.get("frames", [])]
-    return dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12,
-                forces_at_1=packed)
+    out = dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12,
+               forces_at_1=packed)
+    if J is not None:
+        J.store(TASK_DONE, out)                          # review H1: a later chunk returns this, unchanged
+    return out
 
 
 def _b12_worker(args):

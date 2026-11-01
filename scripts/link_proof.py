@@ -25,4 +25,5 @@ for tag in ("pushover_before", NEW):
               % (lv, x["target_mm"], x["reached"], x["Te"], x["Ki_over_Ke"], x["V_over_VB"] or 0, 100 * (x["drift"] or 0),
                  x["link_rot"] or 0, x["link_rot_kinematic"] or 0, (x.get("census") or {}).get("links_yielded")))
     h = VP.vmax_to_target(dd)
-    print("   Vmax up to the IS-MCE target: %s at %.0f mm%s" % (VP.strength_text(h), h["u_mm"], "" if h["target_reached"] else " (target not reached)"))
+    print("   %s" % VP.headline_text(d, h))
+    print("   %s" % (VP.peak_text(d, h) or "the headline point is the peak of the analysed curve"))

@@ -134,28 +134,32 @@ VMAX_MARK_END = "<!-- /steltic:vmax-to-mce-target -->"
 
 
 def vmax_block_html(pkg) -> str:
-    """Third wave, P10: the headline strength of each direction -- the peak UP TO the IS-MCE target displacement
-    (pushover/vmax_policy.py) -- with the curve beyond the target as information and any Te < T1 flag. Marked, so a
-    refresh replaces it in place."""
+    """Third wave, P10 (review M1): the headline of each direction, read on the curve up to the IS-MCE target
+    displacement (pushover/vmax_policy.py): Vmax where the curve peaks before δt, the base shear at δt where it is
+    still rising there (not a strength), the computed peak where it ended before δt; the peak of the analysed curve
+    as information; Te flags. Marked, so a refresh replaces it in place."""
     from . import vmax_policy as VP
     rows, notes = [], []
     for d, dd in sorted(((pkg or {}).get("directions") or {}).items()):
         h = VP.vmax_to_target(dd)
         if h is None:
             continue
-        rows.append("<tr><td>%s</td><td>%.1f%s</td><td>%s</td><td>%.1f</td><td>%s</td><td>%s</td></tr>" % (
+        rows.append("<tr><td>%s</td><td>%.1f%s</td><td>%s</td><td>%s</td><td>%.1f</td><td>%s</td><td>%s</td></tr>" % (
             d, h["target_mm"], "" if h["target_reached"] else " (not reached: the curve ended before it)",
-            VP.strength_text(h), h["u_mm"] or 0.0, VP.strength_text(h, ratio="VB") or "—", VP.strength_text(h, ratio="W") or "—"))
-        bt = VP.beyond_text(d, h)
-        if bt:
-            notes.append(bt + ".")
+            html.escape(h["label"]), VP.strength_text(h), h["u_mm"] or 0.0,
+            ("%s = %s" % (VP.ratio_label(h, "VB"), VP.strength_text(h, ratio="VB"))) if h.get("V_over_VB") is not None else "—",
+            ("%s = %s" % (VP.ratio_label(h, "W"), VP.strength_text(h, ratio="W"))) if h.get("V_over_W") is not None else "—"))
+        notes.append("%s: %s." % (d, h["qualifier"][0].upper() + h["qualifier"][1:]))
+        pt = VP.peak_text(d, h)
+        if pt:
+            notes.append(pt + ".")
         tn = VP.te_note(d, VP.te_flags(dd))
         if tn:
             notes.append(tn)
     if not rows:
         return ""
-    return ("%s<p><b>Pushover strength (headline): Vmax up to the IS-MCE target displacement</b></p><table><tr><th>dir</th>"
-            "<th>IS-MCE δt (mm)</th><th>Vmax up to δt</th><th>at roof u (mm)</th><th>Vmax/VB</th><th>Vmax/W</th></tr>%s</table>"
+    return ("%s<p><b>Pushover headline, read up to the IS-MCE target displacement</b></p><table><tr><th>dir</th>"
+            "<th>IS-MCE δt (mm)</th><th>headline</th><th>value</th><th>at roof u (mm)</th><th>/ VB</th><th>/ W</th></tr>%s</table>"
             "<div class='note'>%s%s</div>%s" % (VMAX_MARK_START, "".join(rows), html.escape(VP.BASIS),
                                                 "".join("<br>" + html.escape(n) for n in notes), VMAX_MARK_END))
 
@@ -214,14 +218,14 @@ def _check_fixes(h, pkg, review):
                 h = h[:a] + part + h[b:]
             h = h.replace("<h3>%s %s — member groups" % (d, lv),
                           "<h3>%s %s at the curve end (%.0f mm; target not reached) — member groups" % (d, lv, end or 0), 1)
-    # third wave, P10: the strength up to the IS-MCE target is the headline; the whole-curve peak is information
+    # third wave, P10 (review M1): the headline is read up to the IS-MCE target; the analysed curve's peak is information
     if VMAX_MARK_START in h and VMAX_MARK_END in h:
         h = h[:h.index(VMAX_MARK_START)] + h[h.index(VMAX_MARK_END) + len(VMAX_MARK_END):]
     vb_html = vmax_block_html(pkg)
     if vb_html:
         h = h.replace("<h2>3 Response at δt (interpolated)</h2>", "<h2>3 Response at δt (interpolated)</h2>" + vb_html, 1)
         for d in dirs:
-            h = h.replace("<p><b>%s</b>: Vmax " % d, "<p><b>%s</b>: whole-curve peak (information) Vmax " % d, 1)
+            h = h.replace("<p><b>%s</b>: Vmax " % d, "<p><b>%s</b>: peak of the analysed curve (information) Vmax " % d, 1)
     # finding 4: the review note at the top, 'UNDER REVIEW' on the direction's line; removed when the record goes
     if REVIEW_MARK_START in h and REVIEW_MARK_END in h:
         h = h[:h.index(REVIEW_MARK_START)] + h[h.index(REVIEW_MARK_END) + len(REVIEW_MARK_END):]

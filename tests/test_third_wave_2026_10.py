@@ -174,33 +174,66 @@ def _dd(u, V, t_mce, T1=1.0, Te=(1.1, 1.1), full=None, stop="reached max roof dr
                               tail_status="lower_bound" if stop.startswith("solver") else "captured"))
 
 
-def test_vmax_is_headlined_up_to_the_mce_target_only():
+def test_headline_kinds_up_to_the_mce_target():
+    """Review M1: the headline says what it is. Still rising at δt: the base shear at δt (not a strength, no '≥', ratios
+    V(δt)/VB); a peak before δt: Vmax, a strength; the curve ended before δt: its computed peak, '≥' only if still rising
+    at its end. The peak of the analysed curve is stated separately, with its displacement."""
     from pushover import vmax_policy as VP
     u = [0.0, 50.0, 100.0, 150.0, 2000.0]
     V = [0.0, 400.0, 500.0, 520.0, 1500.0]
     h = VP.vmax_to_target(_dd(u, V, 120.0, stop="solver non-convergence at roof u=78.74 in"))
-    assert h["Vmax_kN"] == pytest.approx(508.0) and h["u_mm"] == pytest.approx(120.0)   # interpolated at the target
-    assert h["target_reached"] and not h["lower_bound"]                 # the curve passed the target: not a lower bound
-    assert h["Vmax_over_VB"] == pytest.approx(5.08) and h["Vmax_over_W"] == pytest.approx(0.508)
-    assert h["beyond"]["Vmax_kN"] == 1500.0 and h["beyond"]["lower_bound"]
-    assert "information, not the pushover strength" in VP.beyond_text("Y", h) and "≥ 1,500" in VP.beyond_text("Y", h)
-    # the curve stopped before the target: the peak of what was computed, a lower bound
+    assert h["kind"] == "at_target" and h["at_target"] and not h["is_strength"] and not h["lower_bound"]
+    assert h["V_kN"] == pytest.approx(508.0) and h["u_mm"] == pytest.approx(120.0)            # interpolated at δt
+    assert h["V_over_VB"] == pytest.approx(5.08) and VP.ratio_label(h) == "V(δt)/VB" and VP.strength_text(h) == "508 kN"
+    assert "Base shear at the IS-MCE target δt = 508 kN" in VP.headline_text("Y", h) and "not claimed" in h["qualifier"]
+    pk = h["peak_analysed"]
+    assert pk["V_kN"] == 1500.0 and pk["u_mm"] == 2000.0 and pk["numerical_stop"] and pk["at_curve_end"]
+    t = VP.peak_text("Y", h)
+    assert "1,500 kN at 2,000 mm" in t and "beyond the IS-MCE target" in t and "at least this" in t
+    # a curve point exactly at δt, still rising: the same (the u_best = δt case)
+    h0 = VP.vmax_to_target(_dd([0.0, 60.0, 120.0, 180.0], [0.0, 300.0, 520.0, 700.0], 120.0))
+    assert h0["kind"] == "at_target" and h0["V_kN"] == 520.0
+    # a peak before δt: the strength
+    h1 = VP.vmax_to_target(_dd(u, [0.0, 400.0, 500.0, 450.0, 1500.0], 120.0))
+    assert h1["kind"] == "peak" and h1["is_strength"] and h1["V_kN"] == 500.0 and h1["u_mm"] == 100.0
+    assert VP.ratio_label(h1) == "Vmax/VB" and h1["label"] == "Vmax up to the IS-MCE target"
+    # the curve ended before δt, still rising: a lower bound
     h2 = VP.vmax_to_target(_dd(u[:3], V[:3], 120.0, stop="solver non-convergence at roof u=3.94 in"))
-    assert h2["Vmax_kN"] == 500.0 and not h2["target_reached"] and h2["lower_bound"] and h2["beyond"] is None
-    assert VP.strength_text(h2) == "≥ 500 kN"
+    assert h2["kind"] == "ended" and h2["V_kN"] == 500.0 and not h2["target_reached"] and h2["lower_bound"]
+    assert VP.strength_text(h2) == "≥ 500 kN" and VP.peak_text("Y", h2) is None
+    # ... after a peak: the peak, no '≥'
+    h3 = VP.vmax_to_target(_dd([0.0, 50.0, 100.0, 110.0], [0.0, 400.0, 500.0, 450.0], 120.0, stop="solver non-convergence"))
+    assert h3["kind"] == "ended" and h3["V_kN"] == 500.0 and not h3["lower_bound"] and VP.strength_text(h3) == "500 kN"
 
 
-def test_te_below_t1_is_flagged():
+def test_te_flags_below_and_far_above_t1():
     from pushover import vmax_policy as VP
     dd = _dd([0.0, 100.0, 200.0], [0.0, 1.0, 2.0], 150.0, T1=0.984, Te=(0.421, 0.722))
     f = VP.te_flags(dd)
-    assert [x[0] for x in f] == ["IS-DBE", "IS-MCE"]
+    assert [x[0] for x in f] == ["IS-DBE", "IS-MCE"] and {x[3] for x in f} == {"below"}
     n = VP.te_note("Y", f)
     assert "below the elastic period T1 = 0.984 s" in n and "0.421" in n
     assert VP.te_flags(_dd([0.0, 100.0], [0.0, 1.0], 50.0, T1=0.984, Te=(0.99, 1.2))) == []
+    hi = VP.te_flags(_dd([0.0, 100.0], [0.0, 1.0], 50.0, T1=1.0, Te=(1.2, 1.6)))     # review M2: Te >> T1
+    assert hi == [("IS-MCE", 1.6, 1.0, "far_above")] and "more than 1.5 times the elastic period" in VP.te_note("X", hi)
 
 
-def test_site_index_uses_the_capped_vmax(tmp_path):
+def test_ki_is_the_initial_slope():
+    """Review M2: Ki (ASCE 41-17 Eq. 7-27) is the elastic slope at the start of the curve -- not inflated by a base
+    shear offset at the start or a near-zero first point, and not the secant at 0.3 x a peak far along the curve."""
+    from pushover import postprocess as PP
+    u = [0.0] + [2.43 * i for i in range(1, 12)]
+    assert PP.initial_stiffness(u, [0.0] + [94.0 + 236.4 * x for x in u[1:]]) == pytest.approx(236.4)
+    assert PP.initial_stiffness([0.0, 0.004, 6.48, 12.97, 19.45], [0.0, 1.1, 384.0, 769.0, 1153.0]) == pytest.approx(59.3, rel=0.01)
+    u = [float(i) for i in range(0, 201)]                     # elastic 10 to u = 5, then a long rising branch to 245
+    V = [10.0 * x if x <= 5 else 50.0 + (x - 5.0) for x in u]
+    assert PP.initial_stiffness(u, V) == pytest.approx(10.0)
+    i = next(k for k, v in enumerate(V) if v >= 0.3 * max(V))
+    assert V[i] / u[i] < 3.0                                   # the old secant at 0.3 Vmax: about a quarter of it
+
+
+def test_site_index_headline_fields(tmp_path):
+    """Review M1 in the site index: Vmax fields only for a strength, V(δt) fields for the base shear at the target."""
     import json
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import build_site_index as BSI
@@ -208,12 +241,17 @@ def test_site_index_uses_the_capped_vmax(tmp_path):
     (job / "pushover").mkdir(parents=True)
     pkg = dict(jurisdiction="india", directions={
         "X": _dd([0.0, 50.0, 100.0, 150.0, 2000.0], [0.0, 400.0, 500.0, 520.0, 1500.0], 120.0,
-                 stop="solver non-convergence at roof u=78.74 in", Te=(0.9, 0.9))})
+                 stop="solver non-convergence at roof u=78.74 in", Te=(0.9, 0.9)),
+        "Y": _dd([0.0, 50.0, 100.0, 150.0, 2000.0], [0.0, 400.0, 500.0, 450.0, 1500.0], 120.0)})
     (job / "pushover" / "pushover_package.json").write_text(json.dumps(pkg))
     out = BSI.pushover_results(str(job))
-    assert out["vmax_vb_x"] == 5.1 and out["vmax_vb_text_x"] == "5.1" and not out["vmax_lower_bound_x"]
-    assert out["vmax_target_mm_x"] == 120.0 and "1,500" in out["vmax_beyond_text_x"] and out["te_below_t1_x"]
+    assert out["headline_kind_x"] == "at_target" and out["vmax_vb_x"] is None and out["vmax_vb_text_x"] is None
+    assert out["v_target_vb_x"] == 5.1 and out["v_target_vb_text_x"] == "5.1" and not out["vmax_lower_bound_x"]
+    assert out["headline_kind_y"] == "peak" and out["vmax_vb_y"] == 5.0 and out["v_target_vb_y"] is None
+    assert out["mce_target_mm_x"] == 120.0 and "1,500" in out["peak_analysed_text_x"] and out["te_below_t1_x"]
     assert "vmax_lower_bound_note" not in out and "IS-MCE target" in out["vmax_basis"]
+    m = BSI.meta_line(dict(pushover=out))
+    assert "X V(δt)/VB 5.1; Y Vmax/VB 5.0" in m and "Vmax/VB = " not in m
 
 
 # ------------------------------------------------------------------ P10: keys and solver words on public pages
@@ -579,3 +617,91 @@ def test_india_design_criteria_page_in_public_words(tmp_path):
     vis = re.sub(r"(?s)<[^>]+>", " ", re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", h))
     assert "design engineer" in vis and "engineer of record" not in vis.lower()
     assert "NO_LIMIT_POINT" not in vis and "nl_plan" not in vis and PT.words(vis) == vis
+
+
+# ------------------------------------------------------------------ review fixes (NL_REVIEW.md)
+def _ddm_stubs(monkeypatch, log):
+    """The DDM worker's collaborators as small stand-ins: a fake OpenSees (a counter), a model the sweep 'builds'
+    (as solver.sweep -> build().prepare()), a classify that needs the built model (as the real one: model._bt)."""
+    import types
+    from steltic_ddm import cli, solver, ingest, loads
+
+    class Ops:
+        t = 0.0
+        def analyze(self, n=1):
+            self.t += 1.0; return 0
+        def getTime(self):
+            return self.t
+        def getNodeTags(self):
+            return [1, 2]
+        def nodeDisp(self, n):
+            return [0.1 * self.t * n, 0.0, 0.0]
+    ops = Ops()
+    monkeypatch.setattr(solver, "ops", ops)
+    mem = [types.SimpleNamespace(tag=7, kind="beam", role="floor", section="WPB220X220X71.47"),
+           types.SimpleNamespace(tag=8, kind="brace", role="brace", section="CHS114.3X3.6")]
+    nm = types.SimpleNamespace(cfg={}, members=mem)
+    combos = [("1.5DL+1.5LL", 1.5, 1.5), ("1.2DL+1.2LL+1.2EQ_X", 1.2, 1.2)]
+    monkeypatch.setattr(ingest, "load_package", lambda job, eng: (log.append("ingest"), nm)[1])
+    monkeypatch.setattr(loads, "steltic_combos", lambda cfg, nm=None: combos)
+    monkeypatch.setattr(loads, "present_sets", lambda nm: {})
+
+    class G:
+        def __init__(self, nm, cfg, **kw):
+            log.append("model"); ops.t = 0.0                  # a new model: wipe
+            self.psi, self.builder = kw["out_of_plumb"][1], types.SimpleNamespace(log=[(1, "WPB220X220X71.47", "I", 40, "")])
+    monkeypatch.setattr(cli, "GMNIAModel", G)
+
+    def sweep(g, combo, pres, dlam, max_steps, verbose, time_limit, strain_cap, capture_lambda1):
+        g._bt, g.elems = {7: 1}, [dict(mtag=7, tag=100701), dict(mtag=8, tag=100801)]      # build().prepare()
+        hist = []
+        for i in range(6):
+            assert solver.ops.analyze(1) == 0
+            hist.append((round(combo[1] * solver.ops.getTime() / 6.0, 4), 0.1 * i))
+        y = 1.0 + g.psi * 100.0 + combo[1]
+        return dict(status="LIMIT_POINT", termination="limit_point", lambda_u=hist[-1][0], lambda_end=hist[-1][0],
+                    steps=6, seconds=1.0, hist=hist, frames=[], log=[],
+                    snapshot=dict(yield_ratio={100701: y, 100801: 0.4}, braces={100801: dict(N=-12.0, offset=0.01, buckled=True)},
+                                  disp={1: [0.1, 0.0, 0.0]}, drifts=None, step=6))
+    monkeypatch.setattr(solver, "sweep", sweep)
+    monkeypatch.setattr(solver, "classify", lambda res, g: dict(mechanism="beam hinge" if g._bt else "", buckled_braces=[8]))
+    return cli
+
+
+def test_ddm_resume_returns_finished_sweeps_whole_and_builds_nothing(tmp_path, monkeypatch):
+    """Review H1: a retry with a gravity combination (four imperfection cases) and a lateral one. Chunk 1 finishes two
+    sweeps, expires inside the third, and has no budget for the rest. Chunk 2 returns the two finished sweeps unchanged
+    (mechanism and member state included) without ingesting or building anything, resumes the third by replay, and
+    completes the others -- every result equal to an uninterrupted run."""
+    from snl import checkpoint as CK
+    log = []
+    cli = _ddm_stubs(monkeypatch, log)
+    job = str(tmp_path / "job"); os.makedirs(job)
+    open(os.path.join(job, "model_opensees.py"), "w").write("# model\n")
+    imps = [dict(tag=t, dir=t[1], psi=s / 200.0, bow_sign=s) for t, s in (("+X", 1), ("-X", -1), ("+Y", 1), ("-Y", -1))]
+    tasks = [("1.5DL+1.5LL", i) for i in imps] + [("1.2DL+1.2LL+1.2EQ_X", imps[0])]
+    base = dict(nsub=(2, 2, 4), residual="none", hardening=0.002, fast=False, nip=5, bow=0.001, max_steps=50,
+                time_limit=600.0, dlam=0.05, retry_factors=(2, 4), india=False)
+    ref = [cli._worker((job, None, c, i, dict(base))) for c, i in tasks]          # uninterrupted, no journal
+    ck = dict(dir=str(tmp_path / "ck"), budget_s=None, t0=None)
+    real_jf = cli._journal_for
+    limits = {1: None, 2: None, 3: 3, 4: 0, 5: 0}                               # live calls allowed in chunk 1, per task
+    state = {"n": 0}
+
+    def jf_chunk1(job_, combo_label, imp, opts):
+        J = real_jf(job_, combo_label, imp, opts)
+        state["n"] += 1
+        J.max_live_calls = limits[state["n"]]
+        return J
+    monkeypatch.setattr(cli, "_journal_for", jf_chunk1)
+    c1 = [cli._worker((job, None, c, i, dict(base, _checkpoint=ck))) for c, i in tasks]
+    assert [bool(r.get("resume")) for r in c1] == [False, False, True, True, True]
+    assert c1[0] == ref[0] and c1[1] == ref[1]
+    monkeypatch.setattr(cli, "_journal_for", real_jf)
+    del log[:]
+    c2 = [cli._worker((job, None, c, i, dict(base, _checkpoint=ck))) for c, i in tasks]
+    assert c2 == ref                                                               # identical, every key
+    assert c2[0]["cls"]["mechanism"] == "beam hinge" and c2[0]["state"] == ref[0]["state"]
+    assert log.count("ingest") == 3 and log.count("model") == 3                    # nothing built for the finished two
+    c3 = [cli._worker((job, None, c, i, dict(base, _checkpoint=ck))) for c, i in tasks]
+    assert c3 == ref and log.count("model") == 3                                   # a third chunk: all from the journal
