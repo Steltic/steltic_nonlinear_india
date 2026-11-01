@@ -454,8 +454,9 @@ runs gravity in all three analyses. Checked on the MSME gold with the MSME engin
   - IN_Ex21: double-angle registry values, fibre stiffness in and out of plane, the single-angle v-v stiffness,
     `truss` members, bottom-chord tie reading, and the gold package build, restraint plan and DDM gate (skip-able);
   - the India design-criteria page in public words.
-- Full suite with the HR main engine: **496 passed, 6 skipped** in 330 s (baseline 470 / 4).
+- Full suite with the HR main engine, on the branch merged with origin/main (4e58945, an ancestor of the branch: the
+  merge is a no-op): **512 passed, 6 skipped** in 267 s (baseline 470 / 4; 496 / 6 before the review fixes).
   - The 6 skips are the 4 of the baseline and the 2 IN_Ex21 gold tests, because the job is not yet in
     /home/claude/gold.
-  - Against the MSME gold and engine (`STELTIC_EX21_JOB`, `STELTIC_ENGINE_DIR`), all 28 tests of the third-wave file
+  - Against the MSME gold and engine (`STELTIC_EX21_JOB`, `STELTIC_ENGINE_DIR`), all 44 tests of the third-wave file
     pass.
