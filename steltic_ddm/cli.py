@@ -69,6 +69,7 @@ def _worker(args):
             if J is not None:
                 J.end()
         if J is not None:
+            r_["_section_log"] = list(g.builder.log)      # re-check H1: the result can be rebuilt from the rungs alone
             J.store(name, r_)
         return r_
     from snl import checkpoint as CK
@@ -81,6 +82,16 @@ def _worker(args):
     except CK.NoProgress as ex:                          # review M3: this sweep cannot advance in chunks: say so
         print("   NO PROGRESS %-40s imp %s: %s" % (combo_label[:40], imp["tag"], ex), flush=True)
         return dict(label=combo_label, imp=imp["tag"], no_progress=True, reason=str(ex), checkpoint=J.path)
+    slog = res.pop("_section_log", None)
+    if not hasattr(g, "_bt"):
+        # re-check H1: every rung came from the journal but the whole result was not stored (a chunk killed between the
+        # last rung's store and the task's). Nothing is rebuilt: a GMNIA element tag is SUB_ELE0 + member tag x 100 + i,
+        # and the peak snapshot's yield ratios cover exactly the fibre elements (solver.yield_state) -- all that
+        # classify and the member state below read
+        from .model_gmnia import SUB_ELE0
+        g.prepare()
+        g.elems = [dict(tag=int(t), mtag=(int(t) - SUB_ELE0) // 100, secTag=True)
+                   for t in ((res.get("snapshot") or {}).get("yield_ratio") or {})]
     cls = solver.classify(res, g)
     b12 = packed = None
     if india:
@@ -120,7 +131,8 @@ def _worker(args):
                                 disp={str(t): [round(v, 4) for v in dd] for t, dd in f["disp"].items()},
                                 mem={str(m): [round(r, 2), round(fr, 2)] for m, (r, fr) in f["mem"].items()},
                                 buckled=[int(t) for t in f["buckled"]]) for f in res.get("frames", [])]
-    out = dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state, section_log=g.builder.log, b12=b12,
+    out = dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state,
+               section_log=(g.builder.log if getattr(g, "builder", None) is not None else (slog or [])), b12=b12,
                forces_at_1=packed)
     if J is not None:
         J.store(TASK_DONE, out)                          # review H1: a later chunk returns this, unchanged

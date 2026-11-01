@@ -19,6 +19,7 @@ in the queue and resumes from its checkpoint in the next chunk:
                                             [--engine <steel_engine>] [--python <py>] [--heavy <heavy>]
     python scripts/nl_orchestrate.py next   --queue Q.json [--budget 6900] [--max-steps N] [--dry-run]
     python scripts/nl_orchestrate.py status --queue Q.json
+    python scripts/nl_orchestrate.py unstall --queue Q.json (--step <id> | --job <job name>)
 
 Files next to the queue: Q.json.runtime.log (one line per chunk: start, end, step, exit code, seconds) and
 Q.json.lock (one `next` at a time). The analysis commands are the October re-run commands (tools/step.sh,
@@ -39,7 +40,12 @@ EXIT_RESUME = 75
 EXIT_NO_PROGRESS = 76               # review M3: the step cannot advance in chunks (snl/checkpoint.py NoProgress)
 MARGIN_S = 300.0                    # a chunk ends this long before the budget (the journal save, the report)
 MIN_CHUNK_S = 600.0                 # no step is started with less than this left
-MAX_CHUNKS_PER_STEP = 24            # review M3: a step still resuming after this many chunks is stalled
+NO_GAIN_LIMIT = 3                   # re-check M3: stalled after this many FULL chunks in a row that kept nothing new
+FULL_SHARE = 0.9                    # a chunk is "full" when it had at least this share of the queue's full chunk
+# No cap on the number of chunks (re-check M3 e): a count of chunks is not a measure of progress. A step that keeps
+# gaining (finished pieces, live calls, cached records) is advancing however long it takes -- the IN_Ex19 DDM alone
+# needs about 67 000 s of sweeps, 11 or more full chunks before any replay overhead, so the first version's cap of 24
+# was close -- and one that stops gaining is caught by NO_GAIN_LIMIT and exit 76 instead.
 DEFAULT_PY = "/home/claude/venv312/bin/python"
 DEFAULT_HEAVY = "/home/claude/bin/heavy"
 NL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -124,24 +130,34 @@ def _opt(cmd, flag):
 
 
 def progress_of(s):
-    """Review M3: what a step has kept so far -- (finished pieces, journaled calls) of its journals (pushover / DDM), or
-    (cached records, 0) of its record cache (NLRHA); None for a step without either."""
+    """Re-check M3: what a step has kept so far, in MONOTONE counters -- finished pieces and live calls of its journals
+    (pushover / DDM; a live restart or a shorter journal after it still adds live calls), or cached records (NLRHA).
+    None for a step without either."""
     import glob
     import pickle
     ck = _opt(s["cmd"], "--checkpoint-dir") or _opt(s["cmd"], "--record-cache")
-    if not ck or not os.path.isdir(ck):
-        return None if not ck else (0, 0)
+    if not ck:
+        return None
+    if not os.path.isdir(ck):
+        return dict(done=0, live=0, records=0)
     if s["kind"] == "nlrha":
-        return (len(glob.glob(os.path.join(ck, "*.pkl"))), 0)
-    done = calls = 0
+        return dict(done=0, live=0, records=len(glob.glob(os.path.join(ck, "*.pkl"))))
+    done = live = 0
     for p in glob.glob(os.path.join(ck, "*.ckpt")):
         try:
             j = pickle.load(open(p, "rb"))
         except Exception:                                        # noqa: BLE001
             continue
         done += len(j.get("done") or {})
-        calls += sum(len(v) for v in (j.get("segments") or {}).values())
-    return (done, calls)
+        live += int(j.get("live_calls") or 0)
+    return dict(done=done, live=live, records=0)
+
+
+def gained(before, after):
+    """Any counter went up."""
+    if before is None or after is None:
+        return True
+    return any(after.get(k, 0) > before.get(k, 0) for k in ("done", "live", "records"))
 
 
 def _last_line(logp, word):
@@ -152,15 +168,20 @@ def _last_line(logp, word):
         return None
 
 
-def run_step(q, d, s, remaining, dry=False, runner=None):
-    """One chunk of step `s` with `remaining` seconds left in this call. Returns the exit code. The command runs inside
-    the heavy slot through `_exec`, which fixes the chunk's deadline when the slot is granted (the wait for a slot is
-    not analysis time) and applies the timeout. Review M3: exit 76 (no progress), a chunk that had real time and kept
-    nothing new, or more than MAX_CHUNKS_PER_STEP chunks mark the step `stalled` with the reason; it is not re-run."""
-    deadline = time.time() + remaining - MARGIN_S
+def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
+    """One chunk of step `s` with `remaining` seconds left in this call; `full_chunk` is the queue's full chunk (the
+    `next` budget less the margin). Returns the exit code. The command runs inside the heavy slot through `_exec`, which
+    fixes the chunk's deadline when the slot is granted (the wait for a slot is not analysis time) and applies the
+    timeout; the command gets --chunk-seconds (what is left in this call) and $SNL_FULL_CHUNK (the full chunk), and
+    judges "cannot advance in chunks" (exit 76) against the full chunk only (re-check M3 b).
+    Stalled (not run again until `unstall`): exit 76, or NO_GAIN_LIMIT full chunks in a row that kept nothing new
+    (progress_of). A part-chunk never counts as no progress."""
     chunk = remaining - MARGIN_S
+    full_chunk = float(full_chunk if full_chunk is not None else chunk)
+    deadline = time.time() + chunk
     env = dict(os.environ, **{k: v for k, v in (d.get("env") or {}).items() if v is not None})
     env["PYTHONPATH"] = d.get("nl_root", NL_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    env["SNL_FULL_CHUNK"] = "%.0f" % full_chunk
     cmd = list(s["cmd"])
     if s["kind"] in ("pushover", "ddm", "nlrha"):
         cmd += ["--chunk-seconds", "%.0f" % chunk]
@@ -187,8 +208,9 @@ def run_step(q, d, s, remaining, dry=False, runner=None):
     except Exception:                                                  # noqa: BLE001
         had = None
     after = progress_of(s)
+    is_full = (had if had is not None else chunk) >= FULL_SHARE * full_chunk
     ch = dict(start=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0)), end=_now(), rc=rc, seconds=round(sec),
-              progress=list(after) if after is not None else None, had_s=round(had) if had is not None else None)
+              progress=after, had_s=round(had) if had is not None else None, full=bool(is_full))
     s["chunks"].append(ch)
     s.pop("stalled_reason", None)
     if rc == 0:
@@ -200,14 +222,14 @@ def run_step(q, d, s, remaining, dry=False, runner=None):
         s["state"] = "resume"
         if rc == 124:
             s["note_timeout"] = "killed at the chunk timeout: resumes from the last journal save (5 min)"
-        if len(s["chunks"]) >= MAX_CHUNKS_PER_STEP:
-            s["state"] = "stalled"
-            s["stalled_reason"] = "still not finished after %d chunks" % len(s["chunks"])
-        elif before is not None and after is not None and tuple(after) <= tuple(before) and (had is None or had >= MIN_CHUNK_S):
-            s["state"] = "stalled"
-            s["stalled_reason"] = ("a chunk with %s of analysis time kept nothing new (%s finished pieces / journaled "
-                                   "calls before and after)" % ("%.0f s" % had if had is not None else "its full time",
-                                                               tuple(before)))
+        if gained(before, after):
+            s["no_gain_full_chunks"] = 0
+        elif is_full:
+            s["no_gain_full_chunks"] = int(s.get("no_gain_full_chunks") or 0) + 1
+            if s["no_gain_full_chunks"] >= NO_GAIN_LIMIT:
+                s["state"] = "stalled"
+                s["stalled_reason"] = ("%d full chunks in a row kept nothing new (no finished piece, no live call, no "
+                                       "cached record: %s)" % (s["no_gain_full_chunks"], after))
     else:
         s["state"] = "failed"
     _log(q, "%s  %s  %-48s rc=%s seconds=%.0f state=%s%s" % (ch["start"], ch["end"], s["id"], rc, sec, s["state"],
@@ -231,20 +253,22 @@ def _exec(a):
 
 
 def next_steps(args, runner=None):
-    """Run ready steps until the budget is spent (or --max-steps chunks). A step that ends 'resume' is run again at
-    once while time remains -- each chunk replays its journal, so consecutive chunks are only worth it with time to
-    spare (MIN_CHUNK_S)."""
+    """Run ready steps until the budget is spent (or --max-steps chunks). Re-check M3 a: a step that ends 'resume'
+    (exit 75 / 124) is NOT run again in the same call -- what is left would be a part-chunk that mostly replays -- the
+    call moves on to other ready steps; the next call gives it a full chunk."""
     lockf = open(args.queue + ".lock", "w")
     try:
         fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         raise SystemExit("another `next` is running on %s" % args.queue)
     t_end = time.time() + args.budget
+    full_chunk = args.budget - MARGIN_S
     n = 0
     d_dry = None
+    deferred = set()
     while True:
         d = d_dry if (args.dry_run and d_dry is not None) else load(args.queue)
-        ready = [s for s in d["steps"] if _ready(d, s)]
+        ready = [s for s in d["steps"] if _ready(d, s) and s["id"] not in deferred]
         if not ready:
             if args.dry_run:
                 print("dry run: %d step(s) listed in order; the queue file is unchanged" % n)
@@ -257,8 +281,10 @@ def next_steps(args, runner=None):
             print("budget spent (%.0f s left) after %d chunk(s); next: %s" % (remaining, n, ready[0]["id"]))
             return 0
         s = ready[0]
-        rc = run_step(args.queue, d, s, remaining, dry=args.dry_run, runner=runner)
+        rc = run_step(args.queue, d, s, remaining, full_chunk=full_chunk, dry=args.dry_run, runner=runner)
         n += 1
+        if rc in (EXIT_RESUME, 124):
+            deferred.add(s["id"])
         if args.dry_run:                               # print the commands in order, change nothing on disk
             d_dry = d if n == 1 else d_dry
             s["state"] = "done"
@@ -266,6 +292,24 @@ def next_steps(args, runner=None):
         if rc not in (0, EXIT_RESUME, 124) and args.stop_on_failure:
             print("step %s failed (rc %s); stopping" % (s["id"], rc))
             return rc
+
+
+def unstall(args):
+    """Re-check M3 f: put stalled steps back in the queue -- one step (--step ID) or every stalled step of a job
+    (--job NAME, the part of the step id before the last '/')."""
+    d = load(args.queue)
+    hit = []
+    for s in d["steps"]:
+        if s["state"] != "stalled":
+            continue
+        if (args.step and s["id"] == args.step) or (args.job and s["id"].rsplit("/", 1)[0] == args.job):
+            s["state"] = "resume" if s["chunks"] else "pending"
+            s.pop("stalled_reason", None)
+            s["no_gain_full_chunks"] = 0
+            hit.append(s["id"])
+    save(args.queue, d)
+    print("unstalled: %s" % (", ".join(hit) or "nothing (no stalled step matched)"))
+    return 0
 
 
 def status(args):
@@ -290,6 +334,8 @@ def main(argv=None):
     n.add_argument("--max-steps", type=int, default=0); n.add_argument("--dry-run", action="store_true")
     n.add_argument("--stop-on-failure", action="store_true")
     s = sub.add_parser("status"); s.add_argument("--queue", required=True)
+    u = sub.add_parser("unstall"); u.add_argument("--queue", required=True)
+    g = u.add_mutually_exclusive_group(required=True); g.add_argument("--step"); g.add_argument("--job")
     x = sub.add_parser("_exec", help="internal: one chunk inside the heavy slot")
     x.add_argument("--deadline", required=True); x.add_argument("--chunk", required=True); x.add_argument("--stamp", required=True)
     x.add_argument("command", nargs=argparse.REMAINDER)
@@ -297,7 +343,7 @@ def main(argv=None):
     if a.cmd == "_exec":
         a.command = a.command[1:] if a.command[:1] == ["--"] else a.command
         return _exec(a)
-    r = {"plan": plan, "next": next_steps, "status": status}[a.cmd](a)
+    r = {"plan": plan, "next": next_steps, "status": status, "unstall": unstall}[a.cmd](a)
     return r if isinstance(r, int) else 0          # plan / status return the queue (for callers), the CLI exits 0
 
 

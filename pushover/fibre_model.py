@@ -95,6 +95,7 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
     """
     from steltic_ddm.sections_fiber import FiberSectionBuilder
     m = pkg.model
+    LINK_K.clear()                                     # re-check L2: the springs of THIS model (tags are reused)
     ops.wipe(); ops.model("basic", "-ndm", m.ndm, "-ndf", m.ndf)
     for t, xyz in m.nodes.items():
         ops.node(t, *xyz)
@@ -288,6 +289,12 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
             stats["brace"] += 1; continue
         kind = member_kind(pkg, e)
         sec = pkg.schedule.get(e["tag"], {}).get("section")
+        if (pkg.schedule.get(e["tag"]) or {}).get("role") == "link":
+            # re-check L7: a link given as a parsed elasticBeamColumn (not a raw element) would become an ordinary beam
+            # with no shear yielding
+            raise ValueError("EBF link %d is an elasticBeamColumn%s in the HR model: the NL link model needs an "
+                             "unreleased ElasticTimoshenkoBeam (every gold link is one)"
+                             % (e["tag"], " with end releases" if e.get("release") else ""))
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         d, L = _dir_vec(p1, p2)
         if kind in AXIAL_KINDS and sec:

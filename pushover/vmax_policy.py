@@ -5,8 +5,9 @@ the height, or a numerical stop); many peak at 1-3 m of roof displacement, beyon
 braces and joints, which the analysis does not limit. So the headline is read on the curve from zero to the IS-MCE
 target displacement δt only, and it says what kind of number it is (`kind`):
 
-  peak       the curve has its maximum on [0, δt] before δt, or at δt with the curve falling after it: the strength
-             reached within the hazard's displacement, "Vmax up to the IS-MCE target";
+  peak       the curve has its maximum on [0, δt] before δt, or at δt with the curve falling after it: the largest base
+             shear within the hazard's displacement, "Vmax up to the IS-MCE target" -- a peak, which may be a local
+             one (peak_analysed states a higher peak beyond δt);
   at_target  the maximum on [0, δt] is at δt and the curve is still rising there: the headline is the BASE SHEAR AT
              δt, a demand governed by stiffness, NOT a strength (and not "≥ strength": nothing about the strength
              beyond δt is claimed); its ratios are V(δt)/VB and V(δt)/W, never Vmax/VB;
@@ -39,7 +40,7 @@ REL = 1e-6
 LABELS = {"peak": "Vmax up to the IS-MCE target",
           "at_target": "Base shear at the IS-MCE target δt",
           "ended": "Peak of the computed curve (it ended before the IS-MCE target δt)"}
-QUALIFIER = {"peak": "the strength, reached before δt",
+QUALIFIER = {"peak": "the largest base shear up to δt, a peak reached before δt (a higher one may follow beyond δt)",
              "at_target": "the curve is still rising at δt; the strength lies beyond δt and is not claimed",
              "ended": "the curve ended in a numerical stop before δt"}
 

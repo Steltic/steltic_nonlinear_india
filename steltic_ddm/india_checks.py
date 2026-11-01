@@ -209,7 +209,9 @@ def gravity_gate(nm, cfg, cases, tol=0.05, nsub=(2, 4, 4), rigid_end_offset=Fals
     try:
         from snl import hr_gravity as HG
         hr = HG.ensure(nm.job_dir)
-    except Exception:
+    except Exception as ex:                             # noqa: BLE001
+        if type(ex).__name__ == "GravityRecordFailed":    # re-check L10: never swallowed
+            raise
         hr = None
     llr = {int(k): float(v) for k, v in ((hr or {}).get("column_imposed_load_reduction") or {}).items()}
     llr_used = False

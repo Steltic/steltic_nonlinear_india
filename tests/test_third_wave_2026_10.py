@@ -225,6 +225,10 @@ def test_ki_is_the_initial_slope():
     u = [0.0] + [2.43 * i for i in range(1, 12)]
     assert PP.initial_stiffness(u, [0.0] + [94.0 + 236.4 * x for x in u[1:]]) == pytest.approx(236.4)
     assert PP.initial_stiffness([0.0, 0.004, 6.48, 12.97, 19.45], [0.0, 1.1, 384.0, 769.0, 1153.0]) == pytest.approx(59.3, rel=0.01)
+    # re-check M2: a first step past yield onto a straight post-yield branch -- the hardening slope is not elastic
+    u_y = [0.0, 2.0, 3.0, 4.0, 5.0]                           # elastic 100 to u = 1 (V 100), then 5 per unit
+    V_y = [0.0, 105.0, 110.0, 115.0, 120.0]
+    assert PP.initial_stiffness(u_y, V_y) == pytest.approx(105.0 / 2.0)
     # a coarse first step after which the curve softens (the shipped IN_Ex1 X curve): the secant to the first point
     assert PP.initial_stiffness([0.0, 0.47244, 0.94488, 1.41732], [0.0, 1174.932, 2244.614, 2962.203]) == \
         pytest.approx(1174.932 / 0.47244)
@@ -416,10 +420,11 @@ def test_chunked_pushover_repeats_the_uninterrupted_one(tmp_path):
     assert again == full and J2.data["replayed_calls"] == 12
 
 
-def _fake_journal(ck, calls, done=()):
+def _fake_journal(ck, calls, done=(), live=None):
     import pickle
     os.makedirs(ck, exist_ok=True)
-    pickle.dump(dict(version=1, key="k", done={d: {} for d in done}, segments={"push Y": [(0, 1.0, 1.0, 1.0)] * calls}),
+    pickle.dump(dict(version=1, key="k", done={d: {} for d in done}, segments={"push Y": [(0, 1.0, 1.0, 1.0)] * calls},
+                     live_calls=calls if live is None else live),
                 open(os.path.join(ck, "pushover.ckpt"), "wb"))
 
 
@@ -444,49 +449,159 @@ def test_orchestrator_runs_steps_in_order_and_resumes(tmp_path):
         return rc
     args = argparse_ns(queue=q, budget=7000.0, max_steps=0, dry_run=False, stop_on_failure=False)
     NO.next_steps(args, runner=runner)
+    assert [c[0] for c in calls] == ["gravity", "pushover"]           # re-check M3 a: not re-run in the same call
+    NO.next_steps(args, runner=runner)
     d = NO.load(q)
     assert [c[0] for c in calls] == ["gravity", "pushover", "pushover", "ddm", "report"]
     assert all(c[1][:2] == ["H", "py"] and c[1][3] == "_exec" and c[2] for c in calls)   # under heavy, deadline in the slot
     assert [c[3] for c in calls] == [False, True, True, True, False]
     assert all(s["state"] == "done" for s in d["steps"]) and len(d["steps"][1]["chunks"]) == 2
-    assert d["steps"][1]["chunks"][0]["progress"] == [0, 40]
+    assert d["steps"][1]["chunks"][0]["progress"] == dict(done=0, live=40, records=0)
     log = open(q + ".runtime.log").read().splitlines()
     assert len(log) == 5 and "rc=75" in log[1] and "state=resume" in log[1]
 
 
-def test_orchestrator_marks_a_step_without_progress_stalled(tmp_path):
-    """Review M3: a chunk with real time that keeps nothing new, an exit 76 (no progress), or too many chunks: the step is
-    `stalled` with its reason and is not run again; the other jobs go on."""
-    sys.path.insert(0, os.path.join(ROOT, "scripts"))
-    import nl_orchestrate as NO
-    jobs = [tmp_path / "IN_ExA", tmp_path / "IN_ExB"]
+class _Sim:
+    """A fake clock and a fake heavy runner for nl_orchestrate, no OpenSees. An NLRHA chunk follows the REAL
+    nlrha.cli.record_chunk_decision with its attempts record (records of `rec_s` seconds; a record that does not fit is
+    killed at the timeout, 124); a journaled step (pushover) follows a script of (segment calls, live calls, done, rc)
+    per chunk; gravity and report take 5 s."""
+
+    def __init__(self, NO, monkeypatch):
+        import time as _t, types
+        self.NO, self.clock, self.rec, self.att, self.script, self.calls = NO, [1.0e9], {}, {}, {}, []
+        monkeypatch.setattr(NO, "time", types.SimpleNamespace(time=lambda: self.clock[0], strftime=_t.strftime,
+                                                             localtime=_t.localtime))
+
+    def runner(self, cmd, **kw):
+        import glob, json
+        NO = self.NO
+        chunk = float(NO._opt(cmd, "--chunk"))
+        json.dump(dict(slot_start=self.clock[0], deadline=self.clock[0] + chunk), open(NO._opt(cmd, "--stamp"), "w"))
+        c = cmd[cmd.index("--") + 1:]
+        if "snl.hr_gravity" in c or c[-2:-1] == ["report"]:
+            self.clock[0] += 5.0
+            return 0
+        job = c[c.index("run") + 1]
+        self.calls.append((os.path.basename(job), c[2], round(chunk)))
+        if c[2] == "pushover":
+            n, live, done, rc = self.script[job].pop(0)
+            _fake_journal(NO._opt(c, "--checkpoint-dir"), n, done, live=live)
+            self.clock[0] += chunk if rc else 100.0
+            return rc
+        from nlrha.cli import record_chunk_decision
+        rec_s, n_rec = self.rec[job]
+        cache = NO._opt(c, "--record-cache"); os.makedirs(cache, exist_ok=True)
+        left, old = chunk, os.environ.get("SNL_FULL_CHUNK")
+        os.environ["SNL_FULL_CHUNK"] = kw["env"]["SNL_FULL_CHUNK"]
+        try:
+            while True:
+                k = len(glob.glob(os.path.join(cache, "*.pkl")))
+                if k >= n_rec:
+                    return 0
+                prior = self.att.get((job, k), [])
+                what = record_chunk_decision(prior, left, chunk, [rec_s] * k)
+                if what == "no_progress":
+                    kw["stdout"].write(">> NO PROGRESS nlrha: record %d did not finish in an earlier chunk\n" % k)
+                    return 76
+                if what == "resume":
+                    self.clock[0] += 1.0
+                    return 75
+                self.att.setdefault((job, k), []).append(left)
+                if rec_s > left:                                   # killed at the chunk timeout
+                    self.clock[0] += left
+                    return 124
+                left -= rec_s; self.clock[0] += rec_s
+                open(os.path.join(cache, "r%03d.pkl" % k), "w").write("x")
+        finally:
+            if old is None:
+                os.environ.pop("SNL_FULL_CHUNK", None)
+            else:
+                os.environ["SNL_FULL_CHUNK"] = old
+
+    def calls_until_quiet(self, q, n_max=40):
+        """`next` calls until nothing is ready; returns their number."""
+        NO = self.NO
+        args = argparse_ns(queue=q, budget=6900.0, max_steps=0, dry_run=False, stop_on_failure=False)
+        for i in range(n_max):
+            d = NO.load(q)
+            if not [s for s in d["steps"] if NO._ready(d, s)]:
+                return i
+            mark = len(self.calls)
+            NO.next_steps(args, runner=self.runner)
+            ids = [(j, k) for j, k, _ in self.calls[mark:]]
+            assert len(ids) == len(set(ids)), ids                  # no step twice in one call (re-check M3 a)
+        raise AssertionError("still running after %d calls" % n_max)
+
+
+def _plan(NO, tmp_path, names, analyses):
+    jobs = [tmp_path / n for n in names]
     for j in jobs:
         j.mkdir()
     q = str(tmp_path / "queue.json")
-    NO.main(["plan", "--queue", q, "--jobs", *map(str, jobs), "--analyses", "pushover", "--python", "py", "--heavy", "H"])
-    seen = []
+    NO.main(["plan", "--queue", q, "--jobs", *map(str, jobs), "--analyses", *analyses, "--python", "py", "--heavy", "H"])
+    return q, [str(j) for j in jobs]
 
-    def runner(cmd, **kw):
-        if not ("pushover" in cmd and "run" in cmd):
-            return 0
-        job = cmd[cmd.index("run") + 1]
-        seen.append(os.path.basename(job))
-        ck = NO._opt(cmd, "--checkpoint-dir")
-        if job.endswith("IN_ExA"):                                    # replays its journal, keeps nothing new
-            _fake_journal(ck, 40)
-            return 75
-        kw["stdout"].write(">> NO PROGRESS pushover Y: push Y: replaying its 900 journaled calls recomputes 7000 s\n")
-        return 76
-    _fake_journal(str(jobs[0] / "nl_checkpoints" / "pushover"), 40)
-    args = argparse_ns(queue=q, budget=7000.0, max_steps=0, dry_run=False, stop_on_failure=False)
-    NO.next_steps(args, runner=runner)
+
+def test_orchestrator_finishes_healthy_chunked_runs(tmp_path, monkeypatch):
+    """Re-check M3, the reviewer's simulation: an NLRHA of 22 records of 2,500 s (two per full chunk, exit 75 'before a
+    record that would not fit' with ~1,600 s left) and, after it in the same queue, one of 22 records of 1,500 s that
+    starts every call in a part-chunk. Neither is re-run in the same call, neither stalls, both finish."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import nl_orchestrate as NO
+    sim = _Sim(NO, monkeypatch)
+    q, (a, b) = _plan(NO, tmp_path, ["IN_ExA", "IN_ExB"], ["nlrha"])
+    sim.rec[a], sim.rec[b] = (2500.0, 22), (1500.0, 22)
+    n = sim.calls_until_quiet(q)
     d = NO.load(q)
-    st = {s["id"]: s for s in d["steps"]}
-    assert seen == ["IN_ExA", "IN_ExB"]                               # each tried once, neither looped
-    assert st["IN_ExA/pushover"]["state"] == "stalled" and "kept nothing new" in st["IN_ExA/pushover"]["stalled_reason"]
-    assert st["IN_ExB/pushover"]["state"] == "stalled" and "900 journaled calls" in st["IN_ExB/pushover"]["stalled_reason"]
-    assert st["IN_ExA/report"]["state"] == "pending"                   # not run after a stalled analysis
-    assert NO.MAX_CHUNKS_PER_STEP > 2
+    assert all(s["state"] == "done" for s in d["steps"]), [(s["id"], s["state"], s.get("stalled_reason")) for s in d["steps"]]
+    sa = next(s for s in d["steps"] if s["id"] == "IN_ExA/nlrha")
+    assert len(sa["chunks"]) == 11 and n >= 11
+    assert any(ch < 0.9 * 6600 for j, k, ch in sim.calls if j == "IN_ExB")      # B ran in part-chunks
+
+
+def test_orchestrator_restart_then_shorter_chunk_is_progress(tmp_path, monkeypatch):
+    """Re-check M3 c: after the one allowed live restart the journal is SHORTER than before (250 calls after 400), but
+    the live-call counter went up: progress, not a stall."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import nl_orchestrate as NO
+    sim = _Sim(NO, monkeypatch)
+    q, (a,) = _plan(NO, tmp_path, ["IN_ExR"], ["pushover"])
+    sim.script[a] = [(400, 400, (), 75), (250, 650, (), 75), (0, 900, ("push Y",), 0)]
+    sim.calls_until_quiet(q)
+    st = {s["id"]: s for s in NO.load(q)["steps"]}
+    assert st["IN_ExR/pushover"]["state"] == "done" and st["IN_ExR/report"]["state"] == "done"
+
+
+def test_orchestrator_stalls_a_real_no_progress_and_unstall(tmp_path, monkeypatch):
+    """Re-check M3: real no-progress still stalls -- a record longer than a full chunk (killed once, then exit 76), and a
+    replay-only step that gains nothing in NO_GAIN_LIMIT full chunks in a row. `unstall` puts a step, or every stalled
+    step of a job, back."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import nl_orchestrate as NO
+    sim = _Sim(NO, monkeypatch)
+    q, (a, b) = _plan(NO, tmp_path, ["IN_ExL", "IN_ExP"], ["nlrha", "pushover"])
+    sim.rec[a] = (8000.0, 3)                                         # L: 8,000 s records, longer than the 6,600 s chunk
+    sim.rec[b] = (1.0, 0)                                            # P: an empty record set
+    sim.script[a] = [(0, 10, ("push Y",), 0)]                        # both pushovers finish in one chunk
+    sim.script[b] = [(0, 10, ("push Y",), 0)]
+    sim.calls_until_quiet(q)
+    st = {s["id"]: s for s in NO.load(q)["steps"]}
+    la = st["IN_ExL/nlrha"]
+    assert la["state"] == "stalled" and "NO PROGRESS" in la["stalled_reason"] and [c["rc"] for c in la["chunks"]] == [124, 76]
+    assert st["IN_ExL/report"]["state"] == "pending" and st["IN_ExP/report"]["state"] == "done"
+    # a replay-only pushover: NO_GAIN_LIMIT full chunks without a live call
+    os.makedirs(tmp_path / "two")
+    q2, (r,) = _plan(NO, tmp_path / "two", ["IN_ExS"], ["pushover"])
+    sim.script[r] = [(300, 300, (), 75)] + [(300, 300, (), 75)] * NO.NO_GAIN_LIMIT
+    sim.calls_until_quiet(q2)
+    s2 = {s["id"]: s for s in NO.load(q2)["steps"]}["IN_ExS/pushover"]
+    assert s2["state"] == "stalled" and len(s2["chunks"]) == 1 + NO.NO_GAIN_LIMIT and "full chunks in a row" in s2["stalled_reason"]
+    NO.main(["unstall", "--queue", q2, "--step", "IN_ExS/pushover"])
+    s2 = {s["id"]: s for s in NO.load(q2)["steps"]}["IN_ExS/pushover"]
+    assert s2["state"] == "resume" and s2["no_gain_full_chunks"] == 0 and "stalled_reason" not in s2
+    NO.main(["unstall", "--queue", q, "--job", "IN_ExL"])
+    assert {s["id"]: s for s in NO.load(q)["steps"]}["IN_ExL/nlrha"]["state"] == "resume"
 
 
 def argparse_ns(**kw):
@@ -699,9 +814,14 @@ def _ddm_stubs(monkeypatch, log):
         def __init__(self, nm, cfg, **kw):
             log.append("model"); ops.t = 0.0                  # a new model: wipe
             self.psi, self.builder = kw["out_of_plumb"][1], types.SimpleNamespace(log=[(1, "WPB220X220X71.47", "I", 40, "")])
+
+        def prepare(self):
+            self._bt = {7: 1, 8: 1}
+            return self
     monkeypatch.setattr(cli, "GMNIAModel", G)
 
     def sweep(g, combo, pres, dlam, max_steps, verbose, time_limit, strain_cap, capture_lambda1):
+        log.append("sweep")
         g._bt, g.elems = {7: 1}, [dict(mtag=7, tag=100701), dict(mtag=8, tag=100801)]      # build().prepare()
         hist = []
         for i in range(6):
@@ -753,6 +873,7 @@ def test_ddm_resume_returns_finished_sweeps_whole_and_builds_nothing(tmp_path, m
     assert c2 == ref                                                               # identical, every key
     assert c2[0]["cls"]["mechanism"] == "beam hinge" and c2[0]["state"] == ref[0]["state"]
     assert log.count("ingest") == 3 and log.count("model") == 3                    # nothing built for the finished two
+    assert log.count("sweep") == 3                                                 # only the three unfinished swept
     c3 = [cli._worker((job, None, c, i, dict(base, _checkpoint=ck))) for c, i in tasks]
     assert c3 == ref and log.count("model") == 3                                   # a third chunk: all from the journal
 
@@ -790,33 +911,43 @@ def _journal_with(tmp_path, monkeypatch, CK, n_calls, seconds_each):
 
 
 def test_a_replay_longer_than_a_chunk_stops_with_a_reason(tmp_path, monkeypatch):
-    """Review M3: a piece whose converged steps alone take more than a chunk can never advance in chunks -- NoProgress
-    with a reason at the start of the replay (never a loop of killed chunks); one that fits a fresh chunk but not what
-    is left of this one is ChunkExpired (exit 75)."""
+    """Review M3, re-check b: a piece whose converged steps alone take more than 80 % of a FULL chunk can never advance in
+    chunks -- NoProgress with a reason. It is judged against the queue's full chunk ($SNL_FULL_CHUNK), never against
+    what is left of a `next` call: the reviewer's 3,000 s journal begins in a 6,600 s chunk and, started mid-call with
+    1,500 s left, is ChunkExpired (exit 75, resume), not NoProgress."""
     from snl import checkpoint as CK
-    p, clock = _journal_with(tmp_path, monkeypatch, CK, 5, 18.0)            # 90 s of converged steps
+    p, clock = _journal_with(tmp_path, monkeypatch, CK, 100, 30.0)          # 3,000 s of converged steps
     clock[0] = 2000.0
-    J = CK.Journal(p, "k", budget_s=100.0, t_start=2000.0)
-    assert J.replay_seconds("piece") == pytest.approx(90.0)
-    with pytest.raises(CK.NoProgress, match="more than 80 % of a 100 s chunk"):
-        J.begin("piece", _timed_ops(clock, [0.0]))
-    J = CK.Journal(p, "k", budget_s=200.0, t_start=2000.0 - 150.0)        # fits a fresh 200 s chunk, 50 s left here
+    J = CK.Journal(p, "k", budget_s=6600.0, t_start=2000.0)
+    J.begin("piece", _timed_ops(clock, [0.0])); J.end()                      # a full chunk: it begins
+    monkeypatch.setenv("SNL_FULL_CHUNK", "6600")
+    J = CK.Journal(p, "k", budget_s=1500.0, t_start=2000.0)                 # the rest of a `next` call: 1,500 s
     with pytest.raises(CK.ChunkExpired):
         J.begin("piece", _timed_ops(clock, [0.0]))
-    assert not CK.progress_possible(90.0, 100.0) and CK.progress_possible(90.0, 200.0)
+    os.makedirs(tmp_path / "long")
+    p2, clock = _journal_with(tmp_path / "long", monkeypatch, CK, 100, 60.0)   # 6,000 s of converged steps
+    clock[0] = 9000.0
+    J = CK.Journal(p2, "k", budget_s=1500.0, t_start=9000.0)               # 6,000 s against a 6,600 s full chunk
+    with pytest.raises(CK.NoProgress, match="more than 80 % of a 6600 s chunk"):
+        J.begin("piece", _timed_ops(clock, [0.0]))
+    monkeypatch.delenv("SNL_FULL_CHUNK")
+    J = CK.Journal(p2, "k", budget_s=7600.0, t_start=9000.0)               # a manual run: its own budget is the chunk
+    J.begin("piece", _timed_ops(clock, [0.0])); J.end()
+    assert not CK.progress_possible(6000.0, 6600.0) and CK.progress_possible(3000.0, 6600.0)
 
 
 def test_the_budget_is_checked_during_a_replay(tmp_path, monkeypatch):
-    """Review M3: the replay itself watches the budget. A replay that started with (nearly) a whole chunk and still ran
-    out is NoProgress; one that started late in a chunk is ChunkExpired."""
+    """Review M3, re-check d: the replay itself watches the budget and exits 75 when it runs out -- also when it began
+    with a whole chunk: a replay slower than recorded (a busy box) is not proof that the piece cannot advance; the
+    orchestrator stalls a step only after several full chunks without any gain."""
     from snl import checkpoint as CK
     p, clock = _journal_with(tmp_path, monkeypatch, CK, 5, 1.0)             # 5 s recorded
-    for t_start, exc in ((3000.0, CK.NoProgress), (3000.0 - 50.0, CK.ChunkExpired)):
+    for t_start in (3000.0, 3000.0 - 50.0):
         clock[0] = 3000.0
         J = CK.Journal(p, "k", budget_s=100.0, t_start=t_start)
         ops = _timed_ops(clock, [200.0])                                     # the replay is far slower this time
         J.begin("piece", ops)
-        with pytest.raises(exc):
+        with pytest.raises(CK.ChunkExpired, match="slower than recorded"):
             for _ in range(5):
                 ops.analyze(1)
         J.end()
@@ -841,7 +972,14 @@ def test_nlrha_record_longer_than_a_chunk_is_not_retried_forever():
     """Review M3: a record that already had (nearly) a whole chunk and did not finish stops the command (no progress);
     one that started late in a chunk is retried in a fresh one; before the first record nothing is known."""
     from nlrha.cli import record_chunk_decision as D
+    import os as _os
     assert D([6400.0], 6600.0, 6600.0, []) == "no_progress"
+    _os.environ["SNL_FULL_CHUNK"] = "6600"                      # re-check M3 b: judged against the queue's full chunk
+    try:
+        assert D([1400.0], 1300.0, 1500.0, []) == "resume"       # a part-chunk attempt is not held against the record
+        assert D([1400.0], 6590.0, 6590.0, []) == "run" and D([6400.0], 1500.0, 1500.0, []) == "no_progress"
+    finally:
+        del _os.environ["SNL_FULL_CHUNK"]
     assert D([900.0], 6600.0, 6600.0, [300.0]) == "run" and D([900.0], 600.0, 6600.0, [300.0]) == "resume"
     assert D([], 6600.0, 6600.0, []) == "run" and D([], 100.0, 6600.0, [300.0]) == "resume"
     assert D([], None, None, [300.0]) == "run"
@@ -988,6 +1126,14 @@ def test_a_link_the_models_cannot_carry_is_refused(tmp_path):
     e = next(x for x in pkg.model.elements if x.get("tag") == 30)
     e.update(etype="elasticBeamColumn", release=["-releasez", 3])
     with pytest.raises(ValueError, match="needs an unreleased ElasticTimoshenkoBeam"):
+        NM.build_nonlinear(pkg, HM.load_params(None, jurisdiction="india"), {}, verbose=False, plasticity="fibre")
+    # re-check L7: the same link as a parsed (not raw) elasticBeamColumn record
+    pkg = _ebf_pkg("X", str(tmp_path / "b"))
+    i = next(k for k, x in enumerate(pkg.model.elements) if x.get("tag") == 30)
+    beam = next(x for x in pkg.model.elements if x.get("tag") == 21)
+    pkg.model.elements[i] = dict(beam, tag=30, n1=5, n2=6)
+    assert "etype" not in pkg.model.elements[i]
+    with pytest.raises(ValueError, match="link 30 is an elasticBeamColumn"):
         NM.build_nonlinear(pkg, HM.load_params(None, jurisdiction="india"), {}, verbose=False, plasticity="fibre")
 
 
@@ -1157,3 +1303,59 @@ def test_a_failed_gravity_record_fails_loudly(tmp_path):
     assert HG.load(str(job))["engine_sha"] == "an older engine"
     with pytest.raises(HG.GravityRecordFailed, match="the record on file .engine an older engine. is not used"):
         HG.ensure(str(job), engine_dir=str(eng), timeout=120)
+
+
+def test_ddm_resume_window_all_rungs_journaled_no_task_result(tmp_path, monkeypatch):
+    """Re-check H1: every rung journaled but the whole-task result not stored (a chunk killed between the two stores).
+    The reviewer's ddm_resume.py repro -- a mocked package and a hand-stored rung -- returns its mechanism and member
+    state without building a model; and with the stubbed sweeps, deleting the task results gives the same results as
+    the uninterrupted run."""
+    import pickle, types
+    from steltic_ddm import cli, loads, ingest
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+
+    class M:
+        def __init__(s, tag):
+            s.tag, s.kind, s.role, s.section, s.relz, s.rely = tag, "beam", "floor", "WPB220X220X71.47", 0, 0
+
+    class NM:
+        nodes = {1: (0, 0, 0), 2: (1000, 0, 0)}
+        members = [M(7)]
+        cfg = {}
+        diaphragms = {}
+        def by_tag(s): return {m.tag: m for m in s.members}
+    nm = NM()
+    monkeypatch.setattr(ingest, "load_package", lambda job, eng: nm)
+    combo = ("1.5DL+1.5LL", 1.5, 1.5, 0.0, None)
+    monkeypatch.setattr(loads, "steltic_combos", lambda cfg, nm=None: [combo])
+    monkeypatch.setattr(loads, "present_sets", lambda nm: {})
+    job = str(tmp_path / "fakejob"); os.makedirs(job)
+    opts = dict(nsub=(2, 2, 2), residual="none", hardening=0.01, fast=False, nip=5, bow=0.001, max_steps=10, time_limit=10,
+                dlam=0.05, retry_factors=(2, 4), india=False, _checkpoint=dict(dir=str(tmp_path / "ck"), budget_s=None, t0=None))
+    imp = dict(tag="g", dir=None, psi=0.0, bow_sign=1)
+    J = cli._journal_for(job, combo[0], imp, opts)
+    res = dict(status="LIMIT_POINT", lambda_u=1.3, lambda_end=1.3, plateau=False, lam_at_1p25d=None, hist=[(0.1, 1.0)],
+               frames=[], snapshot=dict(yield_ratio={100701: 3.5}, braces={}, disp={}, drifts=None, step=5), steps=5, seconds=1.0)
+    J.store("dlam=0.05", res)                                     # the rung finished in an earlier chunk, no task result
+    out = cli._worker((job, None, combo[0], imp, opts))
+    assert out["cls"]["hinge_members"] == [7] and out["state"]["floor|WPB220X220X71.47"]["hinges"] == 1
+    assert out["state"]["floor|WPB220X220X71.47"]["ratio"] == 3.5 and out["section_log"] == []
+    # the stubbed run: finish everything, drop the task results (the window), resume
+    monkeypatch.undo(); monkeypatch.setenv("PYTHONHASHSEED", "0")
+    log = []
+    cli = _ddm_stubs(monkeypatch, log)
+    job2 = str(tmp_path / "job2"); os.makedirs(job2)
+    imps = [dict(tag=t, dir=t[1], psi=s / 200.0, bow_sign=s) for t, s in (("+X", 1), ("-Y", -1))]
+    base = dict(nsub=(2, 2, 4), residual="none", hardening=0.002, fast=False, nip=5, bow=0.001, max_steps=50,
+                time_limit=600.0, dlam=0.05, retry_factors=(2, 4), india=False)
+    ref = [cli._worker((job2, None, "1.5DL+1.5LL", i, dict(base))) for i in imps]
+    ck = dict(dir=str(tmp_path / "ck2"), budget_s=None, t0=None)
+    first = [cli._worker((job2, None, "1.5DL+1.5LL", i, dict(base, _checkpoint=ck))) for i in imps]
+    assert first == ref
+    for p in os.listdir(ck["dir"]):
+        d = pickle.load(open(os.path.join(ck["dir"], p), "rb"))
+        assert d["done"].pop(cli.TASK_DONE) and d["done"]                 # the rung stays, the task result goes
+        pickle.dump(d, open(os.path.join(ck["dir"], p), "wb"))
+    del log[:]
+    again = [cli._worker((job2, None, "1.5DL+1.5LL", i, dict(base, _checkpoint=ck))) for i in imps]
+    assert again == ref and log.count("model") == 2 and "sweep" not in log      # rebuilt from the rungs, no sweep

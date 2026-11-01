@@ -55,19 +55,26 @@ def idealize(u, V, u_target):
 
 
 KI_STRAIGHT = 0.02          # two segment slopes within 2 %: the curve is straight there
+KI_MIN_OF_SECANT = 0.8      # ... and that slope is taken only if it is at least 0.8 x the secant to the first point
+KI_TINY_FIRST = 0.1         # a first point at less than 0.1 x the next step is a near-zero point, not a step
 
 
 def initial_stiffness(u, V):
     """Ki of ASCE 41-17 7.4.3.2.5, Eq. 7-27 (Te = Ti sqrt(Ki / Ke)): the ELASTIC lateral stiffness of the building in
     the direction considered, consistent with Ti (T1, the eigen period of the same model under gravity). Review M2:
     read at the START of the curve, from its first recorded points p1, p2, p3 (u > 0):
-      * the curve is straight after p1 (slopes p1-p2 and p2-p3 within 2 %): Ki = that slope -- a base shear the
-        first step carries from gravity (IN_Ex15 Y: about 94 kN) or a near-zero first point does not bias it;
+      * the curve is straight after p1 (slopes p1-p2 and p2-p3 within 2 %) and that slope is at least 0.8 x the
+        secant to p1: Ki = that slope -- a base shear the first step carries from gravity (IN_Ex15 Y: about 94 kN,
+        slope 0.86 x the secant) does not bias it; a slope far below the secant is a
+        straight POST-yield branch (a first step past yield), and the secant is taken (re-check M2);
       * else (a coarse first step after which the curve already softens): the larger of the secant to p1 and the
         slope p1-p2.
+    A first point at less than 0.1 x the next step's length (a near-zero point, IN_Ex10 Y) is dropped first.
     It was the secant at 0.3 x the WHOLE-curve Vmax, which falls on a softened part of the curve when the peak lies far
     beyond the target (IN_Ex10 X: 303 against an initial 536 kN/mm; Te 0.166 s against T1 0.220 s)."""
     pts = [(float(a), float(b)) for a, b in zip(u, V) if float(a) > 1e-12]
+    while len(pts) >= 3 and pts[0][0] < KI_TINY_FIRST * (pts[1][0] - pts[0][0]):
+        pts = pts[1:]                                 # a near-zero first point carries no stiffness information
     if not pts:
         return float("nan")
     s0 = pts[0][1] / pts[0][0]
@@ -76,7 +83,7 @@ def initial_stiffness(u, V):
     t1 = (pts[1][1] - pts[0][1]) / (pts[1][0] - pts[0][0])
     if len(pts) >= 3:
         t2 = (pts[2][1] - pts[1][1]) / (pts[2][0] - pts[1][0])
-        if t1 > 0 and abs(t1 - t2) <= KI_STRAIGHT * t1:
+        if t1 > 0 and abs(t1 - t2) <= KI_STRAIGHT * t1 and t1 >= KI_MIN_OF_SECANT * s0:
             return t1
     return max(s0, t1)
 

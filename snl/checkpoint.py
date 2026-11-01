@@ -22,9 +22,11 @@ process resumes. Completed pieces (a finished sweep rung, a finished pushover di
 journal (`done`) and are not replayed at all.
 
 Cost of a resume: the converged steps are recomputed; the failed ones are not. A run whose CONVERGED steps alone take
-more than a chunk cannot progress this way (review M3): the journal checks it when a piece begins (`progress_possible`)
-and while it replays, and raises NoProgress (exit 76) with the reason; a piece whose replay diverges again after one
-live restart does the same. The orchestrator then marks the step `stalled` instead of re-running it every chunk.
+more than a FULL chunk cannot progress this way (review M3; re-check: judged against $SNL_FULL_CHUNK, the queue's full
+chunk, never against what is left of a `next` call): the journal checks it when a piece begins (`progress_possible`)
+and raises NoProgress (exit 76) with the reason; a piece whose replay diverges again after one live restart does the
+same. A replay that runs out of time (a slow box) exits 75. The orchestrator stalls a step after exit 76, or after
+several full chunks in a row without a finished piece, a live call or a cached record.
 Keys (review M4 / M5, `run_key`): the analysis code including the drivers and post-processing, the HR engine
 fingerprint, the SNL_* model knobs, an outside --params file and a fixed PYTHONHASHSEED (required, L12). The replay
 fingerprint covers every node (L9).
@@ -51,6 +53,18 @@ MAX_RESTARTS = 1                     # review M3: live restarts of one piece aft
 REPLAY_MARGIN = 0.8                  # a replay must fit in this share of a full chunk (progress_possible)
 ACTIVE = None                        # the journal whose segment is running in this process (Journal.begin / end)
 SAVE_EVERY_S = 300.0                 # the journal is also saved every 5 min of live work
+
+
+def full_chunk(budget_s=None):
+    """Re-check M3 b: the length of a FULL chunk -- $SNL_FULL_CHUNK (set by the orchestrator: its `next` budget less
+    the margin) or, for a manual run, this process's own --chunk-seconds. A process that starts part-way through a
+    `next` call gets only what is left as its budget, so "cannot advance in chunks" is judged against this, never
+    against the budget."""
+    v = os.environ.get("SNL_FULL_CHUNK")
+    try:
+        return float(v) if v else budget_s
+    except ValueError:
+        return budget_s
 
 
 def deadline():
@@ -144,7 +158,7 @@ class Journal:
         return min(left) if left else None
 
     def _full_chunk(self):
-        return self.budget_s
+        return full_chunk(self.budget_s)
 
     def replay_seconds(self, name=None):
         """The time the converged calls of a journaled segment took (what a replay recomputes)."""
@@ -236,14 +250,11 @@ class Journal:
         if self.replaying:
             left = self._left()
             if left is not None and left <= 0:                     # review M3: the budget is checked while replaying
+                # re-check M3 d: a replay slower than it was recorded (a busy box) is not proof that the piece cannot
+                # advance -- exit 75; the orchestrator stalls a step only after NO_GAIN_LIMIT full chunks without gain
                 self.save()
-                full = self._full_chunk()
-                if full is not None and (self._seg_left0 or 0) >= REPLAY_MARGIN * full:
-                    raise NoProgress("%s: the replay of its %d journaled calls did not finish in a %.0f s chunk (at call %d) "
-                                     "-- run this piece in one process without --chunk-seconds, or with a longer chunk"
-                                     % (self.seg_name, len(self.seg), full, self.pos))
-                raise ChunkExpired("%s: the chunk ran out during the replay (call %d of %d)" % (self.seg_name, self.pos,
-                                                                                              len(self.seg)))
+                raise ChunkExpired("%s: the chunk ran out during the replay (call %d of %d; the replay is slower than "
+                                   "recorded)" % (self.seg_name, self.pos, len(self.seg)))
             ok0, t0, s0, el = self.seg[self.pos]
             self.pos += 1
             self.data["replayed_calls"] = int(self.data.get("replayed_calls") or 0) + 1
@@ -301,7 +312,7 @@ ANALYSIS_FILES = ("pushover/nonlinear_model.py", "pushover/fibre_model.py", "pus
                   # review M5: the drivers and the post-processing whose results the journals store
                   "pushover/postprocess.py", "pushover/cli.py", "nlrha/cli.py", "nlrha/india_hazard.py",
                   "steltic_ddm/cli.py", "steltic_ddm/india_checks.py", "steltic_ddm/imposed_reduction.py",
-                  "steltic_ddm/portal_adapter.py", "pushover/vmax_policy.py")
+                  "steltic_ddm/portal_adapter.py")
 
 
 def code_key() -> str:
@@ -317,7 +328,7 @@ def code_key() -> str:
     return h.hexdigest()[:16]
 
 
-NON_MODEL_ENV = ("SNL_DEADLINE", "SNL_JOBS")          # scheduling, not model knobs
+NON_MODEL_ENV = ("SNL_DEADLINE", "SNL_JOBS", "SNL_FULL_CHUNK")   # scheduling, not model knobs
 
 
 def model_env() -> dict:

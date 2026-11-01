@@ -477,9 +477,11 @@ def record_chunk_decision(prior, left, budget, finished_seconds):
     """Review M3: before a record in a chunked serial NLRHA -- 'no_progress' when an earlier chunk gave this record
     (nearly) a whole chunk and it did not finish; 'resume' when the longest record so far, or this record's own earlier
     attempt, would not fit in what is left of this chunk; else 'run'. `prior` = seconds left when earlier attempts of
-    this record started, `left` = seconds left now (None: no limit), `budget` = the full chunk (None: no limit)."""
+    this record started, `left` = seconds left now (None: no limit), `budget` = this process's --chunk-seconds (the
+    full chunk is $SNL_FULL_CHUNK when the orchestrator sets it, else this budget)."""
     from snl import checkpoint as CK
-    if prior and budget is not None and max(prior) >= CK.REPLAY_MARGIN * budget:
+    full = CK.full_chunk(budget)                      # re-check M3 b: the queue's full chunk, not what is left of it
+    if prior and full is not None and max(prior) >= CK.REPLAY_MARGIN * full:
         return "no_progress"
     est = max(list(finished_seconds or []) + list(prior or []) + [0.0])
     if left is not None and est > left:

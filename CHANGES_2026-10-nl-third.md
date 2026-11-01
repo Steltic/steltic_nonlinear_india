@@ -65,7 +65,15 @@ drift, where L/e × drift gives 0.02–0.10 rad. The Y pushovers lost 12–52 % 
   - the spring acts on the link's local z (vertical), with V_pL = fy_w A_wL / √3 (IS 18168:2023 11.2 a) and
     K = G A_wL / e; fy_w is the IS 2062 band of the WEB (review L4) and a box link has two webs (L5);
   - the post-yield slope (review L6) is calibrated so the spring reaches Sh × V_pL at 0.08 rad of inelastic rotation:
-    Sh = 1.25 for I-shaped and 1.4 for box links (IS 18168:2023 12.3.2.2), 0.08 rad the 12.3.3.1 limit. That is
+    Sh = 1.25 for I-shaped and 1.4 for box links (IS 18168:2023 12.3.2.2), 0.08 rad the 12.3.3.1 limit.
+    - The reading of 12.3.2.2, in the corpus: the expected link overstrength is "1.1 Ry Sh times the design strength
+      of the link as per 11.2"; the 11.2 design shear strength is V_pL / γm0 with γm0 = 1.1; so the overstrength is
+      1.1 Ry Sh V_pL / 1.1 = Ry Sh V_pL. Ry is a material factor (excluded below), so the spring is calibrated to
+      Sh V_pL.
+    - The 0.08 rad point is a MODELLING CHOICE: IS 18168 ties Sh to no rotation; 0.08 rad is the 12.3.3.1 limit of
+      the link rotation angle. And Sh covers "strain hardening and strain rate" (the symbol list), so a static
+      backbone calibrated to it carries a strain-rate share.
+    - That is
     b = c / (1 + c), c = (Sh − 1) / (0.08 √3 G / fy_w): 0.59 % of K for fy_w = 250 MPa (it was 0.5 %, a bare
     assumption, reaching 1.21 V_pL). Kinematic hardening only (Steel01), no isotropic part and no degradation past
     0.08 rad (cyclic tests reach 1.3–1.5 V_pL); and the model's steel is the characteristic fy × the design engineer's
@@ -83,8 +91,8 @@ drift, where L/e × drift gives 0.02–0.10 rad. The Y pushovers lost 12–52 % 
 - Not modelled (review L3): the 11.2 shear–axial reduction for Pu/Py > 0.15 and any shear–moment interaction on the
   spring. Right for links inside a rigid diaphragm (N = 0, verified); a link outside one would need it.
 - A link the model cannot carry is refused loudly (review L7): a released link in the DDM, or a link that is not the
-  HR model's unreleased ElasticTimoshenkoBeam in the pushover (every gold link is one: 92 in IN_Ex15, 168 in IN_Ex19,
-  72 in the stem).
+  HR model's unreleased ElasticTimoshenkoBeam in the pushover -- a raw element of another type, or a parsed
+  elasticBeamColumn record (re-check L7). Every gold link is one: 92 in IN_Ex15, 168 in IN_Ex19, 72 in the stem.
 - The halves keep the parent tag and SEG_ELE_BASE + tag·100 + 1, so the HR gravity replay finds them. The NLRHA gives
   the halves stiffness-proportional damping and not the spring.
 - The DDM GMNIA model uses the same link (`GMNIAModel._add_link`). It gives links no rigid end stubs (review L8):
@@ -197,7 +205,8 @@ model differs. The October package is the reference; `scripts/link_proof.py <job
 
 **The pushover headline, read up to the IS-MCE target (review M1).** The headline is read on the curve from zero to
 the IS-MCE target displacement δt (interpolated at δt), and it says what kind of number it is (`vmax_policy.kind`):
-- `peak`: the curve peaks before δt -- "Vmax up to the IS-MCE target", a strength; Vmax/VB, Vmax/W;
+- `peak`: the curve peaks before δt -- "Vmax up to the IS-MCE target", the largest base shear up to δt; it may be a
+  local peak, and the analysed-curve sentence states any higher peak beyond δt; Vmax/VB, Vmax/W;
 - `at_target`: the curve is still rising at δt -- "Base shear at the IS-MCE target δt", a demand governed by
   stiffness, NOT a strength and not "≥"; its ratios are V(δt)/VB and V(δt)/W, never Vmax/VB (the first P10 version
   called this value the strength: IN_Ex15 Y 11,333 kN at δt = 93 mm, where the curve rises to 19,170 kN at 999 mm;
@@ -224,8 +233,11 @@ the IS-MCE target displacement δt (interpolated at δt), and it says what kind 
 **Effective period and the NSP initial stiffness (review M2).**
 - Ki of Te = Ti √(Ki / Ke) (ASCE 41-17 7.4.3.2.5, Eq. 7-27: "Ki = elastic lateral stiffness of the building in the
   direction under consideration") is now read at the START of the curve: the slope after its first point when the
-  curve is straight there (two segment slopes within 2 % -- some plans carry a base shear from gravity in the first
-  step, IN_Ex15 Y about 94 kN, and a curve may start with a near-zero point), else the larger of the secant to the
+  curve is straight there (two segment slopes within 2 %) AND that slope is at least 0.8 × the secant to the first
+  point (some plans carry a base shear from gravity in the first step: IN_Ex15 Y about 94 kN, slope 0.86 × the
+  secant); a straight slope far below the secant is a post-yield branch after a first step past yield (re-check M2),
+  and the secant is taken. A near-zero first point (under 0.1 × the next step: IN_Ex10 Y) is dropped first. Else the
+  larger of the secant to the
   first point and the first segment slope (a coarse first step after which the curve already softens: the shipped
   IN_Ex1 X curve, where Ki then equals Ke and Te = T1 = 0.267 s, δt,DBE 0.286 in against 0.277 in before). A
   least-squares slope over the first steps was tried first and rejected: on that coarse curve it fell below Ke. It was
@@ -287,7 +299,10 @@ cannot be saved half-way, but they are deterministic, and a failed `analyze` rev
 - Finished pieces are stored whole and are not replayed: a whole DDM sweep (its `_worker` result, returned before
   anything is ingested or built -- review H1: the first version restored the rung but then classified it against a
   model that was never built, `AttributeError: _bt`, on every sweep finished in an earlier chunk), a DDM step-size
-  rung, a pushover direction.
+  rung, a pushover direction. The window between the last rung's store and the task's (re-check H1: a chunk killed
+  there) is closed without rebuilding anything: a GMNIA element tag is SUB_ELE0 + member tag × 100 + i and the peak
+  snapshot's yield ratios cover exactly the fibre elements, which is all the classification and the member state
+  read; the section log is stored with each rung. The reviewer's `ddm_resume.py` repro passes.
 - Keys (review M4 / M5, `checkpoint.run_key`): the analysis code (`code_key`, now including `pushover/postprocess.py`,
   `pushover/cli.py`, `nlrha/cli.py`, `nlrha/india_hazard.py`, the DDM worker `steltic_ddm/cli.py`, the B-1.2 check
   and the imposed-load reduction; report-only modules excluded), the HR engine fingerprint, the SNL_* model knobs
@@ -298,10 +313,12 @@ cannot be saved half-way, but they are deterministic, and a failed `analyze` rev
 - The replay fingerprint covers every node (review L9; it read the first 400 node tags).
 - A resume recomputes the converged steps only. Review M3, no-progress guards (exit 76, NoProgress, with the reason):
   - a piece whose converged steps alone exceed 80 % of a full chunk (`progress_possible`, checked when it begins);
-  - a replay that runs out of a chunk it started with (nearly) whole -- the budget is checked during the replay, so
-    the process exits instead of being killed by the timeout every chunk; one that started late resumes (75);
+  - the budget is also checked during the replay, so the process exits 75 instead of being killed by the timeout
+    (a replay slower than recorded is not taken as proof of no progress: re-check M3 d);
   - a piece whose replay diverges again after one live restart (one per piece, over all chunks);
-  - an NLRHA record that already had (nearly) a whole chunk and did not finish (`nlrha/attempts.json` in the cache).
+  - an NLRHA record that already had (nearly) a whole FULL chunk and did not finish (`nlrha/attempts.json` in the
+    cache); an attempt in a part-chunk is not held against it.
+  - All judged against the queue's full chunk (`$SNL_FULL_CHUNK`), never against what is left of a `next` call.
 - **Limit found.** A failed `analyze` is not perfectly state-neutral in OpenSees:
   - on the one-bay EBF with forced failures, the replayed curve differs from the uninterrupted one by 4.5e-13
     (relative);
@@ -331,12 +348,28 @@ cannot be saved half-way, but they are deterministic, and a failed `analyze` rev
   `nl_orchestrate.py _exec`, which fixes the chunk's deadline when the slot is granted (the wait for a slot is not
   analysis time), stamps it, and applies the timeout:
   - a step that exits 75 stays queued (`resume`); a timeout (124) resumes from the last journal save;
-  - review M3: the queue stores each chunk's progress (finished pieces, journaled calls; cached records) and the
-    analysis time it really had. A step goes `stalled`, with its reason, after exit 76, after a chunk with at least
-    10 min of analysis time that kept nothing new, or after 24 chunks; a stalled step is not run again, and the other
-    jobs go on.
+  - a step that exits 75 or 124 is NOT run again in the same `next` call (re-check M3 a): what is left would be a
+    part-chunk that mostly replays; the call moves on to other ready steps and the next call gives it a full chunk;
+  - every command gets `--chunk-seconds` (what is left of this call) and `$SNL_FULL_CHUNK` (the queue's full chunk:
+    the `next` budget less the margin, 6,600 s by default). "Cannot advance in chunks" (exit 76) is judged against the
+    full chunk only -- the journal's up-front replay check and the NLRHA record check (re-check M3 b). A manual run
+    without the variable judges against its own --chunk-seconds;
+  - progress is counted on MONOTONE counters (re-check M3 c): finished pieces and live calls of the journals (a live
+    restart, or a shorter journal after it, still adds live calls) and cached records. The queue stores each chunk's
+    counters, the analysis time it really had and whether that was a full chunk (≥ 90 % of the full chunk);
+  - a replay slower than recorded exits 75, not 76 (re-check M3 d);
+  - a step goes `stalled`, with its reason, after exit 76, or after 3 FULL chunks in a row with no gain; a part-chunk
+    never counts. There is no cap on the number of chunks (re-check M3 e): a count of chunks is not a measure of
+    progress -- the IN_Ex19 DDM alone needs about 67,000 s of sweeps (50,782 s of stored governing sweeps plus the
+    16,800 s earthquake case), 11 or more full chunks before any replay overhead, and the first version's cap of 24
+    was close. A step that keeps gaining is advancing; one that stops is caught by the no-gain rule and exit 76;
+  - `unstall --queue Q --step <id>` or `--job <job name>` puts stalled steps back (re-check M3 f). The other jobs go
+    on while a step is stalled.
 - `status` prints the queue and any stall reason. Q.runtime.log gets one line per chunk; Q.lock allows one `next` at a
   time. The queue sets PYTHONHASHSEED=0.
+- Side effect of the M5 keys (the reviewer's note): an edit of `pushover/cli.py` or `nlrha/cli.py` (both drive stored
+  results, so both are in the key as the coordinator asked) invalidates the journals and the NLRHA record cache --
+  costs re-runs, never correctness. `vmax_policy.py` is report-only and is not in the key.
 - Commands are the October re-run commands, with the checkpoint options added.
 
 **IN_Ex19 earthquake combination (1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z).** Not run (owner hold). What it needs:
@@ -418,7 +451,7 @@ runs gravity in all three analyses. Checked on the MSME gold with the MSME engin
 | H1 DDM resume crashes on every sweep finished in an earlier chunk | `_worker` journals its whole result per sweep (`TASK_DONE`) and returns it before ingesting / building | `test_ddm_resume_returns_finished_sweeps_whole_and_builds_nothing`: a gravity combination with four imperfection cases + a lateral one; chunk 1 finishes two, expires inside the third; chunk 2 identical results (mechanism, member state), nothing built for the finished two; fails on the old code with the reviewer's `_bt` error |
 | M1 V(δt) headlined as strength | `vmax_policy` kinds peak / at_target / ended; pages, viewer, index, meta line, JSON keys | `test_headline_kinds_up_to_the_mce_target` (incl. a point exactly at δt), `test_site_index_headline_fields`; gold page tests updated to the new facts |
 | M2 Ki the secant at 0.3 × whole-curve Vmax | Ki = initial slope (ASCE 41-17 Eq. 7-27); Te ≫ T1 flag | `test_ki_is_the_initial_slope`, `test_te_flags_below_and_far_above_t1` |
-| M3 no no-progress guard | NoProgress (exit 76): up-front `progress_possible`, budget during replay, one restart per piece, NLRHA record guard; orchestrator `stalled`, `_exec` in the slot | `test_a_replay_longer_than_a_chunk_stops_with_a_reason`, `test_the_budget_is_checked_during_a_replay`, `test_a_piece_diverging_again_after_a_restart_stops`, `test_nlrha_record_longer_than_a_chunk_is_not_retried_forever`, `test_orchestrator_marks_a_step_without_progress_stalled` |
+| M3 no no-progress guard | NoProgress (exit 76): up-front `progress_possible`, budget during replay, one restart per piece, NLRHA record guard; orchestrator `stalled`, `_exec` in the slot | `test_a_replay_longer_than_a_chunk_stops_with_a_reason`, `test_the_budget_is_checked_during_a_replay`, `test_a_piece_diverging_again_after_a_restart_stops`, `test_nlrha_record_longer_than_a_chunk_is_not_retried_forever`, the orchestrator simulations (re-check table below) |
 | M4 / M5 incomplete keys | `run_key`: code incl. postprocess.py / pushover cli.py, engine, SNL_* knobs, outside --params, hash seed; record data hashed | `test_cache_and_journal_keys_cover_every_input` (each input changes the NLRHA, pushover and DDM keys) |
 | L1 r_min not angle-only | angles only, r_min < 0.99 r; gold braces listed (none move) | `test_double_angle_properties_are_the_hr_ones` (r_min), the gold scan in this file |
 | L2 total rotation; no length class | inelastic rotation (total − V/K); e V_pL / M_pL < 1.6 checked | `test_link_spring_reaches_the_is18168_overstrength_at_the_rotation_limit` |
@@ -434,6 +467,20 @@ runs gravity in all three analyses. Checked on the MSME gold with the MSME engin
 | L12 PYTHONHASHSEED | required for resumable runs; set in the commands; the queue sets 0 | the key test (sets it); the CLI message |
 | L13 tie assumptions | stated; a published list preferred | `test_bottom_chord_ties_read_from_the_design` |
 | Weak tests | the pushover CLI restore path; a chunked pushover with real failed OpenSees calls | `test_pushover_cli_restores_a_finished_direction`, `test_chunked_pushover_with_real_failed_steps_repeats_the_uninterrupted_one` |
+
+**Re-check of the review fixes (NL_REVIEW.md "Re-check").**
+
+| Item | Fix | Test |
+|---|---|---|
+| M3 (blocker) false stalls | judged against `$SNL_FULL_CHUNK` only (journal and NLRHA); no re-run in the same call after exit 75 / 124; progress on monotone counters (finished pieces, live calls, cached records); a slow replay exits 75; stalled after 3 full no-gain chunks; no chunk cap; `unstall` | `test_orchestrator_finishes_healthy_chunked_runs` (22 records of 2,500 s, and 22 of 1,500 s in part-chunks: none stalls, none re-run in a call), `test_a_replay_longer_than_a_chunk_stops_with_a_reason` (3,000 s journal in 6,600 / 1,500 s chunks; 6,000 s still stops), `test_orchestrator_restart_then_shorter_chunk_is_progress`, `test_orchestrator_stalls_a_real_no_progress_and_unstall` (a record longer than a full chunk; a replay-only step), `test_the_budget_is_checked_during_a_replay`, `test_nlrha_record_longer_than_a_chunk_is_not_retried_forever` |
+| M2 first step past yield | the straight slope only if ≥ 0.8 × the first secant; a near-zero first point dropped | `test_ki_is_the_initial_slope` (a first step past yield onto a straight branch); the 44 stored directions: Te/T1 0.990–1.025 |
+| H1 window | the classification inputs from the stored rung, no rebuild; the section log with each rung | `test_ddm_resume_window_all_rungs_journaled_no_task_result` (the reviewer's `ddm_resume.py` repro, and the stubbed run with the task results removed) |
+| L7 non-raw link | refused loudly | `test_a_link_the_models_cannot_carry_is_refused` (parsed elasticBeamColumn case) |
+| L6 statement | the 1.1 / γm0 step; 0.08 rad a modelling choice; the strain-rate share | CHANGES (P1) |
+| L10 swallowed | `india_checks` and `imposed_reduction` re-raise GravityRecordFailed | — |
+| L2 shared K | the link-K registry is cleared at each fibre-model build | — |
+| M1 wording | `peak` is "the largest base shear up to δt", possibly a local peak | — |
+| M5 side effect | `vmax_policy.py` out of the key (report-only); the CLIs stay in it (stated) | the key test |
 
 ## Tests
 
