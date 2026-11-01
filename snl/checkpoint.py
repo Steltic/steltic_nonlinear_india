@@ -40,7 +40,10 @@ import pickle
 import time
 
 EXIT_RESUME = 75                     # EX_TEMPFAIL: "not finished, run the same command again"
+EXIT_NO_PROGRESS = 76                # review M3: "this piece cannot advance in chunks of this size" -- never loop
 VERSION = 1
+MAX_RESTARTS = 1                     # review M3: live restarts of one piece after a diverged replay, over all chunks
+REPLAY_MARGIN = 0.8                  # a replay must fit in this share of a full chunk (progress_possible)
 ACTIVE = None                        # the journal whose segment is running in this process (Journal.begin / end)
 SAVE_EVERY_S = 300.0                 # the journal is also saved every 5 min of live work
 
@@ -63,15 +66,22 @@ class ReplayDiverged(Exception):
     """A replayed converged call did not land on the journaled state: the journal does not belong to this code / model."""
 
 
+class NoProgress(Exception):
+    """Review M3: this piece cannot advance in chunks of this size (its replay alone does not fit in a chunk, or its
+    replay diverged again after a live restart). The command exits EXIT_NO_PROGRESS with this message; the orchestrator
+    marks the step stalled. Run the piece in one process without the chunk limit, or with a longer chunk."""
+
+
 def _fingerprint(ops):
-    """(time, sum of squared nodal displacements over the first 400 nodes) -- cheap, and any divergence shows."""
+    """(time, sum of squared nodal displacements over ALL nodes) -- review L9: the first 400 tags were the base and the
+    lowest storeys only; a few ms per call even on the largest models."""
     try:
         t = float(ops.getTime())
     except Exception:                                    # noqa: BLE001
         t = 0.0
     s = 0.0
     try:
-        for n in sorted(ops.getNodeTags())[:400]:
+        for n in ops.getNodeTags():
             for v in ops.nodeDisp(n):
                 s += v * v
     except Exception:                                    # noqa: BLE001
@@ -107,6 +117,7 @@ class Journal:
         self._ops = None
         self._real = None
         self._last_save = time.time()
+        self._seg_left0 = None
 
     # ------------------------------------------------------------------ pieces
     def done(self, name):
@@ -118,8 +129,48 @@ class Journal:
         self.data["segments"].pop(name, None)
         self.save()
 
+    def _left(self):
+        """Seconds left in this process's chunk (None: no limit)."""
+        left = []
+        if self.budget_s is not None:
+            left.append(self.budget_s - (time.time() - self.t_start))
+        if deadline() is not None:
+            left.append(deadline() - time.time())
+        return min(left) if left else None
+
+    def _full_chunk(self):
+        return self.budget_s
+
+    def replay_seconds(self, name=None):
+        """The time the converged calls of a journaled segment took (what a replay recomputes)."""
+        seg = self.data["segments"].get(name or self.seg_name) or []
+        out, prev = 0.0, 0.0
+        for ok, _t, _s, el in seg:
+            if ok == 0:
+                out += max(0.0, el - prev)
+            prev = el
+        return out
+
+    def _too_long(self, replay_s):
+        full = self._full_chunk()
+        return full is not None and not progress_possible(replay_s, full, REPLAY_MARGIN)
+
     def begin(self, name, ops):
-        """Start (or resume) the journaled segment `name`: patch ops.analyze."""
+        """Start (or resume) the journaled segment `name`: patch ops.analyze. Review M3: a replay that cannot fit even in
+        a full chunk raises NoProgress; one that does not fit in what is left of THIS chunk raises ChunkExpired."""
+        seg = self.data["segments"].get(name) or []
+        if seg:
+            rs = self.replay_seconds(name)
+            if self._too_long(rs):
+                raise NoProgress("%s: replaying its %d journaled calls recomputes %.0f s of converged steps, more than %.0f %% "
+                                 "of a %.0f s chunk -- run this piece in one process without --chunk-seconds, or with a "
+                                 "chunk above %.0f s" % (name, len(seg), rs, 100 * REPLAY_MARGIN, self._full_chunk(),
+                                                         rs / REPLAY_MARGIN))
+            left = self._left()
+            if left is not None and rs > REPLAY_MARGIN * left:
+                self.save()
+                raise ChunkExpired("%s: its replay (%.0f s) does not fit in the %.0f s left of this chunk" % (name, rs, left))
+        self._seg_left0 = self._left()
         self.seg_name = name
         self.seg = self.data["segments"].setdefault(name, [])
         self.pos = 0
@@ -138,10 +189,19 @@ class Journal:
         return self
 
     def restart_live(self, name, ops):
-        """After ReplayDiverged: drop the segment's journal and start it again live (the caller re-runs its piece)."""
+        """After ReplayDiverged: drop the segment's journal and start it again live (the caller re-runs its piece).
+        Review M3: at most MAX_RESTARTS times per piece over all chunks -- a replay that diverges again (a near-singular
+        step before the chunk boundary every time) raises NoProgress instead of looping."""
         self.end()
-        self.data["segments"][name] = []
+        rs = self.data.setdefault("restarts", {})
+        rs[name] = int(rs.get(name) or 0) + 1
         self.data["diverged"] = int(self.data.get("diverged") or 0) + 1
+        if rs[name] > MAX_RESTARTS:
+            self.save()
+            raise NoProgress("%s: its replay diverged in %d chunks (a step whose convergence a replay does not repeat lies "
+                             "before the chunk boundary) -- run this piece in one process without --chunk-seconds"
+                             % (name, rs[name]))
+        self.data["segments"][name] = []
         self.save()
         return self.begin(name, ops)
 
@@ -169,6 +229,16 @@ class Journal:
     def _analyze(self, *a):
         ops = self._ops
         if self.replaying:
+            left = self._left()
+            if left is not None and left <= 0:                     # review M3: the budget is checked while replaying
+                self.save()
+                full = self._full_chunk()
+                if full is not None and (self._seg_left0 or 0) >= REPLAY_MARGIN * full:
+                    raise NoProgress("%s: the replay of its %d journaled calls did not finish in a %.0f s chunk (at call %d) "
+                                     "-- run this piece in one process without --chunk-seconds, or with a longer chunk"
+                                     % (self.seg_name, len(self.seg), full, self.pos))
+                raise ChunkExpired("%s: the chunk ran out during the replay (call %d of %d)" % (self.seg_name, self.pos,
+                                                                                              len(self.seg)))
             ok0, t0, s0, el = self.seg[self.pos]
             self.pos += 1
             self.data["replayed_calls"] = int(self.data.get("replayed_calls") or 0) + 1
@@ -222,7 +292,11 @@ ANALYSIS_FILES = ("pushover/nonlinear_model.py", "pushover/fibre_model.py", "pus
                   "pushover/package_reader.py", "steltic_ddm/solver.py", "steltic_ddm/model_gmnia.py",
                   "steltic_ddm/sections_fiber.py", "steltic_ddm/loads.py", "steltic_ddm/imperfections.py",
                   "steltic_ddm/ingest.py", "steltic_ddm/peb_restraints.py", "nlrha/run.py", "nlrha/model.py",
-                  "nlrha/ground_motions.py", "snl/hr_gravity.py", "snl/india_units.py", "snl/checkpoint.py")
+                  "nlrha/ground_motions.py", "snl/hr_gravity.py", "snl/india_units.py", "snl/checkpoint.py",
+                  # review M5: the drivers and the post-processing whose results the journals store
+                  "pushover/postprocess.py", "pushover/cli.py", "nlrha/cli.py", "nlrha/india_hazard.py",
+                  "steltic_ddm/cli.py", "steltic_ddm/india_checks.py", "steltic_ddm/imposed_reduction.py",
+                  "steltic_ddm/portal_adapter.py", "pushover/vmax_policy.py")
 
 
 def code_key() -> str:
@@ -236,6 +310,56 @@ def code_key() -> str:
         if os.path.exists(p):
             h.update(rel.encode()); h.update(open(p, "rb").read())
     return h.hexdigest()[:16]
+
+
+NON_MODEL_ENV = ("SNL_DEADLINE", "SNL_JOBS")          # scheduling, not model knobs
+
+
+def model_env() -> dict:
+    """Review M4: the SNL_* environment knobs that change a model (fibre settings, member subdivisions, gravity-elastic
+    members, plasticity, DDM options, record trimming); the scheduling ones are left out."""
+    return {k: v for k, v in sorted(os.environ.items()) if k.startswith("SNL_") and k not in NON_MODEL_ENV}
+
+
+def file_digest(*paths) -> str:
+    """sha256 (16 hex) of the named files' contents (a missing file counts as missing)."""
+    import hashlib
+    h = hashlib.sha256()
+    for p in paths:
+        if not p:
+            continue
+        h.update(os.path.basename(str(p)).encode())
+        h.update(open(p, "rb").read() if os.path.exists(p) else b"<missing>")
+    return h.hexdigest()[:16]
+
+
+def engine_key() -> str:
+    """Review M4: the fingerprint of the HR engine in $STELTIC_ENGINE_DIR (snl.hr_gravity.engine_fingerprint)."""
+    eng = os.environ.get("STELTIC_ENGINE_DIR")
+    if not eng:
+        return "no engine"
+    try:
+        from snl.hr_gravity import engine_fingerprint
+        return engine_fingerprint(eng)
+    except Exception as ex:                              # noqa: BLE001
+        return "engine unreadable (%s)" % type(ex).__name__
+
+
+def require_hash_seed() -> str:
+    """Review L12: a resumable run needs a fixed PYTHONHASHSEED (the orchestrator sets 0). Without it the order of a set
+    of strings can differ between chunks, every replay would diverge and no chunk would gain anything."""
+    v = os.environ.get("PYTHONHASHSEED")
+    if v in (None, "", "random"):
+        raise SystemExit("resumable runs need a fixed hash seed: set PYTHONHASHSEED=0 (the orchestrator does) -- otherwise "
+                         "the iteration order of sets can differ between chunks and the replay cannot be used")
+    return v
+
+
+def run_key(params_path=None) -> dict:
+    """The parts every journal / cache key carries: the analysis code, the engine, the model knobs, the hash seed and
+    an outside --params file."""
+    return dict(code=code_key(), engine=engine_key(), env=model_env(), hashseed=require_hash_seed(),
+                params=file_digest(params_path) if params_path else None)
 
 
 def clock(t0):

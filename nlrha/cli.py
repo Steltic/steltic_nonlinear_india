@@ -458,11 +458,53 @@ def record_cache_key(pkg, level, job) -> str:
         if os.path.exists(p_):
             h.update(open(p_, "rb").read())
     rec = job[5]
+    # review M4: the record's own data (not only its length), an outside --params file, the SNL_* model knobs (member
+    # subdivisions, fibre settings, gravity-elastic members, plasticity) and the HR engine fingerprint are in the key
+    import numpy as _np
+    for comp in ("a1", "a2"):
+        a_ = rec.get(comp)
+        h.update(comp.encode())
+        h.update(_np.asarray(a_ if a_ is not None else [], dtype=float).tobytes())
     h.update(json.dumps(dict(level=level, id=rec.get("id"), sf=rec.get("sf"), x_comp=rec.get("x_comp"), dt_rec=rec.get("dt"),
-                             n1=len(rec.get("a1") or []), n2=len(rec.get("a2") or []), xi=job[6], dt=job[7], free_vib=job[8],
-                             integrator=job[10] if len(job) > 10 else None, torsion=job[11] if len(job) > 11 else None),
+                             xi=job[6], dt=job[7], free_vib=job[8],
+                             integrator=job[10] if len(job) > 10 else None, torsion=job[11] if len(job) > 11 else None,
+                             params=CK.file_digest(job[1]) if job[1] else None, env=CK.model_env(), engine=CK.engine_key()),
                         sort_keys=True, default=str).encode())
     return "%s_%s_%s" % (level, rec.get("id"), h.hexdigest()[:16])
+
+
+def record_chunk_decision(prior, left, budget, finished_seconds):
+    """Review M3: before a record in a chunked serial NLRHA -- 'no_progress' when an earlier chunk gave this record
+    (nearly) a whole chunk and it did not finish; 'resume' when the longest record so far, or this record's own earlier
+    attempt, would not fit in what is left of this chunk; else 'run'. `prior` = seconds left when earlier attempts of
+    this record started, `left` = seconds left now (None: no limit), `budget` = the full chunk (None: no limit)."""
+    from snl import checkpoint as CK
+    if prior and budget is not None and max(prior) >= CK.REPLAY_MARGIN * budget:
+        return "no_progress"
+    est = max(list(finished_seconds or []) + list(prior or []) + [0.0])
+    if left is not None and est > left:
+        return "resume"
+    return "run"
+
+
+ATTEMPTS_FILE = "attempts.json"
+
+
+def _attempts(cache):
+    try:
+        return json.load(open(os.path.join(cache, ATTEMPTS_FILE), encoding="utf-8"))
+    except Exception:                                              # noqa: BLE001 -- none yet
+        return {}
+
+
+def _note_attempt(cache, key, left_s):
+    """Review M3: a record started in a chunk with `left_s` seconds left (None: no limit) -- read back if it did not
+    finish, so a record longer than a chunk stops the command with a reason instead of being killed every chunk."""
+    d = _attempts(cache)
+    d.setdefault(key, []).append(None if left_s is None else round(float(left_s), 1))
+    tmp = os.path.join(cache, ATTEMPTS_FILE + ".tmp")
+    json.dump(d, open(tmp, "w", encoding="utf-8"), indent=1)
+    os.replace(tmp, os.path.join(cache, ATTEMPTS_FILE))
 
 
 def _indexed_record_worker(kj):
@@ -567,15 +609,26 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
             for k, res in pool.imap_unordered(_indexed_record_worker, todo, chunksize=1):
                 _keep(k, res)
     else:
+        from snl import checkpoint as _CKD
+        att = _attempts(cache) if cache else {}
         for k, j in todo:
-            from snl import checkpoint as _CKD
-            est = max([float((r or {}).get("seconds") or 0.0) for r in flat if r] or [0.0])   # longest record so far
-            if cache and ((budget is not None and time.time() - t0 + est > budget)
-                          or (_CKD.deadline() is not None and time.time() + est > _CKD.deadline() - 60)):
-                from snl import checkpoint as CK
+            left = [x for x in ((budget - (time.time() - t0)) if budget is not None else None,
+                                (_CKD.deadline() - 60 - time.time()) if _CKD.deadline() is not None else None) if x is not None]
+            left = min(left) if left else None
+            prior = [x for x in att.get(keys.get(k), []) if x is not None] if cache else []
+            what = record_chunk_decision(prior, left, budget, [float((r or {}).get("seconds") or 0.0) for r in flat if r])
+            if cache and what == "no_progress":
+                # review M3: this record already had (nearly) a whole chunk and did not finish: it never will
+                print(">> NO PROGRESS nlrha: record %s did not finish in an earlier chunk that had %.0f s for it -- run the "
+                      "NLRHA without --chunk-seconds (or with a longer chunk); %d of %d records are cached"
+                      % (keys.get(k), max(prior), sum(r is not None for r in flat), len(tasks)), flush=True)
+                raise SystemExit(_CKD.EXIT_NO_PROGRESS)
+            if cache and what == "resume":
                 print(">> RESUME nlrha: %d of %d records done, the chunk is spent -- run the same command again"
                       % (sum(r is not None for r in flat), len(tasks)), flush=True)
-                raise SystemExit(CK.EXIT_RESUME)
+                raise SystemExit(_CKD.EXIT_RESUME)
+            if cache:
+                _note_attempt(cache, keys[k], left)
             _keep(k, RN.run_record_worker(j))
     by = dict(zip(order, flat))
     for li, (lv, gm, chosen, hz_lv, sel, jobs) in enumerate(plan):

@@ -209,8 +209,11 @@ def _journal(args, pkg):
         p_ = os.path.join(str(pkg.root), rel)
         if os.path.exists(p_):
             h.update(open(p_, "rb").read())
-    key = (CK.code_key(), h.hexdigest()[:16], args.max_drift, getattr(args, "stop_at", None), args.tail, getattr(args, "member_nseg", None),
-           getattr(args, "gravity_elastic", None), tuple(args.dirs))
+    # review M4 / M5: the code (drivers and post-processing included), the engine, the SNL_* model knobs, the hash seed
+    # and an outside --params file are part of the key
+    key = (json.dumps(CK.run_key(getattr(args, "params", None)), sort_keys=True), h.hexdigest()[:16], args.max_drift,
+           getattr(args, "stop_at", None), args.tail, getattr(args, "member_nseg", None),
+           getattr(args, "gravity_elastic", None), getattr(args, "plasticity", None), tuple(args.dirs))
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     return CK.Journal(os.path.join(args.checkpoint_dir, "pushover.ckpt"), key, budget_s=getattr(args, "chunk_seconds", None),
                       t_start=t0_process())
@@ -273,10 +276,10 @@ def _run_india(args, pkg, t0):
         hinges, stats = NM.build_nonlinear(pkg, prm, PG)
         rec = MR.MemberRecorder(pkg, hinges, stats)
         brace_dims.update({b["tag"]: (b["dc"], b["dT"]) for b in rec.braces})
-        if J is not None:
-            J.begin(name, NM.ops)
         from snl import checkpoint as CK
         try:
+            if J is not None:
+                J.begin(name, NM.ops)                               # may raise ChunkExpired / NoProgress (review M3)
             try:
                 run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
                                   tail_strategies=strategies, recorder=rec, target_estimator=estimator,
@@ -292,6 +295,9 @@ def _run_india(args, pkg, t0):
         except CK.ChunkExpired as ex:
             print(">> RESUME pushover %s: %s -- run the same command again" % (d, ex), flush=True)
             raise SystemExit(CK.EXIT_RESUME)
+        except CK.NoProgress as ex:                                 # review M3: say so, never loop
+            print(">> NO PROGRESS pushover %s: %s" % (d, ex), flush=True)
+            raise SystemExit(CK.EXIT_NO_PROGRESS)
         finally:
             if J is not None:
                 J.end()

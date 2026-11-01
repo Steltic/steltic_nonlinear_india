@@ -78,6 +78,9 @@ def _worker(args):
     except CK.ChunkExpired as ex:
         print("   RESUME %-40s imp %s: %s" % (combo_label[:40], imp["tag"], ex), flush=True)
         return dict(label=combo_label, imp=imp["tag"], resume=True, checkpoint=J.path, journal=J.summary())
+    except CK.NoProgress as ex:                          # review M3: this sweep cannot advance in chunks: say so
+        print("   NO PROGRESS %-40s imp %s: %s" % (combo_label[:40], imp["tag"], ex), flush=True)
+        return dict(label=combo_label, imp=imp["tag"], no_progress=True, reason=str(ex), checkpoint=J.path)
     cls = solver.classify(res, g)
     b12 = packed = None
     if india:
@@ -176,6 +179,16 @@ def curve_prefix_match(new_hist, stored_hist, tol=5e-4):
     return ok, n, round(dl_max, 6), round(dd_max, 6), bad
 
 
+def _no_progress_exit(results):
+    """Review M3: a sweep that cannot advance in chunks stops the command with EXIT_NO_PROGRESS and its reason."""
+    bad = [r for r in results if r.get("no_progress")]
+    if bad:
+        from snl import checkpoint as CK
+        for r in bad:
+            print(">> NO PROGRESS %s imp %s: %s" % (r["label"], r["imp"], r["reason"]), flush=True)
+        raise SystemExit(CK.EXIT_NO_PROGRESS)
+
+
 def _journal_for(job, combo_label, imp, opts):
     """Third wave (P2): the replay journal of one sweep (snl.checkpoint) when `opts['_checkpoint']` = {dir, budget_s}
     is set (retry --checkpoint-dir). The key holds the code version, the model and gravity files and the sweep options,
@@ -191,7 +204,11 @@ def _journal_for(job, combo_label, imp, opts):
         if os.path.exists(p_):
             h.update(open(p_, "rb").read())
     o = {k: v for k, v in opts.items() if not k.startswith("_")}
-    key = (CK.code_key(), h.hexdigest()[:16], combo_label, imp.get("tag"), json.dumps(o, sort_keys=True, default=str))
+    # review M4 / M5: the code (the worker and the B-1.2 check included), the engine, the SNL_* knobs, the hash seed and
+    # the nl_plan.json material overrides the fy reading uses (_india_fy_fn)
+    plans = CK.file_digest(os.path.join(job, "nl_plan.json"), os.path.join(os.path.dirname(job), "nl_plan.json"))
+    key = (json.dumps(CK.run_key(), sort_keys=True), h.hexdigest()[:16], plans, combo_label, imp.get("tag"),
+           json.dumps(o, sort_keys=True, default=str, ensure_ascii=False))
     os.makedirs(ck["dir"], exist_ok=True)
     fn = re.sub(r"[^A-Za-z0-9.+-]+", "_", "%s__%s" % (combo_label, imp.get("tag"))) + ".ckpt"
     return CK.Journal(os.path.join(ck["dir"], fn), key, budget_s=ck.get("budget_s"), t_start=ck.get("t0"))
@@ -368,14 +385,15 @@ def run(args):
         with mp.get_context("spawn").Pool(args.workers) as pool:
             for r in pool.imap_unordered(_worker, tasks):
                 results.append(r)
-                if not r.get("resume"):
+                if not (r.get("resume") or r.get("no_progress")):
                     _print_done(r)
     else:
         for t in tasks:
             r = _worker(t); results.append(r)
-            if r.get("resume"):
+            if r.get("resume") or r.get("no_progress"):
                 break
             _print_done(r)
+    _no_progress_exit(results)
     if any(r.get("resume") for r in results) or len(results) < len(tasks):
         from snl import checkpoint as CK
         print(">> RESUME: %d of %d sweep(s) finished in this chunk (journals in %s) -- run the same command again"
@@ -814,14 +832,15 @@ def retry(args):
         with mp.get_context("spawn").Pool(min(args.workers, len(tasks))) as pool:
             for r in pool.imap_unordered(_worker, tasks):
                 results.append(r)
-                if not r.get("resume"):
+                if not (r.get("resume") or r.get("no_progress")):
                     _print_done(r)
     else:
         for t in tasks:
             r = _worker(t); results.append(r)
-            if r.get("resume"):
+            if r.get("resume") or r.get("no_progress"):
                 break                                     # the chunk is spent: the remaining sweeps go to the next one
             _print_done(r)
+    _no_progress_exit(results)
     pending = [r for r in results if r.get("resume")] + [None] * (len(tasks) - len(results))
     if pending:                                         # third wave: nothing is merged until every sweep has finished
         from snl import checkpoint as CK
