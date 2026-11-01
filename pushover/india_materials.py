@@ -117,6 +117,8 @@ def section_props_mm(section: str) -> dict:
         out["t"] = out.get("tw") or out.get("tf")
     if out["tube"] and "D" not in out:
         out["D"] = out.get("d")
+    if isinstance(p.get("r_min_mm"), float) and p["r_min_mm"] > 0:     # third wave: an angle buckles about v-v
+        out["r_min"] = float(p["r_min_mm"])
     return out
 
 
@@ -362,6 +364,8 @@ def brace_strengths(section: str, L_mm: float, fye_MPa: float, K: float = 1.0, h
     cls = buckling_classes(sp, hollow_forming)
     r = min(v for v in (sp.get("rx"), sp.get("ry")) if v)
     ax = "yy" if r == sp.get("ry") else "zz"
+    if sp.get("r_min") and sp["r_min"] < r - 1e-9:      # third wave: a single angle (ISA) buckles about its v-v axis
+        r, ax = sp["r_min"], "yy"
     KLr = K * float(L_mm) / r
     fcc = math.pi ** 2 * E_MPA / KLr ** 2
     lam = math.sqrt(fye_MPa / fcc)

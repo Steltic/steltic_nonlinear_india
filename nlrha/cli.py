@@ -445,6 +445,26 @@ def _report_india(args, pkg, prm, out):
     _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0)
 
 
+def record_cache_key(pkg, level, job) -> str:
+    """Third wave (P2): the cache name of one record analysis -- sha256 of the NL code version, the package model and
+    gravity files and the record's own inputs (id, scale factor, components, damping, time step, free vibration,
+    integrator, torsion, level)."""
+    import hashlib
+    from snl import checkpoint as CK
+    h = hashlib.sha256()
+    h.update(CK.code_key().encode())
+    for rel in ("model_opensees.py", "nl_hr_gravity.json", "cfg.py", "hinge_params_collected.json"):
+        p_ = os.path.join(str(pkg.root), rel)
+        if os.path.exists(p_):
+            h.update(open(p_, "rb").read())
+    rec = job[5]
+    h.update(json.dumps(dict(level=level, id=rec.get("id"), sf=rec.get("sf"), x_comp=rec.get("x_comp"), dt_rec=rec.get("dt"),
+                             n1=len(rec.get("a1") or []), n2=len(rec.get("a2") or []), xi=job[6], dt=job[7], free_vib=job[8],
+                             integrator=job[10] if len(job) > 10 else None, torsion=job[11] if len(job) > 11 else None),
+                        sort_keys=True, default=str).encode())
+    return "%s_%s_%s" % (level, rec.get("id"), h.hexdigest()[:16])
+
+
 def _indexed_record_worker(kj):
     """NL-29 pool entry: (k, job) -> (k, run_record_worker(job)) so results can arrive in any order."""
     from . import run as RN
@@ -514,14 +534,49 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
             n, len(tasks), plan[li][0], plan[li][4][ji], (res or {}).get("record"),
             "converged" if (res or {}).get("converged") else "NOT converged: %s" % (res or {}).get("reason"),
             time.time() - t_pool), flush=True)
-    if args.parallel > 1 and tasks:
-        import multiprocessing as mp
-        with mp.get_context("spawn").Pool(min(args.parallel, len(tasks))) as pool:
-            for k, res in pool.imap_unordered(_indexed_record_worker, tasks, chunksize=1):
-                _done(k, res)
-    else:
+    # third wave (P2): with --record-cache every finished record is kept (keyed by the code, the model and the record's
+    # own inputs), so a suite longer than one process finishes over several; --chunk-seconds stops before the next
+    # record once the budget is spent (exit 75: run the same command again)
+    cache = getattr(args, "record_cache", None)
+    budget = getattr(args, "chunk_seconds", None)
+    keys = {}
+    if cache:
+        os.makedirs(cache, exist_ok=True)
         for k, j in tasks:
-            _done(k, RN.run_record_worker(j))
+            li, ji = order[k]
+            keys[k] = record_cache_key(pkg, plan[li][0], j)
+            pth = os.path.join(cache, keys[k] + ".pkl")
+            if os.path.exists(pth):
+                try:
+                    with open(pth, "rb") as f:
+                        _done(k, pickle.load(f))
+                except Exception:                                    # noqa: BLE001 -- a broken file is recomputed
+                    flat[k] = None
+
+    def _keep(k, res):
+        _done(k, res)
+        if cache and res is not None:
+            tmp = os.path.join(cache, keys[k] + ".pkl.tmp")
+            with open(tmp, "wb") as f:
+                pickle.dump(res, f)
+            os.replace(tmp, os.path.join(cache, keys[k] + ".pkl"))
+    todo = [(k, j) for k, j in tasks if flat[k] is None]
+    if args.parallel > 1 and todo:
+        import multiprocessing as mp
+        with mp.get_context("spawn").Pool(min(args.parallel, len(todo))) as pool:
+            for k, res in pool.imap_unordered(_indexed_record_worker, todo, chunksize=1):
+                _keep(k, res)
+    else:
+        for k, j in todo:
+            from snl import checkpoint as _CKD
+            est = max([float((r or {}).get("seconds") or 0.0) for r in flat if r] or [0.0])   # longest record so far
+            if cache and ((budget is not None and time.time() - t0 + est > budget)
+                          or (_CKD.deadline() is not None and time.time() + est > _CKD.deadline() - 60)):
+                from snl import checkpoint as CK
+                print(">> RESUME nlrha: %d of %d records done, the chunk is spent -- run the same command again"
+                      % (sum(r is not None for r in flat), len(tasks)), flush=True)
+                raise SystemExit(CK.EXIT_RESUME)
+            _keep(k, RN.run_record_worker(j))
     by = dict(zip(order, flat))
     for li, (lv, gm, chosen, hz_lv, sel, jobs) in enumerate(plan):
         results = [by[(li, ji)] for ji in range(len(jobs))]
@@ -694,6 +749,10 @@ def main(argv=None):
             p.add_argument("--only-records", help="comma-separated 1-based suite indices to run (e.g. 4 or 4,5); preferred for Gate B FC refine")
             p.add_argument("--xi", type=float, default=None, help="viscous damping ratio (default nl_plan.damping.xi or 0.025); above the cap -> warning"); p.add_argument("--free-vib", type=float, default=5.0)
             p.add_argument("--parallel", type=int, default=1, help="worker processes (one OpenSees instance each)")
+            p.add_argument("--record-cache", default=None, help="third wave: keep every finished record there and reuse "
+                           "it (keyed by code, model and record inputs) -- a suite can finish over several processes")
+            p.add_argument("--chunk-seconds", type=float, default=None, help="with --record-cache and --parallel 1: stop "
+                           "before the next record once this budget is spent (exit 75; run the same command again)")
             p.add_argument("--integrator", default="hht", choices=["hht", "newmark"], help="HHT alpha=0.9 (default; damps spurious high modes) or Newmark average acceleration")
             p.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default: 4 fibre / 1 imk)")
             p.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="India: fibre (always). USA: default imk=ModIMK; fibre=distributed forceBeamColumn")

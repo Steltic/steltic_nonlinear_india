@@ -131,3 +131,277 @@ def test_link_halves_carry_the_gravity_replay(tmp_path):
     assert set(stats["link_registry"][30]["halves"]) <= set(stats["fibre_eles"])
     assert stats["link_registry"][30]["spring"] not in stats["fibre_eles"]      # no stiffness damping on the spring
     ops.wipe()
+
+
+# ------------------------------------------------------------------ DDM: the same link model (GMNIA)
+GOLD = os.environ.get("STELTIC_GOLD_JOBS", "/home/claude/gold/jobs_hr")
+ENGINE = os.environ.get("STELTIC_ENGINE_DIR", "")
+
+
+def test_ddm_gmnia_builds_the_link_halves_and_spring():
+    """IN_Ex15 (HR gold, when present): every EBF link of the GMNIA model is two sub-elements and one shear spring;
+    the spring carries V_pL = fy A_w / sqrt(3) on the link's local z."""
+    import contextlib, glob, io
+    hits = sorted(glob.glob(os.path.join(GOLD, "IN_Ex15_EBF*")))
+    if not hits or not ENGINE:
+        pytest.skip("IN_Ex15 gold job or STELTIC_ENGINE_DIR not available")
+    import openseespy.opensees as ops
+    from steltic_ddm import ingest
+    from steltic_ddm.model_gmnia import GMNIAModel
+    with contextlib.redirect_stdout(io.StringIO()):
+        nm = ingest.load_package(hits[0], ENGINE)
+        g = GMNIAModel(nm, nm.cfg, nsub=(2, 2, 2), elastic=False, residual="none", out_of_plumb=(None, 0.0), bow=0.0,
+                       brace_bow=0.0)
+        g.build()
+    links = [m for m in nm.members if m.role == "link"]
+    assert links and len(g.links) == len(links)
+    tags = set(ops.getEleTags())
+    for m in links:
+        halves = [e for e in g.elems if e["mtag"] == m.tag]
+        assert [e["s"] for e in halves] == [0, 1] and g.links[m.tag]["spring"] in tags
+        rec = g.links[m.tag]
+        assert rec["model"] == "shear_spring" and rec["Vp_kN"] == pytest.approx(rec["fy_MPa"] * rec["Aw_mm2"] / math.sqrt(3) / 1e3)
+    ops.wipe()
+
+
+# ------------------------------------------------------------------ P10: Vmax up to the IS-MCE target, Te < T1
+def _dd(u, V, t_mce, T1=1.0, Te=(1.1, 1.1), full=None, stop="reached max roof drift 10.0% of H"):
+    full = full or (max(V), u[V.index(max(V))])
+    return dict(T1=T1, curve_u_mm=u, curve_V_kN=V, stop_reason=stop,
+                nsp={"IS-DBE": dict(target_disp_mm=t_mce / 2, Te=Te[0], W_kip=1000.0 / 4.4482216152605),
+                     "IS-MCE": dict(target_disp_mm=t_mce, Te=Te[1], W_kip=1000.0 / 4.4482216152605)},
+                capacity=dict(Vmax_kN=full[0], u_at_Vmax_in=full[1] / 25.4, V_design_kip=100.0 / 4.4482216152605,
+                              tail_status="lower_bound" if stop.startswith("solver") else "captured"))
+
+
+def test_vmax_is_headlined_up_to_the_mce_target_only():
+    from pushover import vmax_policy as VP
+    u = [0.0, 50.0, 100.0, 150.0, 2000.0]
+    V = [0.0, 400.0, 500.0, 520.0, 1500.0]
+    h = VP.vmax_to_target(_dd(u, V, 120.0, stop="solver non-convergence at roof u=78.74 in"))
+    assert h["Vmax_kN"] == pytest.approx(508.0) and h["u_mm"] == pytest.approx(120.0)   # interpolated at the target
+    assert h["target_reached"] and not h["lower_bound"]                 # the curve passed the target: not a lower bound
+    assert h["Vmax_over_VB"] == pytest.approx(5.08) and h["Vmax_over_W"] == pytest.approx(0.508)
+    assert h["beyond"]["Vmax_kN"] == 1500.0 and h["beyond"]["lower_bound"]
+    assert "information, not the pushover strength" in VP.beyond_text("Y", h) and "≥ 1,500" in VP.beyond_text("Y", h)
+    # the curve stopped before the target: the peak of what was computed, a lower bound
+    h2 = VP.vmax_to_target(_dd(u[:3], V[:3], 120.0, stop="solver non-convergence at roof u=3.94 in"))
+    assert h2["Vmax_kN"] == 500.0 and not h2["target_reached"] and h2["lower_bound"] and h2["beyond"] is None
+    assert VP.strength_text(h2) == "≥ 500 kN"
+
+
+def test_te_below_t1_is_flagged():
+    from pushover import vmax_policy as VP
+    dd = _dd([0.0, 100.0, 200.0], [0.0, 1.0, 2.0], 150.0, T1=0.984, Te=(0.421, 0.722))
+    f = VP.te_flags(dd)
+    assert [x[0] for x in f] == ["IS-DBE", "IS-MCE"]
+    n = VP.te_note("Y", f)
+    assert "below the elastic period T1 = 0.984 s" in n and "0.421" in n
+    assert VP.te_flags(_dd([0.0, 100.0], [0.0, 1.0], 50.0, T1=0.984, Te=(0.99, 1.2))) == []
+
+
+def test_site_index_uses_the_capped_vmax(tmp_path):
+    import json
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import build_site_index as BSI
+    job = tmp_path / "IN_ExT"
+    (job / "pushover").mkdir(parents=True)
+    pkg = dict(jurisdiction="india", directions={
+        "X": _dd([0.0, 50.0, 100.0, 150.0, 2000.0], [0.0, 400.0, 500.0, 520.0, 1500.0], 120.0,
+                 stop="solver non-convergence at roof u=78.74 in", Te=(0.9, 0.9))})
+    (job / "pushover" / "pushover_package.json").write_text(json.dumps(pkg))
+    out = BSI.pushover_results(str(job))
+    assert out["vmax_vb_x"] == 5.1 and out["vmax_vb_text_x"] == "5.1" and not out["vmax_lower_bound_x"]
+    assert out["vmax_target_mm_x"] == 120.0 and "1,500" in out["vmax_beyond_text_x"] and out["te_below_t1_x"]
+    assert "vmax_lower_bound_note" not in out and "IS-MCE target" in out["vmax_basis"]
+
+
+# ------------------------------------------------------------------ P10: keys and solver words on public pages
+def test_public_words():
+    from snl.public_text import words, words_html, scrub_html, role_words, status_words, group_words
+    s = words("1.5DL+1.5LL lateral_col BOX450 NO_LIMIT_POINT (terminated: time_limit at λ = 1.493); SOLVER_FAILURE; "
+              "material@E350: IS 2062; tube_material@YST310: IS 1161; deformation_capacity: IS 18168 12.3.3.1")
+    assert s == ("1.5DL+1.5LL lateral column BOX450 no limit point (terminated: time limit at λ = 1.493); numerical stop; "
+                 "material (E350): IS 2062; tube material (YST310): IS 1161; deformation capacity: IS 18168 12.3.3.1")
+    assert words(s) == s                                                     # idempotent
+    assert role_words("gravity_col") == "gravity column" and status_words("PLASTIC_PLATEAU") == "plastic plateau"
+    assert group_words("material@E350") == "material (E350)"
+    h = "<p>gravity_col LIMIT_POINT</p><script>const R={'gravity_col':1,'LIMIT_POINT':2}</script>"
+    assert words_html(h) == "<p>gravity column limit point</p><script>const R={'gravity_col':1,'LIMIT_POINT':2}</script>"
+    assert "engineer of record" not in scrub_html("<p>to be checked by the engineer of record.</p>")
+
+
+# ------------------------------------------------------------------ P10: member forces at lambda = 1 stored
+def test_forces_at_lambda_one_are_stored_and_b12_can_be_reapplied():
+    from steltic_ddm import india_checks as IC
+    from steltic_ddm.cli import _india_fy_fn
+    f1 = {11: dict(kind="col", role="lateral_col", section="WPB300X300X100.85", N_comp=1.2e6, N_abs=1.2e6, N_top=1.1e6,
+                   M_major=95e6, M_minor=4e6, V=60e3),
+          21: dict(kind="beam", role="floor", section="WPB400X300X155.26", N_comp=0.0, N_abs=1e4, N_top=0.0,
+                   M_major=310e6, M_minor=0.0, V=250e3),
+          "_lambda": dict(target=1.0, lower=0.95, upper=1.05)}
+    fy = _india_fy_fn("/nonexistent")
+    direct = IC.b12_check(f1, fy, 1.3, "1.5DL+1.5LL", status="LIMIT_POINT")
+    packed = IC.pack_forces(f1)
+    assert packed["m"]["11"] == [1200.0, 1200.0, 1100.0, 95.0, 4.0, 60.0] and packed["lambda_basis"]["lower"] == 0.95
+    index = {"11": ["col", "lateral_col", "WPB300X300X100.85"], "21": ["beam", "floor", "WPB400X300X155.26"]}
+    run = dict(label="1.5DL+1.5LL", lambda_end=1.3, status="LIMIT_POINT", forces_at_1=packed)
+    again = IC.b12_from_stored(run, index, fy)
+    assert again["ok"] == direct["ok"] and [g["dc_max"] for g in again["groups"]] == [g["dc_max"] for g in direct["groups"]]
+    assert IC.b12_from_stored(dict(run, forces_at_1=None), index, fy) is None
+
+
+# ------------------------------------------------------------------ engine version: HR main gravity
+def test_hr_gravity_dead_factor_below_one_uses_the_permanent_dead_state():
+    """HR main (first wave item 5) leaves roof collateral / PV off the IS 800 Table 4 0.9 DL rows: with a recorded 'Dp'
+    state a dead-load factor below 1.0 applies to Dp, otherwise to D (records without collateral: unchanged)."""
+    from snl import hr_gravity as HG
+    st = lambda w: dict(ele=[[7, 0.0, 1.0, "beamUniform", [0.0, -w, 0.0]]], node={})
+    d = dict(states={"D": st(10.0), "Dp": st(6.0), "L": st(3.0)})
+    lo = HG.combine(d, {"D": 0.9, "L": 0.0})
+    hi = HG.combine(d, {"D": 1.5, "L": 1.5})
+    assert lo["ele"][0][4][1] == pytest.approx(-5.4) and len(lo["ele"]) == 1
+    assert sum(e[4][1] for e in hi["ele"]) == pytest.approx(-15.0 - 4.5)
+    d2 = dict(states={"D": st(10.0)})
+    assert HG.combine(d2, {"D": 0.9})["ele"][0][4][1] == pytest.approx(-9.0)
+
+
+def test_hr_gravity_engine_fingerprint(tmp_path):
+    from snl import hr_gravity as HG
+    eng = tmp_path / "steel_engine"; eng.mkdir()
+    (eng / "static_model.py").write_text("x = 1\n")
+    a = HG.engine_fingerprint(str(eng))
+    (eng / "static_model.py").write_text("x = 2\n")
+    assert a and HG.engine_fingerprint(str(eng)) != a and HG.engine_fingerprint(None) is None
+
+
+def test_angle_brace_buckles_about_its_v_axis():
+    """New section families (HR main IS 808 tables): a single-angle brace uses r_vv (r_min of the table)."""
+    from pushover import india_materials as IM
+    b = IM.brace_strengths("ISA100X100X10", 2500.0, 250.0)
+    assert b["r_mm"] == pytest.approx(19.7) and b["cls"] == "c"
+    assert IM.brace_strengths("CHS168.3X6.3", 4000.0, 310.0)["r_mm"] > 50.0
+
+
+# ------------------------------------------------------------------ P2 / stage 2: resumable analyses
+class _FakeOps:
+    """A scripted 'OpenSees': at the states (converged-step counts) in `hard`, Newton fails and the second algorithm
+    converges -- an outcome that depends on the state and the settings only, as in OpenSees (a failed call reverts)."""
+    def __init__(self, hard, t0=0.0):
+        self.hard, self.n, self.t, self.u, self.calls, self.alg = set(hard), 0, t0, 0.0, 0, "Newton"
+
+    def algorithm(self, name):
+        self.alg = name
+
+    def analyze(self, n=1):
+        self.calls += 1
+        if self.alg == "Newton" and self.n in self.hard:
+            return -3
+        self.n += 1; self.t += 0.1; self.u += 0.01 * self.t
+        return 0
+
+    def getTime(self):
+        return self.t
+
+    def getNodeTags(self):
+        return [1]
+
+    def nodeDisp(self, n):
+        return [self.u, 0.0, 0.0]
+
+
+def _scripted_run(ops, n_steps):
+    """A tiny step loop shaped like the sweeps: Newton, on failure a second algorithm, record the converged steps."""
+    hist = []
+    while len(hist) < n_steps:
+        ok = ops.analyze(1)
+        if ok != 0:
+            ops.algorithm("Krylov"); ok = ops.analyze(1); ops.algorithm("Newton")
+        hist.append((round(ops.getTime(), 6), round(ops.nodeDisp(1)[0], 9)))
+    return hist
+
+
+def test_journal_replays_converged_calls_and_skips_failed_ones(tmp_path):
+    from snl import checkpoint as CK
+    hard = {1, 3, 4, 6}
+    full = _scripted_run(_FakeOps(hard), 8)
+    path = str(tmp_path / "j.ckpt")
+    o1 = _FakeOps(hard)
+    J = CK.Journal(path, key="k", max_live_calls=6).begin("seg", o1)
+    with pytest.raises(CK.ChunkExpired):
+        _scripted_run(o1, 8)
+    J.end()
+    o2 = _FakeOps(hard)                              # a fresh process: the same code from the start
+    J2 = CK.Journal(path, key="k").begin("seg", o2)
+    part = _scripted_run(o2, 8)
+    J2.end()
+    assert part == full
+    assert J2.data["chunks"] == 2 and J2.data["replayed_calls"] == 6
+    # the journaled failures (calls 2 and 5) were answered from the journal, not computed
+    assert o2.calls == 12 - 2
+    J3 = CK.Journal(path, key="other")                 # a different key never replays
+    assert J3.data["segments"] == {}
+
+
+def test_journal_refuses_a_replay_that_lands_elsewhere(tmp_path):
+    from snl import checkpoint as CK
+    path = str(tmp_path / "j.ckpt")
+    o1 = _FakeOps(set())
+    J = CK.Journal(path, key="k", max_live_calls=2).begin("seg", o1)
+    with pytest.raises(CK.ChunkExpired):
+        _scripted_run(o1, 4)
+    J.end()
+    o2 = _FakeOps(set(), t0=5.0)                     # "another model"
+    J2 = CK.Journal(path, key="k").begin("seg", o2)
+    with pytest.raises(CK.ReplayDiverged):
+        _scripted_run(o2, 4)
+    J2.end()
+
+
+def test_chunked_pushover_repeats_the_uninterrupted_one(tmp_path):
+    """The real OpenSees EBF push of the P1 test, interrupted after 12 converged calls and resumed in a rebuilt model:
+    the same curve, bit for bit (deterministic replay)."""
+    from snl import checkpoint as CK
+    import openseespy.opensees as ops
+    full, _, _ = _push("Y", str(tmp_path), n=30)
+    path = str(tmp_path / "push.ckpt")
+    J = CK.Journal(path, key="ebf", max_live_calls=12).begin("push Y", ops)
+    with pytest.raises(CK.ChunkExpired):
+        _push("Y", str(tmp_path), n=30)
+    J.end()
+    J2 = CK.Journal(path, key="ebf").begin("push Y", ops)
+    again, _, _ = _push("Y", str(tmp_path), n=30)
+    J2.end()
+    assert again == full and J2.data["replayed_calls"] == 12
+
+
+def test_orchestrator_runs_steps_in_order_and_resumes(tmp_path):
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import nl_orchestrate as NO
+    job = tmp_path / "IN_ExT"; job.mkdir()
+    q = str(tmp_path / "queue.json")
+    NO.main(["plan", "--queue", q, "--jobs", str(job), "--analyses", "pushover", "ddm", "--python", "py", "--heavy", "H"])
+    d = NO.load(q)
+    assert [s["id"] for s in d["steps"]] == ["IN_ExT/gravity", "IN_ExT/pushover", "IN_ExT/ddm", "IN_ExT/report"]
+    calls = []
+    script = {"pushover": [75, 0], "ddm": [0], "gravity": [0], "report": [0]}
+
+    def runner(cmd, **kw):
+        kind = next(k for k in script if (k == "gravity" and "snl.hr_gravity" in cmd) or (k == "report" and cmd[-2:-1] == ["report"])
+                    or (k == "pushover" and "pushover" in cmd and "run" in cmd) or (k == "ddm" and "steltic_ddm" in cmd))
+        calls.append((kind, cmd[:3], "SNL_DEADLINE" in kw["env"], "--chunk-seconds" in cmd))
+        return script[kind].pop(0)
+    args = argparse_ns(queue=q, budget=7000.0, max_steps=0, dry_run=False, stop_on_failure=False)
+    NO.next_steps(args, runner=runner)
+    d = NO.load(q)
+    assert [c[0] for c in calls] == ["gravity", "pushover", "pushover", "ddm", "report"]
+    assert all(c[1][:2] == ["H", "timeout"] and c[2] for c in calls)            # under heavy, with a deadline
+    assert [c[3] for c in calls] == [False, True, True, True, False]
+    assert all(s["state"] == "done" for s in d["steps"]) and len(d["steps"][1]["chunks"]) == 2
+    log = open(q + ".runtime.log").read().splitlines()
+    assert len(log) == 5 and "rc=75" in log[1] and "state=resume" in log[1]
+
+
+def argparse_ns(**kw):
+    import argparse
+    return argparse.Namespace(**kw)

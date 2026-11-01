@@ -37,13 +37,14 @@ _LITERAL = [
     ("information / EOR input", "information / design engineer's input"),
     ("information, EOR input", "information, design engineer's input"),
     (SF_BOUNDS_OLD, SF_BOUNDS_NEW),
+    ("to be checked by the engineer of record", "to be checked by the design engineer"),
     ("Modelling disclosures (NL-21)", "Modelling disclosures"),
     ("IS specification values collected by <code>snl collect</code>", "IS specification values collected from the IS corpus"),
 ]
 
 
 def scrub(text):
-    """Plain text for a public page: no ticket ids, no 'EOR'. None stays None."""
+    """Plain text for a public page: no ticket ids, no 'EOR', no keys or solver tokens (third wave). None stays None."""
     if text is None:
         return None
     s = str(text)
@@ -51,7 +52,7 @@ def scrub(text):
         s = s.replace(old, new)
     s = _TICKETS_IN_BRACKETS.sub("", s)
     s = s.replace("EOR to confirm", "design engineer to confirm").replace("EOR input", "design engineer's input")
-    return s
+    return words(s)
 
 
 def scrub_html(h):
@@ -62,7 +63,7 @@ def scrub_html(h):
         return h
     for old, new in _LITERAL:
         h = h.replace(old, new)
-    return _TICKETS_IN_BRACKETS.sub("", h)
+    return words_html(_TICKETS_IN_BRACKETS.sub("", h))      # third wave (P10): keys and solver tokens in words
 
 
 # ---------------------------------------------------------------- third wave (P10): keys and solver words in words
@@ -76,7 +77,7 @@ STATUS_WORDS = {"NO_LIMIT_POINT": "no limit point", "LIMIT_POINT": "limit point"
 TERM_WORDS = {"time_limit": "time limit", "post_peak_budget": "post-peak step budget", "post_peak_drop": "post-peak drop",
               "step_exhausted": "smallest step reached", "too_many_failures": "repeated failed steps",
               "ductility_cap": "ductility cap", "max_steps": "step budget", "disp_cap": "displacement cap",
-              "runaway": "numerical runaway"}
+              "runaway": "numerical runaway", "plateau": "plastic plateau", "lambda1_captured": "λ = 1 passed (B-1.2 refresh)"}
 _KEYED = re.compile(r"\b(" + "|".join(sorted((k for k in list(ROLE_WORDS) + list(TERM_WORDS) if "_" in k), key=len,
                                               reverse=True)) + r")\b")
 _STATUS = re.compile(r"\b(" + "|".join(sorted(STATUS_WORDS, key=len, reverse=True)) + r")\b")

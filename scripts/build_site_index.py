@@ -255,7 +255,8 @@ def meta_line(res):
         parts.append("NLRHA mean drift %.2f %% DBE / %.2f %% MCE (%s)" % (
             n["drift_dbe_pct"], n.get("drift_mce_pct") or 0, runs_txt))
     if d.get("gravity_lambda") is not None:
-        parts.append("DDM gravity λu %s (%s)" % (d["gravity_lambda_text"], d.get("gravity_status")))
+        from snl.public_text import status_words              # third wave, P10: the status in words
+        parts.append("DDM gravity λu %s (%s)" % (d["gravity_lambda_text"], status_words(d.get("gravity_status"))))
     if d.get("solver_failures"):
         parts.append("%d DDM solver failure%s" % (d["solver_failures"], "" if d["solver_failures"] == 1 else "s"))
     return " · ".join(parts)

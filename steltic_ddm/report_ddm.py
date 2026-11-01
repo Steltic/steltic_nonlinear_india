@@ -591,14 +591,18 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
             row["role"], row["section"], row["n"], ("%.3f" % row["DC"]) if isinstance(row["DC"], (int, float)) else "—", _h(row["combo"]),
             row["ratio"], row["yielded"], row["hinges"], row.get("buckled", "—")))
     P.append('</table></div>')
-    P.append('<h2>6 · Solver log</h2><div class="tw"><table><tr><th>combination</th><th>status</th><th>termination</th><th>steps</th><th>failed</th><th>log</th></tr>')
+    # third wave (P10): how each sweep ended, in words -- the solver's own log lines stay in ddm_results.json
+    from snl.public_text import status_words, scrub_html
+    P.append('<h2>6 · How each sweep ended</h2><div class="tw"><table><tr><th>combination</th><th>imperfection</th><th>result</th>'
+             '<th>what ended the sweep</th><th>load steps</th><th>failed steps</th></tr>')
     for r in runs:
         res = r["res"]
-        P.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%s</td><td><code>%s</code></td></tr>' % (
-            _h(r["combo"][0]), res.get("status"), res.get("termination"), res["steps"], res.get("fails"), _h("; ".join(res.get("log", [])[-3:]))))
-    P.append('</table></div><p class="cap">Not for construction; to be checked by the engineer of record.</p></div>')
+        P.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%s</td></tr>' % (
+            _h(r["combo"][0]), _h(r.get("imp") or "—"), _h(status_words(res.get("status")) or "—"),
+            _h(status_words(res.get("termination")) or "—"), res["steps"], res.get("fails") if res.get("fails") is not None else "—"))
+    P.append('</table></div><p class="cap">Not for construction; to be checked by the design engineer.</p></div>')
     path = os.path.join(out_dir, "ddm_report.html")
-    open(path, "w", encoding="utf-8").write("<!doctype html><html><head><meta charset='utf-8'>" + "".join(P) + "</body></html>")
+    open(path, "w", encoding="utf-8").write(scrub_html("<!doctype html><html><head><meta charset='utf-8'>" + "".join(P) + "</body></html>"))
     return path
 
 

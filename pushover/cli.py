@@ -197,6 +197,32 @@ def elastic_check(run, nsp) -> dict | None:
     return out
 
 
+def _journal(args, pkg):
+    """Third wave (P2): the replay journal of this pushover (snl.checkpoint) with --checkpoint-dir, else None. The key
+    holds the code version, the package model and gravity files and the run options."""
+    if not getattr(args, "checkpoint_dir", None):
+        return None
+    import hashlib
+    from snl import checkpoint as CK
+    h = hashlib.sha256()
+    for rel in ("model_opensees.py", "nl_hr_gravity.json", "cfg.py", "hinge_params_collected.json"):
+        p_ = os.path.join(str(pkg.root), rel)
+        if os.path.exists(p_):
+            h.update(open(p_, "rb").read())
+    key = (CK.code_key(), h.hexdigest()[:16], args.max_drift, getattr(args, "stop_at", None), args.tail, getattr(args, "member_nseg", None),
+           getattr(args, "gravity_elastic", None), tuple(args.dirs))
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    return CK.Journal(os.path.join(args.checkpoint_dir, "pushover.ckpt"), key, budget_s=getattr(args, "chunk_seconds", None),
+                      t_start=t0_process())
+
+
+_T0 = __import__("time").time()
+
+
+def t0_process():
+    return _T0
+
+
 def _run_india(args, pkg, t0):
     """India (D6/D7): NSP at IS-DBE and IS-MCE from the IS 1893 elastic spectrum; informative response at delta_t;
     fibre plasticity; IS 2062 steel; mass/gravity = IS seismic weight. No IO/LS/CP/BPON verdict."""
@@ -235,13 +261,31 @@ def _run_india(args, pkg, t0):
             out_.append(1.0 * sa * T * T / (4 * math.pi ** 2) * 386.09)   # C0·C1·C2 ~ 1 (lower estimate -> finer step)
         return out_
 
+    J = _journal(args, pkg)                                         # third wave (P2): resumable directions
     for d in args.dirs:
+        name = "push %s" % d
+        if J is not None and J.done(name) is not None:              # a direction finished in an earlier chunk
+            st = J.done(name)
+            runs[d], results[d], stats = st["run"], st["results"], st["stats"]
+            brace_dims.update(st["brace_dims"])
+            print("  [%s] restored from the checkpoint (finished in an earlier chunk)" % d)
+            continue
         hinges, stats = NM.build_nonlinear(pkg, prm, PG)
         rec = MR.MemberRecorder(pkg, hinges, stats)
         brace_dims.update({b["tag"]: (b["dc"], b["dT"]) for b in rec.braces})
-        run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
-                          tail_strategies=strategies, recorder=rec, target_estimator=estimator,
-                          stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
+        if J is not None:
+            J.begin(name, NM.ops)
+        from snl import checkpoint as CK
+        try:
+            run = NM.pushover(pkg, hinges, d, loads, prm, max_roof_drift=args.max_drift, gravity_table=gtable,
+                              tail_strategies=strategies, recorder=rec, target_estimator=estimator,
+                              stop_at_strength_fraction=getattr(args, "stop_at", 0.8))
+        except CK.ChunkExpired as ex:
+            print(">> RESUME pushover %s: %s -- run the same command again" % (d, ex), flush=True)
+            raise SystemExit(CK.EXIT_RESUME)
+        finally:
+            if J is not None:
+                J.end()
         run["stop_reason"] = RI.stop_reason_mm(run["stop_reason"])   # first wave: mm in every India output
         if (run.get("tail") or {}).get("message"):
             run["tail"]["message"] = RI.stop_reason_mm(run["tail"]["message"])
@@ -254,6 +298,9 @@ def _run_india(args, pkg, t0):
                 for lvn, n in nsp.items()}
         runs[d] = run; results[d] = dict(nsp=nsp, capacity=cap, resp=resp, ref_rot=ref, meta=rec.meta(),
                                          elastic=elastic_check(run, nsp))
+        if J is not None:
+            J.store(name, dict(run=run, results=results[d], stats=stats,
+                               brace_dims={b["tag"]: (b["dc"], b["dT"]) for b in rec.braces}))
         for lvn, n in nsp.items():
             a = resp[lvn]
             print("  [%s %s] Te=%.3fs Sa=%.3fg C0=%.2f C1=%.2f C2=%.2f -> dt=%.1f mm (%.3f%% H) | V=%.0f kN (V/VB %.2f) "
@@ -292,6 +339,9 @@ def main(argv=None):
     r.add_argument("--post-cap-ratio", type=float, help="RUNG 3 (modelling change, user consent): fraction of `a` over which hinges descend to residual (default 0.15; try 0.5)")
     r.add_argument("--plasticity", default="fibre", choices=["fibre", "fiber", "imk"], help="fibre=distributed forceBeamColumn (default); imk=concentrated ModIMK")
     r.add_argument("--member-nseg", type=int, default=4, help="member subdivisions (default 4 for fibre)")
+    r.add_argument("--checkpoint-dir", default=None, help="third wave: journal the run there (snl/checkpoint.py); with "
+                   "--chunk-seconds the process stops at the budget and exits 75 -- run the same command again to resume")
+    r.add_argument("--chunk-seconds", type=float, default=None, help="wall-clock budget of this process (with --checkpoint-dir)")
     i = sub.add_parser("inspect"); i.add_argument("package")
     args = ap.parse_args(argv)
     if args.cmd == "inspect":

@@ -41,11 +41,30 @@ def _worker(args):
                    rigid_end_offset=opts.get("rigid_end_offset", False),
                    fy_fn=(_india_fy_fn(job) if india else None), bow_hollow=opts.get("bow_hollow"))
     buf = io.StringIO()
-    with contextlib.redirect_stderr(buf):
-        res = sweep_with_retries(lambda dl, k: solver.sweep(g, combo, pres, dlam=dl, max_steps=int(opts["max_steps"] * k),
-                                                           verbose=True, time_limit=opts["time_limit"] * k,
-                                                           strain_cap=opts.get("strain_cap"), capture_lambda1=india),
-                                 opts["dlam"], opts.get("retry_factors", (2, 4)), "%s imp %s" % (combo_label[:40], imp["tag"]))
+    J = _journal_for(job, combo_label, imp, opts)       # third wave: resumable sweep (snl.checkpoint), None without
+
+    def one(dl, k):
+        name = "dlam=%.6g" % dl
+        if J is not None and J.done(name) is not None:
+            return J.done(name)                          # a finished rung of an earlier chunk
+        if J is not None:
+            J.begin(name, solver.ops)
+        try:
+            r_ = solver.sweep(g, combo, pres, dlam=dl, max_steps=int(opts["max_steps"] * k), verbose=True,
+                              time_limit=opts["time_limit"] * k, strain_cap=opts.get("strain_cap"), capture_lambda1=india)
+        finally:
+            if J is not None:
+                J.end()
+        if J is not None:
+            J.store(name, r_)
+        return r_
+    from snl import checkpoint as CK
+    try:
+        with contextlib.redirect_stderr(buf):
+            res = sweep_with_retries(one, opts["dlam"], opts.get("retry_factors", (2, 4)), "%s imp %s" % (combo_label[:40], imp["tag"]))
+    except CK.ChunkExpired as ex:
+        print("   RESUME %-40s imp %s: %s" % (combo_label[:40], imp["tag"], ex), flush=True)
+        return dict(label=combo_label, imp=imp["tag"], resume=True, checkpoint=J.path, journal=J.summary())
     cls = solver.classify(res, g)
     b12 = packed = None
     if india:
@@ -139,6 +158,27 @@ def curve_prefix_match(new_hist, stored_hist, tol=5e-4):
             bad = i
     ok = bad is None and n == len(new_hist) and n > 1
     return ok, n, round(dl_max, 6), round(dd_max, 6), bad
+
+
+def _journal_for(job, combo_label, imp, opts):
+    """Third wave (P2): the replay journal of one sweep (snl.checkpoint) when `opts['_checkpoint']` = {dir, budget_s}
+    is set (retry --checkpoint-dir). The key holds the code version, the model and gravity files and the sweep options,
+    so a journal never replays against a different model or code."""
+    ck = opts.get("_checkpoint")
+    if not ck:
+        return None
+    import hashlib, re
+    from snl import checkpoint as CK
+    h = hashlib.sha256()
+    for rel in ("model_opensees.py", "nl_hr_gravity.json", "cfg.py"):
+        p_ = os.path.join(job, rel)
+        if os.path.exists(p_):
+            h.update(open(p_, "rb").read())
+    o = {k: v for k, v in opts.items() if not k.startswith("_")}
+    key = (CK.code_key(), h.hexdigest()[:16], combo_label, imp.get("tag"), json.dumps(o, sort_keys=True, default=str))
+    os.makedirs(ck["dir"], exist_ok=True)
+    fn = re.sub(r"[^A-Za-z0-9.+-]+", "_", "%s__%s" % (combo_label, imp.get("tag"))) + ".ckpt"
+    return CK.Journal(os.path.join(ck["dir"], fn), key, budget_s=ck.get("budget_s"), t_start=ck.get("t0"))
 
 
 def sweep_with_retries(do_sweep, dlam, factors=(2, 4), what=""):
@@ -303,16 +343,28 @@ def run(args):
         for imp in imperfections.cases_for(c, gravity_dirs=args.gravity_dirs, psi=psi):
             tasks.append((job, engine_dir, c[0], imp, opts))
     print(">> %d GMNIA sweeps on %d worker(s)" % (len(tasks), args.workers), flush=True)
+    if getattr(args, "checkpoint_dir", None):            # third wave (P2): resumable sweeps in chunks
+        ck = dict(dir=os.path.abspath(args.checkpoint_dir), budget_s=getattr(args, "chunk_seconds", None),
+                  code_version=code_version(), t0=t0)
+        tasks = [(t[0], t[1], t[2], t[3], dict(t[4], _checkpoint=ck)) for t in tasks]
     results = []
     if args.workers > 1:
         with mp.get_context("spawn").Pool(args.workers) as pool:
             for r in pool.imap_unordered(_worker, tasks):
                 results.append(r)
-                _print_done(r)
+                if not r.get("resume"):
+                    _print_done(r)
     else:
         for t in tasks:
             r = _worker(t); results.append(r)
+            if r.get("resume"):
+                break
             _print_done(r)
+    if any(r.get("resume") for r in results) or len(results) < len(tasks):
+        from snl import checkpoint as CK
+        print(">> RESUME: %d of %d sweep(s) finished in this chunk (journals in %s) -- run the same command again"
+              % (sum(1 for r in results if not r.get("resume")), len(tasks), args.checkpoint_dir), flush=True)
+        raise SystemExit(CK.EXIT_RESUME)
 
     # keep the governing imperfection case per combination (lowest lambda reached)
     by_label = {}
@@ -731,6 +783,9 @@ def retry(args):
     if india:
         _llr_setup(nm, cfg, opts, tuple(opts["nsub"]), opts["rigid_end_offset"],
                    (o.get("imposed_load_reduction") or {}).get("mode") or "hr")
+    if getattr(args, "checkpoint_dir", None):            # third wave (P2): resumable sweeps in chunks
+        opts["_checkpoint"] = dict(dir=os.path.abspath(args.checkpoint_dir), budget_s=getattr(args, "chunk_seconds", None),
+                                   code_version=args._code_version, t0=t0)
     cases = loads.steltic_combos(cfg, nm=nm)
     by_combo = {c[0]: c for c in cases}
     gdirs = {"+X only": "one", "+X and +Y": "two", "±X and ±Y": "all"}.get(o.get("gravity_dirs"), "two")
@@ -742,10 +797,21 @@ def retry(args):
     if args.workers > 1 and len(tasks) > 1:
         with mp.get_context("spawn").Pool(min(args.workers, len(tasks))) as pool:
             for r in pool.imap_unordered(_worker, tasks):
-                results.append(r); _print_done(r)
+                results.append(r)
+                if not r.get("resume"):
+                    _print_done(r)
     else:
         for t in tasks:
-            r = _worker(t); results.append(r); _print_done(r)
+            r = _worker(t); results.append(r)
+            if r.get("resume"):
+                break                                     # the chunk is spent: the remaining sweeps go to the next one
+            _print_done(r)
+    pending = [r for r in results if r.get("resume")] + [None] * (len(tasks) - len(results))
+    if pending:                                         # third wave: nothing is merged until every sweep has finished
+        from snl import checkpoint as CK
+        print(">> RESUME: %d of %d sweep(s) not finished in this chunk (journals in %s) -- run the same command again"
+              % (len(pending), len(tasks), getattr(args, "checkpoint_dir", None)), flush=True)
+        raise SystemExit(CK.EXIT_RESUME)
     gov = {}
     for r in results:
         if r["label"] not in gov or r["res"]["lambda_end"] < gov[r["label"]]["res"]["lambda_end"]:
@@ -979,6 +1045,9 @@ def main(argv=None):
                    help="HR DDM: rigid beam end offset fraction of L (default 0.05 for HR; off for CFS portal)")
     r.add_argument("--no-rigid-end-offset", action="store_true", help="disable rigid end offsets (Liu continuity stubs)")
     r.add_argument("--no-block", action="store_true", help="do not write ddm_analysis into calc_package.json")
+    r.add_argument("--checkpoint-dir", default=None, help="third wave: journal every sweep there (snl/checkpoint.py); "
+                   "with --chunk-seconds the process stops at the budget and exits 75 -- run the same command again")
+    r.add_argument("--chunk-seconds", type=float, default=None, help="wall-clock budget of this process (with --checkpoint-dir)")
     r.add_argument("--imposed-load-reduction", default="hr", choices=["hr", "off"],
                    help="India: IS 875-2 3.2.1 column imposed-load reduction -- 'hr' applies it exactly as the HR design "
                         "did (default, NL-37); 'off' runs the unreduced imposed load (information, disclosed)")
@@ -998,6 +1067,11 @@ def main(argv=None):
                         "repeat each stored governing sweep up to lambda = 1, check that the curve repeats the stored one, "
                         "replace the B-1.2 row; lambda_u, status and curve are kept")
     t.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2)))); t.add_argument("--no-block", action="store_true")
+    t.add_argument("--checkpoint-dir", default=None,
+                   help="third wave: journal every sweep there (deterministic replay, snl/checkpoint.py) so a sweep longer "
+                        "than one process can finish over several; with --chunk-seconds the process stops at the budget "
+                        "and exits 75 -- run the same command again to resume")
+    t.add_argument("--chunk-seconds", type=float, default=None, help="wall-clock budget of this process (with --checkpoint-dir)")
     s = sub.add_parser("selftest", help="column-curve regression + small frame")
     a = ap.parse_args(argv)
     if a.cmd == "run":

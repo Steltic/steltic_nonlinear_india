@@ -494,7 +494,8 @@ def build_india(job, out_name="four_analyses.html"):
         H.append("<h2 id='record-set'>Ground-motion record set (NLRHA)</h2><ul>%s</ul>" % "".join(
             "<li>%s</li>" % html.escape(x) for x in notes_rs))
     # check fixes, finding 5: the package fingerprints stay in snl_summary.json (the gate's freshness check), not on the page
-    open(os.path.join(job, out_name), "w", encoding="utf-8").write("\n".join(H))
+    from .public_text import words_html                # third wave (P10): no role keys or solver tokens on the page
+    open(os.path.join(job, out_name), "w", encoding="utf-8").write(words_html("\n".join(H)))
     json.dump(summ, open(os.path.join(job, "snl_summary.json"), "w"), indent=1, default=str)
     return os.path.join(job, out_name)
 
