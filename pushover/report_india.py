@@ -81,6 +81,12 @@ def gravity_source(gtable) -> str:
     return "hr_engine" if rows and all(r.get("HR_EV_kN") is not None for r in rows) else "idealised"
 
 
+def gravity_engine(gtable):
+    """Review L10: the HR engine fingerprint of the gravity record used (snl.hr_gravity engine_sha), or None."""
+    shas = {r.get("HR_engine_sha") for r in (gtable or []) if r.get("HR_engine_sha")}
+    return shas.pop() if len(shas) == 1 else (sorted(shas) if shas else None)
+
+
 def _sha(path):
     try:
         return hashlib.sha256(open(path, "rb").read()).hexdigest()
@@ -129,6 +135,41 @@ def footer_words(verified, collected):
 
 REVIEW_MARK_START = "<!-- steltic:pushover-review -->"
 REVIEW_MARK_END = "<!-- /steltic:pushover-review -->"
+VMAX_MARK_START = "<!-- steltic:vmax-to-mce-target -->"
+VMAX_MARK_END = "<!-- /steltic:vmax-to-mce-target -->"
+
+
+def vmax_block_html(pkg) -> str:
+    """Third wave, P10 (review M1): the headline of each direction, read on the curve up to the IS-MCE target
+    displacement (pushover/vmax_policy.py): Vmax where the curve peaks before δt, the base shear at δt where it is
+    still rising there (not a strength), the computed peak where it ended before δt; the peak of the analysed curve
+    as information; Te flags. Marked, so a refresh replaces it in place."""
+    from . import vmax_policy as VP
+    rows, notes = [], []
+    for d, dd in sorted(((pkg or {}).get("directions") or {}).items()):
+        h = VP.vmax_to_target(dd)
+        if h is None:
+            continue
+        rows.append("<tr><td>%s</td><td>%.1f%s</td><td>%s</td><td>%s</td><td>%.1f</td><td>%s</td><td>%s</td></tr>" % (
+            d, h["target_mm"], "" if h["target_reached"] else " (not reached: the curve ended before it)",
+            html.escape(h["label"]), VP.strength_text(h), h["u_mm"] or 0.0,
+            ("%s = %s" % (VP.ratio_label(h, "VB"), VP.strength_text(h, ratio="VB"))) if h.get("V_over_VB") is not None else "—",
+            ("%s = %s" % (VP.ratio_label(h, "W"), VP.strength_text(h, ratio="W"))) if h.get("V_over_W") is not None else "—"))
+        notes.append("%s: %s." % (d, h["qualifier"][0].upper() + h["qualifier"][1:]))
+        pt = VP.peak_text(d, h)
+        if pt:
+            notes.append(pt + ".")
+        tn = VP.te_note(d, VP.te_flags(dd))
+        if tn:
+            notes.append(tn)
+    if not rows:
+        return ""
+    return ("%s<p><b>Pushover headline, read up to the IS-MCE target displacement</b></p><table><tr><th>dir</th>"
+            "<th>IS-MCE δt (mm)</th><th>headline</th><th>value</th><th>at roof u (mm)</th><th>/ VB</th><th>/ W</th></tr>%s</table>"
+            "<div class='note'>%s%s</div>%s" % (VMAX_MARK_START, "".join(rows), html.escape(VP.BASIS),
+                                                "".join("<br>" + html.escape(n) for n in notes), VMAX_MARK_END))
+
+
 LOWER_BOUND_WORDS = "a lower bound: the curve ended in a numerical stop before it lost strength, so the peak is not established"
 
 
@@ -183,6 +224,14 @@ def _check_fixes(h, pkg, review):
                 h = h[:a] + part + h[b:]
             h = h.replace("<h3>%s %s — member groups" % (d, lv),
                           "<h3>%s %s at the curve end (%.0f mm; target not reached) — member groups" % (d, lv, end or 0), 1)
+    # third wave, P10 (review M1): the headline is read up to the IS-MCE target; the analysed curve's peak is information
+    if VMAX_MARK_START in h and VMAX_MARK_END in h:
+        h = h[:h.index(VMAX_MARK_START)] + h[h.index(VMAX_MARK_END) + len(VMAX_MARK_END):]
+    vb_html = vmax_block_html(pkg)
+    if vb_html:
+        h = h.replace("<h2>3 Response at δt (interpolated)</h2>", "<h2>3 Response at δt (interpolated)</h2>" + vb_html, 1)
+        for d in dirs:
+            h = h.replace("<p><b>%s</b>: Vmax " % d, "<p><b>%s</b>: peak of the analysed curve (information) Vmax " % d, 1)
     # finding 4: the review note at the top, 'UNDER REVIEW' on the direction's line; removed when the record goes
     if REVIEW_MARK_START in h and REVIEW_MARK_END in h:
         h = h[:h.index(REVIEW_MARK_START)] + h[h.index(REVIEW_MARK_END) + len(REVIEW_MARK_END):]
@@ -257,7 +306,8 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
                                                                   member_nseg=(stats or {}).get("member_nseg")),
         fibre_eles=len((stats or {}).get("fibre_eles") or []), fibre_secs=(stats or {}).get("fibre_secs"),
         restrained_dofs=(stats or {}).get("restrained_zero_stiffness_dofs"),
-        gravity=gtable, gravity_source=gravity_source(gtable), reference_rotation=ref, modal=modal_info,
+        gravity=gtable, gravity_source=gravity_source(gtable), gravity_engine=gravity_engine(gtable),
+        reference_rotation=ref, modal=modal_info,
         links=(stats or {}).get("links") or 0,
         elastic_members=_elastic_block(results, stats),
         params_verified=prm.get("verified"), params_state=_state(prm, out), spec_values_collected=bool(prm.get("spec_values_collected")),

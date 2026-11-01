@@ -71,7 +71,9 @@ def build_plan(nm, cfg, nsub=(2, 2, 4), rigid_end_offset=False) -> dict | None:
     try:
         from snl import hr_gravity as HG
         hr = HG.ensure(nm.job_dir)
-    except Exception:                                          # noqa: BLE001
+    except Exception as ex:                                    # noqa: BLE001
+        if type(ex).__name__ == "GravityRecordFailed":           # re-check L10: never swallowed
+            raise
         hr = None
     r_by = factors(hr)
     if not r_by or not (hr.get("states") or {}).get("Lfloor"):

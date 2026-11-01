@@ -312,10 +312,10 @@ def _india_prepare(args, pkg, prm, ch16):
     from . import ground_motions as GM
     loads, gtab = IMD.is_gravity_loads(pkg)
     W = sum(r["W_kN"] for r in gtab)
-    from pushover.report_india import gravity_source
+    from pushover.report_india import gravity_source, gravity_engine
     gsrc = gravity_source(gtab)
     split = dict(sum_D=sum(r["QG_kip"] for r in gtab), sum_Lexp=0.0, ratio=0.0, no_live_case_needed=False,
-                 gravity_source=gsrc,
+                 gravity_source=gsrc, gravity_engine=gravity_engine(gtab),
                  basis=("IS 1893 seismic weight per level (D + Table 10 imposed share); W = %.1f kN; %s" % (
                      W, "HR engine seismic-weight load state + top-up to W_i (NL-14)" if gsrc == "hr_engine"
                      else "IDEALISED: W_i as equal diaphragm nodal loads (HR engine not importable)")))
@@ -445,6 +445,70 @@ def _report_india(args, pkg, prm, out):
     _finish_india(args, pkg, prm, out, per_level, modal, numerics, hz, t0)
 
 
+def record_cache_key(pkg, level, job) -> str:
+    """Third wave (P2): the cache name of one record analysis -- sha256 of the NL code version, the package model and
+    gravity files and the record's own inputs (id, scale factor, components, damping, time step, free vibration,
+    integrator, torsion, level)."""
+    import hashlib
+    from snl import checkpoint as CK
+    h = hashlib.sha256()
+    h.update(CK.code_key().encode())
+    for rel in ("model_opensees.py", "nl_hr_gravity.json", "cfg.py", "hinge_params_collected.json"):
+        p_ = os.path.join(str(pkg.root), rel)
+        if os.path.exists(p_):
+            h.update(open(p_, "rb").read())
+    rec = job[5]
+    # review M4: the record's own data (not only its length), an outside --params file, the SNL_* model knobs (member
+    # subdivisions, fibre settings, gravity-elastic members, plasticity) and the HR engine fingerprint are in the key
+    import numpy as _np
+    for comp in ("a1", "a2"):
+        a_ = rec.get(comp)
+        h.update(comp.encode())
+        h.update(_np.asarray(a_ if a_ is not None else [], dtype=float).tobytes())
+    h.update(json.dumps(dict(level=level, id=rec.get("id"), sf=rec.get("sf"), x_comp=rec.get("x_comp"), dt_rec=rec.get("dt"),
+                             xi=job[6], dt=job[7], free_vib=job[8],
+                             integrator=job[10] if len(job) > 10 else None, torsion=job[11] if len(job) > 11 else None,
+                             params=CK.file_digest(job[1]) if job[1] else None, env=CK.model_env(), engine=CK.engine_key()),
+                        sort_keys=True, default=str).encode())
+    return "%s_%s_%s" % (level, rec.get("id"), h.hexdigest()[:16])
+
+
+def record_chunk_decision(prior, left, budget, finished_seconds):
+    """Review M3: before a record in a chunked serial NLRHA -- 'no_progress' when an earlier chunk gave this record
+    (nearly) a whole chunk and it did not finish; 'resume' when the longest record so far, or this record's own earlier
+    attempt, would not fit in what is left of this chunk; else 'run'. `prior` = seconds left when earlier attempts of
+    this record started, `left` = seconds left now (None: no limit), `budget` = this process's --chunk-seconds (the
+    full chunk is $SNL_FULL_CHUNK when the orchestrator sets it, else this budget)."""
+    from snl import checkpoint as CK
+    full = CK.full_chunk(budget)                      # re-check M3 b: the queue's full chunk, not what is left of it
+    if prior and full is not None and max(prior) >= CK.REPLAY_MARGIN * full:
+        return "no_progress"
+    est = max(list(finished_seconds or []) + list(prior or []) + [0.0])
+    if left is not None and est > left:
+        return "resume"
+    return "run"
+
+
+ATTEMPTS_FILE = "attempts.json"
+
+
+def _attempts(cache):
+    try:
+        return json.load(open(os.path.join(cache, ATTEMPTS_FILE), encoding="utf-8"))
+    except Exception:                                              # noqa: BLE001 -- none yet
+        return {}
+
+
+def _note_attempt(cache, key, left_s):
+    """Review M3: a record started in a chunk with `left_s` seconds left (None: no limit) -- read back if it did not
+    finish, so a record longer than a chunk stops the command with a reason instead of being killed every chunk."""
+    d = _attempts(cache)
+    d.setdefault(key, []).append(None if left_s is None else round(float(left_s), 1))
+    tmp = os.path.join(cache, ATTEMPTS_FILE + ".tmp")
+    json.dump(d, open(tmp, "w", encoding="utf-8"), indent=1)
+    os.replace(tmp, os.path.join(cache, ATTEMPTS_FILE))
+
+
 def _indexed_record_worker(kj):
     """NL-29 pool entry: (k, job) -> (k, run_record_worker(job)) so results can arrive in any order."""
     from . import run as RN
@@ -476,6 +540,7 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
     numerics = dict(plasticity="fibre", member_nseg=int(os.environ.get("SNL_MEMBER_NSEG") or 4), damping=damp,
                     torsion=dict(mode=tors_mode, **(torsion or {}), clause="IS 1893 7.8.2 (0.05 b), default on for India"),
                     integrator=args.integrator, dt_s=args.dt, gravity=split["basis"], gravity_source=split["gravity_source"],
+                    gravity_engine=split.get("gravity_engine"),
                     record_trim=dict(method=os.environ["SNL_RECORD_TRIM"], free_vib_s=args.free_vib,
                                      basis=(RN.TRIM_BASIS if os.environ["SNL_RECORD_TRIM"] == "arias5-95" else "full record head")),
                     gravity_elastic=(os.environ.get("SNL_GRAVITY_ELASTIC", "1") not in ("0", "off", "false")))
@@ -514,14 +579,60 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
             n, len(tasks), plan[li][0], plan[li][4][ji], (res or {}).get("record"),
             "converged" if (res or {}).get("converged") else "NOT converged: %s" % (res or {}).get("reason"),
             time.time() - t_pool), flush=True)
-    if args.parallel > 1 and tasks:
-        import multiprocessing as mp
-        with mp.get_context("spawn").Pool(min(args.parallel, len(tasks))) as pool:
-            for k, res in pool.imap_unordered(_indexed_record_worker, tasks, chunksize=1):
-                _done(k, res)
-    else:
+    # third wave (P2): with --record-cache every finished record is kept (keyed by the code, the model and the record's
+    # own inputs), so a suite longer than one process finishes over several; --chunk-seconds stops before the next
+    # record once the budget is spent (exit 75: run the same command again)
+    cache = getattr(args, "record_cache", None)
+    budget = getattr(args, "chunk_seconds", None)
+    keys = {}
+    if cache:
+        os.makedirs(cache, exist_ok=True)
         for k, j in tasks:
-            _done(k, RN.run_record_worker(j))
+            li, ji = order[k]
+            keys[k] = record_cache_key(pkg, plan[li][0], j)
+            pth = os.path.join(cache, keys[k] + ".pkl")
+            if os.path.exists(pth):
+                try:
+                    with open(pth, "rb") as f:
+                        _done(k, pickle.load(f))
+                except Exception:                                    # noqa: BLE001 -- a broken file is recomputed
+                    flat[k] = None
+
+    def _keep(k, res):
+        _done(k, res)
+        if cache and res is not None:
+            tmp = os.path.join(cache, keys[k] + ".pkl.tmp")
+            with open(tmp, "wb") as f:
+                pickle.dump(res, f)
+            os.replace(tmp, os.path.join(cache, keys[k] + ".pkl"))
+    todo = [(k, j) for k, j in tasks if flat[k] is None]
+    if args.parallel > 1 and todo:
+        import multiprocessing as mp
+        with mp.get_context("spawn").Pool(min(args.parallel, len(todo))) as pool:
+            for k, res in pool.imap_unordered(_indexed_record_worker, todo, chunksize=1):
+                _keep(k, res)
+    else:
+        from snl import checkpoint as _CKD
+        att = _attempts(cache) if cache else {}
+        for k, j in todo:
+            left = [x for x in ((budget - (time.time() - t0)) if budget is not None else None,
+                                (_CKD.deadline() - 60 - time.time()) if _CKD.deadline() is not None else None) if x is not None]
+            left = min(left) if left else None
+            prior = [x for x in att.get(keys.get(k), []) if x is not None] if cache else []
+            what = record_chunk_decision(prior, left, budget, [float((r or {}).get("seconds") or 0.0) for r in flat if r])
+            if cache and what == "no_progress":
+                # review M3: this record already had (nearly) a whole chunk and did not finish: it never will
+                print(">> NO PROGRESS nlrha: record %s did not finish in an earlier chunk that had %.0f s for it -- run the "
+                      "NLRHA without --chunk-seconds (or with a longer chunk); %d of %d records are cached"
+                      % (keys.get(k), max(prior), sum(r is not None for r in flat), len(tasks)), flush=True)
+                raise SystemExit(_CKD.EXIT_NO_PROGRESS)
+            if cache and what == "resume":
+                print(">> RESUME nlrha: %d of %d records done, the chunk is spent -- run the same command again"
+                      % (sum(r is not None for r in flat), len(tasks)), flush=True)
+                raise SystemExit(_CKD.EXIT_RESUME)
+            if cache:
+                _note_attempt(cache, keys[k], left)
+            _keep(k, RN.run_record_worker(j))
     by = dict(zip(order, flat))
     for li, (lv, gm, chosen, hz_lv, sel, jobs) in enumerate(plan):
         results = [by[(li, ji)] for ji in range(len(jobs))]
@@ -694,6 +805,10 @@ def main(argv=None):
             p.add_argument("--only-records", help="comma-separated 1-based suite indices to run (e.g. 4 or 4,5); preferred for Gate B FC refine")
             p.add_argument("--xi", type=float, default=None, help="viscous damping ratio (default nl_plan.damping.xi or 0.025); above the cap -> warning"); p.add_argument("--free-vib", type=float, default=5.0)
             p.add_argument("--parallel", type=int, default=1, help="worker processes (one OpenSees instance each)")
+            p.add_argument("--record-cache", default=None, help="third wave: keep every finished record there and reuse "
+                           "it (keyed by code, model and record inputs) -- a suite can finish over several processes")
+            p.add_argument("--chunk-seconds", type=float, default=None, help="with --record-cache and --parallel 1: stop "
+                           "before the next record once this budget is spent (exit 75; run the same command again)")
             p.add_argument("--integrator", default="hht", choices=["hht", "newmark"], help="HHT alpha=0.9 (default; damps spurious high modes) or Newmark average acceleration")
             p.add_argument("--member-nseg", type=int, default=None, help="member subdivisions (default: 4 fibre / 1 imk)")
             p.add_argument("--plasticity", default=None, choices=["fibre", "fiber", "imk"], help="India: fibre (always). USA: default imk=ModIMK; fibre=distributed forceBeamColumn")

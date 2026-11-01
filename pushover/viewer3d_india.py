@@ -149,6 +149,9 @@ function dirTable(){
   const d = D(); const r = [['Statement', `<i>${P.statement}</i>`], ['T1 (fibre model, push mode)', `${fmt(d.T1,3)} s`],
     ['Vmax · at roof u', `${d.lower_bound?'≥ ':''}${fmt(d.Vmax_kN,0)} kN · ${fmt(d.u_at_Vmax_mm,1)} mm${d.lower_bound?' (lower bound: the curve ended in a numerical stop)':''}`], ['V-bar_B (HR design, this direction)', d.VB_kN ? `${fmt(d.VB_kN,0)} kN` : '—'],
     ['Vmax / V-bar_B', `${d.lower_bound?'≥ ':''}${fmt(d.Vmax_over_VB,2)}`], ['Stop', d.stop||'—']];
+  if (d.headline_mce){ const m = d.headline_mce; r.splice(2, 1, [`${m.label} (headline) · at roof u`, `${m.lower_bound?'≥ ':''}${fmt(m.V_kN,0)} kN · ${fmt(m.u_mm,1)} mm (δt ${fmt(m.target_mm,1)} mm${m.reached?'':', not reached'}) — ${m.qualifier}`], ['Peak of the analysed curve (information) · at roof u', `${fmt(d.Vmax_kN,0)} kN · ${fmt(d.u_at_Vmax_mm,1)} mm${d.lower_bound?' (the curve ended in a numerical stop)':''}`]);
+    r.splice(5, 1, [`${m.ratio_label} (headline)`, `${m.lower_bound?'≥ ':''}${fmt(m.over_VB,2)}`]); }
+  if (d.te_note) r.push(['Effective period Te', d.te_note]);
   if (d.review) r.unshift(['UNDER REVIEW', `<b>${d.review}</b>`]);
   const nr = d.targets_not_reached || [];
   for (const [k,t] of Object.entries(d.targets)) r.push([`${k}: Te · Sa · δt`, `${fmt(t.Te,3)} s · ${fmt(t.Sa,3)} g · ${fmt(t.u_mm,1)} mm${nr.includes(k)?' (not reached)':''}`], [`${k}: V / VB · max drift${nr.includes(k)?' at the curve end':''}`, `${fmt(t.V_over_VB,2)} · ${pct(t.max_drift||0)}`]);
@@ -346,7 +349,7 @@ def _lite_snapshot(keys, resp, eg=None):
         else:
             st = "yield" if g.get("yielded") else "elastic"
             info = [["Peak link shear ductility γ/γy", "%.2f" % g.get("shear_ductility_max", 0)],
-                    ["Peak link rotation γ", "%.4f rad" % g.get("gamma_max_rad", 0)],
+                    ["Peak inelastic link rotation γp (IS 18168 12.3.3.1)", "%.4f rad" % g.get("gamma_max_rad", 0)],
                     ["IS 18168 12.3.3.1 link rotation (reference only)", "0.08 rad"]]
         out[gid] = dict(state=st, info=info)
     return out
@@ -418,6 +421,15 @@ def annotate(outdir, data: dict) -> dict:
         dd["targets_not_reached"] = [lv for lv, n in (pd.get("nsp") or {}).items() if n.get("reached_target") is False]
         dd["review"] = (rv.get(d) or {}).get("summary")
         dd["stop"] = stop_reason_mm(dd.get("stop"))
+        from . import vmax_policy as VP                            # third wave, P10: the headline strength
+        h = VP.vmax_to_target(pd) if pd else None
+        dd["headline_mce"] = (dict(V_kN=_r(h["V_kN"], 1), u_mm=_r(h["u_mm"], 1), target_mm=_r(h["target_mm"], 1),
+                                   over_VB=_r(h.get("V_over_VB"), 3), lower_bound=bool(h["lower_bound"]), kind=h["kind"],
+                                   label=h["label"], qualifier=h["qualifier"], ratio_label=VP.ratio_label(h, "V-bar_B"),
+                                   reached=bool(h["target_reached"]))
+                              if h else None)
+        tf = VP.te_flags(pd) if pd else []
+        dd["te_note"] = VP.te_note(d, tf)
     return data
 
 
@@ -475,7 +487,7 @@ def ensure(job_dir, force=False) -> str | None:
         # rebuilt once from the same stored data (deterministic; a few tenths of a second)
         if os.path.exists(html) and not force and os.path.getmtime(html) >= os.path.getmtime(pp) \
                 and (not os.path.exists(rv) or os.path.getmtime(html) >= os.path.getmtime(rv)) \
-                and '"lower_bound"' in open(html, encoding="utf-8", errors="replace").read():
+                and '"headline_mce"' in open(html, encoding="utf-8", errors="replace").read():
             return html
         ppkg = json.load(open(pp, encoding="utf-8"))
         if str(ppkg.get("jurisdiction") or "").lower() != "india":

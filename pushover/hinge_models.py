@@ -262,6 +262,11 @@ def brace_spec(section: str, L_in: float, prm: dict, india: dict | None = None) 
     default 1.0) with Pye = A·fye and Pcr = A·chi·fye on the IS 800 7.1.2.1 curve (no AISC E3, no Ry, no 1.14)."""
     p = SDB.props(section); bp = prm["brace_axial"]
     A, r = p["A"], min(p["rx"], p["ry"])
+    # third wave: an IS 808 angle buckles about its weakest (v-v) axis; review L1: angles only, and only a real
+    # reduction (the mm r_min against the 4-decimal inch rx / ry differs by rounding on other rows)
+    if str(section).upper().replace(" ", "").startswith(("ISA", "2ISA")) and isinstance(p.get("r_min_mm"), float) \
+            and 0 < p["r_min_mm"] / 25.4 < 0.99 * r:
+        r = p["r_min_mm"] / 25.4
     KLr = bp["K_effective"] * L_in / r
     if india:
         from . import india_materials as IM

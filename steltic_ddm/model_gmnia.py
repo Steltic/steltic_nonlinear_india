@@ -194,6 +194,7 @@ class GMNIAModel:
     def build(self, with_mass=False):
         nm = self.nm
         self.elems, self.sub_nodes, self.secs, self.sec_props, self.pins = [], {}, {}, {}, []
+        self._link_builders, self.links = {}, {}
         ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 6)
         for t in nm.nodes:
             ops.node(t, *self._coord(t))
@@ -321,7 +322,7 @@ class GMNIAModel:
                 axis, yp = self.local_axes(self._coord(m.n1), self._coord(m.n2), self._transf_for(m))
                 g0 = new_node(xyz); ops.fix(g0, 1, 1, 1, 1, 1, 1)
                 zl(g0, n, self.TORSION_MAT, 4, orient=(axis, yp)); made["torsion"] += 1
-            if "lateral" in st["kinds"] and st["member_kind"] == "rafter":
+            if "lateral" in st["kinds"] and st["member_kind"] in ("rafter", "truss_top_chord", "truss_bottom_chord"):
                 if not masters:
                     made["missing"] += 1
                     continue
@@ -421,12 +422,16 @@ class GMNIAModel:
             props = bld.build(tag, m.section, m.kind, axis=axis, warping_length=wl)
             if bld is not self.builder:
                 self.builder.log.extend(bld.log[-1:])
-            if link:                                  # NL-10: IS 18168 11.2 shear yielding aggregated on the fibres
+            if link:                                  # NL-10 / third wave P1: the shear yielding is the mid-length spring
                 fy_mpa = fy if (self.fy_fn is not None or getattr(self, "_fibre_units", "kip-in") == "N-mm") else fy * 6.894757293168361
-                props["link"] = bld.link_aggregator(900000 + tag, tag, m.section, fy_mpa)
-                ops.beamIntegration("Lobatto", tag, 900000 + tag, self.nip)
-            else:
-                ops.beamIntegration("Lobatto", tag, tag, self.nip)
+                props["link_fy_MPa"] = fy_mpa         # (_add_link): the halves carry flexure only
+                plan = getattr(self.fy_fn, "plan", None)
+                if plan is not None:                  # review L4: V_pL on the web's IS 2062 band, as the pushover
+                    from pushover import india_materials as IM
+                    props["link_fy_web_MPa"], props["link_fy_web_note"] = IM.link_web_fy(
+                        m.section, IM.fy_for_member(m.section, "link", plan))
+                self._link_builders[tag] = bld
+            ops.beamIntegration("Lobatto", tag, tag, self.nip)
             self.secs[key] = tag
             self.sec_props[tag] = dict(label=m.section, kind=m.kind, Fy=fy, **props)
         return self.secs[key]
@@ -497,11 +502,59 @@ class GMNIAModel:
         except (TypeError, ValueError):
             return 0.0
 
+    LINK_ELE0 = 96_000_000                       # EBF link shear springs (pushover.fibre_model.LINK_ZL_BASE)
+
+    def _add_link(self, m, tr):
+        """Third wave, P1: an EBF link is two flexural fibre halves joined at mid-length by the IS 18168 11.2 shear
+        spring (pushover.fibre_model.link_spring) -- the pushover / NLRHA link model. The old single force-based element
+        with the shear aggregated on its sections accepted a false state once the link yielded under its gravity load
+        (end sections yielding in opposite directions, the link shedding its shear).
+
+        Review L8: no rigid end stubs on a link, whatever rigid_end_offset says. The stubs model the continuity of a
+        beam framing into a column (US default 0.05 L); a link frames into the beam and the braces, not a column, and
+        the HR models have no rigid end offsets at all (no -jntOffset in any gold model). The India DDM default is off
+        (WP4.9), so the stored India EBF sweeps had no link stubs either."""
+        from pushover.fibre_model import link_spring
+        p1, p2 = self._coord(m.n1), self._coord(m.n2)
+        L = math.dist(p1, p2)
+        secTag = self._section(m)
+        bld = self._link_builders.get(secTag, self.builder)
+        fy_mpa = self.sec_props[secTag].get("link_fy_MPa")
+        # the spring's "rigid" DOFs: 1000 x the half-link's own axial / flexural stiffness. The model-wide K_TRANS /
+        # K_ROT (1e9 / 1e10) are rigid in kip-in but NOT in the India N-mm model (4 E I / (e/2) of a 900 mm
+        # WPB400 link is 1e12 N-mm/rad): they made a hinge at mid-link (IN_Ex19 stem gate: link M 0.28 x HR)
+        from pushover import india_materials as IM
+        sp = IM.section_props_mm(m.section)
+        nmm = getattr(self, "_fibre_units", "kip-in") == "N-mm"
+        s2, s4 = (1.0, 1.0) if nmm else (25.4 ** 2, 25.4 ** 4)
+        I = max(float(sp.get("Ix") or 0.0), float(sp.get("Iy") or 0.0)) / s4
+        kt, kr = 1e3 * bld.E * float(sp["A"]) / s2 / (L / 2.0), 1e3 * 4.0 * bld.E * I / (L / 2.0)
+        mt_t = bld.next_mat; bld.next_mat += 1; ops.uniaxialMaterial("Elastic", mt_t, kt)
+        mt_r = bld.next_mat; bld.next_mat += 1; ops.uniaxialMaterial("Elastic", mt_r, kr)
+        zl, rec = link_spring(ops, bld, m.tag, m.n1, m.n2, p1, p2, self.VECXZ[tr], m.section, fy_mpa,
+                              RIGID_MAT_T=mt_t, RIGID_MAT_R=mt_r, ele_base=self.LINK_ELE0,
+                              fy_web_MPa=self.sec_props[secTag].get("link_fy_web_MPa"),
+                              web_note=self.sec_props[secTag].get("link_fy_web_note"))
+        etype = "dispBeamColumn" if self.fast else "forceBeamColumn"
+        extra = () if self.fast else ("-iter", 20, 1e-8)
+        halves = ((m.n1, rec["na"]), (rec["nb"], m.n2))
+        for s, (a, b) in enumerate(halves):
+            tag = SUB_ELE0 + m.tag * 100 + s
+            ops.element(etype, tag, a, b, tr, secTag, *extra)
+            self.elems.append(dict(tag=tag, mtag=m.tag, kind=m.kind, role=m.role, section=m.section, secTag=secTag,
+                                   s=s, n1=a, n2=b, L=L / 2.0, dirn=m.dirn, span=(s * L / 2.0, (s + 1) * L / 2.0), Lm=L))
+        self.sub_nodes[m.tag] = [m.n1, rec["na"], m.n2]
+        self.links[m.tag] = rec
+
     def _add_member(self, m):
         nsub = {"col": self.nsub_col, "beam": self.nsub_beam, "brace": self.nsub_brace}[m.kind]
-        if getattr(m, "role", "") == "link":
-            nsub = 1                                  # a link is one force-based element (shear is uniform along it)
         tr = self._transf_for(m)
+        if getattr(m, "role", "") == "link":
+            if m.relz or m.rely:
+                # review L7: a released link would become an ordinary member with no shear yielding or flexibility
+                raise ValueError("EBF link %d has end releases (relz %s, rely %s): the GMNIA link model (two flexural "
+                                 "halves + the mid-length shear spring) needs an unreleased link" % (m.tag, m.relz, m.rely))
+            return self._add_link(m, tr)
         p1, p2 = self._coord(m.n1), self._coord(m.n2)
         L = math.dist(p1, p2)
         bv, bmag = self._bow_vector(m)
@@ -677,6 +730,8 @@ class GMNIAModel:
                     from snl import hr_gravity as HG
                     hr = HG.ensure(self.nm.job_dir) or False
                 except Exception as ex:                       # noqa: BLE001
+                    if type(ex).__name__ == "GravityRecordFailed":   # review L10: never replaced silently
+                        raise
                     print("[gmnia] HR gravity state unavailable (%s) -- own tributary loads" % ex)
                     hr = False
                 self.nm._hr_gravity = hr

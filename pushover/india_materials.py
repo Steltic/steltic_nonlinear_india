@@ -86,6 +86,15 @@ def section_props_mm(section: str) -> dict:
     from . import sections_db as SDB
     from . import india_sections as ISEC
     bx = ISEC.get_mm(section)
+    if bx is not None and bx.get("section_type") == "double_angle":     # third wave: two IS 808 angles back to back
+        out = dict(label=bx["label"], type="DOUBLE_ANGLE", box=False, welded_i=False, double_angle=True, tube=False)
+        for k in ("A", "rx", "ry", "r_min", "d", "bf", "tf", "tw", "Zx", "Zy", "Sx", "Sy", "Ix", "Iy", "J", "Aw"):
+            out[k] = float(bx[k])
+        for k in ("component", "gap_mm", "connected_leg", "leg_connected_mm", "leg_outstanding_mm", "t_mm", "A1_mm2",
+                  "c_back_mm", "c_toe_mm"):
+            out[k] = bx[k]
+        out["source"] = bx["source"]
+        return out
     if bx is not None:                     # NL-4 / NL-33: HR built-up box or welded plate I -- exact plate values (mm)
         box = bx.get("section_type") == "box"
         out = dict(label=bx["label"], type="BOX" if box else "WELDED_I", box=box, welded_i=not box, tube=False)
@@ -117,6 +126,8 @@ def section_props_mm(section: str) -> dict:
         out["t"] = out.get("tw") or out.get("tf")
     if out["tube"] and "D" not in out:
         out["D"] = out.get("d")
+    if isinstance(p.get("r_min_mm"), float) and p["r_min_mm"] > 0:     # third wave: an angle buckles about v-v
+        out["r_min"] = float(p["r_min_mm"])
     return out
 
 
@@ -239,6 +250,32 @@ def _fy_from_grade(grade, sp) -> tuple:
     return fy, None, band, IS2062_CITE, g
 
 
+def link_web_fy(section: str, member: dict | None) -> tuple:
+    """Review L4: the fy of an EBF link's shear strength V_pL = fy A_wL / sqrt(3) (IS 18168:2023 11.2 a) is the
+    IS 2062 Table 3 band of the WEB thickness. The member fy (fy_for_member) is the band of the governing -- thickest --
+    element, a flange of a heavy section (WPB500X300X187.34: 240 MPa from the 28 mm flange, 250 MPa for the 14.5 mm
+    web). `member` is the fy_for_member record; its expected-strength factor is kept. Returns (fye for V_pL, note or
+    None); the member value when the web and the governing element share a band, or for a tube or unknown grade."""
+    m = member or {}
+    fye = m.get("fye_MPa")
+    sp = section_props_mm(section)
+    if fye is None or sp.get("tube") or not m.get("grade") or not m.get("fy_MPa"):
+        return fye, None
+    try:
+        g = normalize_grade(m["grade"])
+    except ValueError:
+        return fye, None
+    tw, t = float(sp.get("tw") or 0.0), governing_thickness_mm(sp)
+    if tw <= 0.0 or tw >= t:
+        return fye, None
+    fw, bw = fy_is2062(g, tw)
+    if abs(fw - float(m["fy_MPa"])) < 0.5:
+        return fye, None
+    return float(fye) * fw / float(m["fy_MPa"]), ("IS 2062 Table 3, %s: the web (tw %.1f mm, band %s) fy %.0f MPa; the member fy "
+                                                  "%.0f MPa is the band of its %.1f mm governing element"
+                                                  % (g, tw, bw, fw, float(m["fy_MPa"]), t))
+
+
 def fy_for_member(section: str, role: str | None = None, plan: dict | None = None) -> dict:
     """fy (nominal, MPa), expected fye = factor*fy, grade and band for one member.
 
@@ -314,7 +351,7 @@ def buckling_classes(sp: dict, hollow_forming: str = "hot_rolled") -> dict:
         c = "a" if str(hollow_forming).lower().startswith("hot") else "b"
         return {"zz": c, "yy": c, "basis": "Table 10 hollow section, %s" % hollow_forming}
     typ = str(sp.get("type") or "").upper()
-    if typ in ("ISA", "MC", "LC", "JC", "SC", "MPC", "ISLC", "ISMC") or typ.endswith("C") and typ not in ("NPB", "WPB"):
+    if typ in ("ISA", "MC", "LC", "JC", "SC", "MPC", "ISLC", "ISMC", "DOUBLE_ANGLE") or typ.endswith("C") and typ not in ("NPB", "WPB"):
         return {"zz": "c", "yy": "c", "basis": "Table 10 channel/angle"}
     h, b, tf = sp.get("d") or 0.0, sp.get("bf") or 1.0, sp.get("tf") or 0.0
     if h / b > 1.2:
@@ -362,6 +399,8 @@ def brace_strengths(section: str, L_mm: float, fye_MPa: float, K: float = 1.0, h
     cls = buckling_classes(sp, hollow_forming)
     r = min(v for v in (sp.get("rx"), sp.get("ry")) if v)
     ax = "yy" if r == sp.get("ry") else "zz"
+    if sp.get("type") in ("ISA", "DOUBLE_ANGLE") and sp.get("r_min") and sp["r_min"] < 0.99 * r:
+        r, ax = sp["r_min"], "yy"                    # third wave: an angle buckles about v-v; review L1: angles only
     KLr = K * float(L_mm) / r
     fcc = math.pi ** 2 * E_MPA / KLr ** 2
     lam = math.sqrt(fye_MPa / fcc)

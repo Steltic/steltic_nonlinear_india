@@ -93,9 +93,10 @@ class MemberRecorder:
                 continue
             s = h["spec"]
             self.braces.append(dict(tag=t, section=h["section"], dT=s.dT, dc=s.dc, z_in=h["z"], level=level_of(h["z"])))
-        # EBF links (NL-10): shear rotation = shear strain of the aggregated Vz component, against IS 18168 12.3.3.1
-        self.links = [dict(tag=t, section=r["section"], gamma_y=r["gamma_y"], nip=int(r.get("nip") or 5),
-                           level=level_of(r["z"]), Vp_kN=r["Vp_kN"])
+        # EBF links (NL-10; third wave P1): link rotation = deformation of the mid-length shear spring across the link / e,
+        # against IS 18168 12.3.3.1 (reference)
+        self.links = [dict(tag=t, spring=r.get("spring"), e=r.get("e"), section=r["section"], gamma_y=r["gamma_y"],
+                           nip=int(r.get("nip") or 5), level=level_of(r["z"]), Vp_kN=r["Vp_kN"])
                       for t, r in (stats.get("link_registry") or {}).items()] if fibre else []
 
     def sample(self) -> dict:
@@ -135,16 +136,11 @@ class MemberRecorder:
                 v = 0.0
             out_b[b["tag"]] = (v / b["dT"] if b["dT"] else 0.0, bool(v < -b["dc"]))
         out_l = {}
-        for lk in self.links:
-            g = 0.0
-            for ip in range(1, lk["nip"] + 1):
-                try:
-                    d = ops.eleResponse(lk["tag"], "section", ip, "deformation")
-                except Exception:
-                    d = None
-                if d:
-                    g = max(g, abs(d[-1]))                  # Vz is the last (aggregated) component
-            out_l[lk["tag"]] = (g, g / lk["gamma_y"] if lk["gamma_y"] else 0.0)
+        from .fibre_model import link_rotation
+        for lk in self.links:                   # review L2: the INELASTIC rotation (IS 18168 12.3.3.1); the ductility
+            g = abs(link_rotation(lk["spring"], lk["e"])) if lk.get("spring") else 0.0          # on the total
+            gt = abs(link_rotation(lk["spring"], lk["e"], inelastic=False)) if lk.get("spring") else 0.0
+            out_l[lk["tag"]] = (g, gt / lk["gamma_y"] if lk["gamma_y"] else 0.0)
         return dict(m=out_m, b=out_b, l=out_l)
 
     @staticmethod

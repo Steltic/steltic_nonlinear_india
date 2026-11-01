@@ -4,6 +4,7 @@ drawn in its shape at lambda_u (rigid-diaphragm masters), members coloured by th
 peak (elastic / yielded / plastic hinge) and braces flagged when buckled. Part of the Steltic viewer bundle (same core,
 palette and controls as the Pushover and NLRHA viewers)."""
 from __future__ import annotations
+from snl import public_text as _PT
 import csv, os
 from . import viewer_core as VC
 
@@ -103,7 +104,7 @@ let playing=false, acc=0; function onSpace(){ playing=!playing; }
 function onTick(dt){ if(!playing) return; acc+=dt; if(acc>0.12){ acc=0; step++; if(step>=C().frames.length){ step=0; playing=false; } update(); } }
 function memberInfo(e){
   const run = C(); const f = F(); const m = f.mem[e.tag]; const r = m?m[0]:0; const b = run.snapshot.braces[e.tag]; const st = fibState(e.tag, f);
-  const lines = [['Length', `${e.L?e.L.toFixed(0):'—'} ${U.len}`], ['Level', e._lvl], ['Role', D.roles[e.tag]||'—'], [`ε / εy at λ = ${f.lam.toFixed(3)}`, `${r.toFixed(2)} · ${FIB_LABEL[st]}`]];
+  const lines = [['Length', `${e.L?e.L.toFixed(0):'—'} ${U.len}`], ['Level', e._lvl], ['Role', (D.role_labels||{})[D.roles[e.tag]]||D.roles[e.tag]||'—'], [`ε / εy at λ = ${f.lam.toFixed(3)}`, `${r.toFixed(2)} · ${FIB_LABEL[st]}`]];
   if (m && r>=1) lines.push(['Worst section along member', `${(100*m[1]).toFixed(0)} % from end 1`]);
   const rp = run.snapshot.member_ratio[e.tag]; if (rp!==undefined) lines.push(['ε / εy at λu', rp.toFixed(2)]);
   if (b) lines.push(['Brace N at λu (+tens)', `${(b.N*U.fscale).toFixed(1)} ${U.force}`], ['Mid-length offset at λu', `${b.offset.toFixed(U.len==='mm'?1:3)} ${U.len} (L/${b.offset>0?(e.L/b.offset).toFixed(0):'∞'})`]);
@@ -125,7 +126,7 @@ function init(){
   setLegend(); show();
 }
 function setLegend(){ if (colorMode==='state') legend([[FIB.elastic,FIB_LABEL.elastic],[FIB.partial,FIB_LABEL.partial],[FIB.yield,FIB_LABEL.yield],[FIB.hinge,FIB_LABEL.hinge],[FIB.buckled,FIB_LABEL.buckled]], 'Fibre state at the shown λ · GMNIA (residual stresses, imperfections, P-Δ/P-δ)', '<span style="color:#d13b3b;font-size:14px;vertical-align:-1px">●</span> solid dot = section at or beyond εy, placed at the worst integration segment of the member (yellow yielded · red plastic hinge ε ≥ 3 εy · purple buckled brace); red for all with the Hinge dots selector');
-  else if (colorMode==='role') legend(Object.entries(ROLE_COL).map(([k,v])=>[v,k.replace('_',' ')]), 'Member role');
+  else if (colorMode==='role') legend(Object.entries(ROLE_COL).map(([k,v])=>[v,(D.role_labels||{})[k]||k.replace(/_/g,' ')]), 'Member role');
   else if (colorMode==='type') legend([[TYPE_COL.column,'column'],[TYPE_COL.beam,'beam'],[TYPE_COL.brace,'brace']], 'Member type'); else legend(SECS.map(s=>[SEC_COL[s],s]), 'Section'); }
 """
 
@@ -193,8 +194,9 @@ def write(out_dir, nm, gate, runs):
                       d_at_max=res.get("d_at_max", 0.0), hist=hist, peak_index=peak_index, frames=frames, peak_frame=peak_frame, control_label=ctrl_label, lateral=list(lat) if lat else None,
                       phi_s=phi.get("phi_s"), phi_cls=phi.get("cls"), provisional=bool(phi.get("provisional")), phi_status=phi.get("status"), beta_T=phi.get("beta_T"), phi_lam=chk[0] if chk else None, check_ok=(chk[1] == "PASS" if chk and chk[1] in ("PASS", "FAIL") else None),
                       check_info=bool(chk and chk[1] == "INFO"),
-                      cls=r["cls"]["cls"], mechanism=r["cls"]["mechanism"], steps=res["steps"], seconds=res["seconds"], plateau=bool(res.get("plateau")),
-                      snapshot=dict(drifts=snap.get("drifts"), disp=snap["disp"], member_ratio=snap.get("member_ratio", {}), braces=snap.get("braces", {})), state=r["state"]))
+                      cls=r["cls"]["cls"], mechanism=_PT.words(r["cls"]["mechanism"]), steps=res["steps"], seconds=res["seconds"], plateau=bool(res.get("plateau")),
+                      snapshot=dict(drifts=snap.get("drifts"), disp=snap["disp"], member_ratio=snap.get("member_ratio", {}), braces=snap.get("braces", {})),
+                      state={k: dict(v, role=_PT.role_words(v.get("role"))) for k, v in (r["state"] or {}).items()}))
     if not R:
         raise RuntimeError("no runs with viewer snapshots (re-run with this version of steltic_ddm)")
     # default: the governing (lowest phi_s*lambda_u, else lowest lambda_u) combination
@@ -202,10 +204,11 @@ def write(out_dir, nm, gate, runs):
         return (x["phi_lam"] if x["phi_lam"] is not None else 9.0, x["lambda_u"] if x["lambda_u"] is not None else 9e9)
     default_index = min(range(len(R)), key=lambda i: key(R[i]))
     roles = {m.tag: m.role for m in nm.members}
+    role_labels = {r_: _PT.role_words(r_) for r_ in set(roles.values())}      # third wave, P10: roles in words
     gate_small = dict(ok=gate.get("ok"), tol=gate.get("tol"), rows=[dict(quantity=g["quantity"], steltic=g["steltic"], gmnia=g["gmnia"], ratio=g["ratio"], ok=g["ok"]) for g in gate.get("rows", [])])
     nmm = _india_nmm(nm)
     units = (dict(len="mm", force="kN", fscale=1e-3, moment="kN·m") if nmm else dict(len="in", force="kip", fscale=1.0, moment="k-ft"))
-    extra = dict(ddm=dict(runs=R, default_index=default_index, roles=roles, gate=gate_small, schedule=_schedule(nm.job_dir),
+    extra = dict(ddm=dict(runs=R, default_index=default_index, roles=roles, role_labels=role_labels, gate=gate_small, schedule=_schedule(nm.job_dir),
                           units=units, loads_label=("IS 800 Table 4 factored loads" if nmm else "ASCE 7 factored loads")))
     worst = R[default_index]
     seis = (nm.cfg or {}).get("seis", {})

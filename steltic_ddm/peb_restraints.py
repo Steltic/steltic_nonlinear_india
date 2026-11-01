@@ -126,6 +126,83 @@ def plan(nm, cfg=None):
     return _plan(nm, cfg, chains, pm, fb, both=bool(cfg.get("column_lateral_support_both_flanges")))
 
 
+TRUSS_CHORD_ROLES = ("truss_top_chord", "truss_bottom_chord")
+
+
+def _bottom_chord_ties(cfg, pl, lo, hi):
+    """Plan positions of the bottom-chord ties on a roof plane, and where they were read: the plane's (or
+    cfg['truss_restraints']) `bottom_chord_ties_mm` (plan distances from the first eave), else the bottom chord's
+    out-of-plane buckling length the design used (cfg['member_overrides'] 'truss_bottom_chord[:<section>]' Ly_mm):
+    ties every Ly from the eave, inside the span. ([], None) when neither is declared."""
+    for src, d in (("roof plane bottom_chord_ties_mm", pl), ("truss_restraints bottom_chord_ties_mm",
+                                                              (cfg or {}).get("truss_restraints") or {})):
+        v = d.get("bottom_chord_ties_mm")
+        if v:
+            return sorted(lo + float(x) for x in v if lo + END_TOL_MM < lo + float(x) < hi - END_TOL_MM), src
+    for k, o in sorted(((cfg or {}).get("member_overrides") or {}).items()):
+        if str(k).split(":")[0] == "truss_bottom_chord" and isinstance(o, dict) and o.get("Ly_mm"):
+            ly = float(o["Ly_mm"])
+            n = int((hi - lo) / ly + 1e-6)
+            return [lo + i * ly for i in range(1, n + 1) if lo + i * ly < hi - END_TOL_MM], \
+                "every Ly = %g mm (member_overrides %s)" % (ly, k)
+    return [], None
+
+
+def _truss_chords(nm, cfg, out, hr_ties, add):
+    """Third wave (IN_Ex21): the out-of-plane restraints of the chords of roof trusses (members with the roles
+    truss_top_chord / truss_bottom_chord). The HR model ties only the eaves; the design reads the chords' out-of-plane
+    buckling length between the restraints (IS 800 7.5.3 / 7.2.4: purlins at the top-chord panel points, the
+    bottom-chord ties). A chord is a compact angle member, held whole by a purlin cleat or a tie (no one-flange case,
+    no lateral-torsional buckling), so each station is a lateral restraint only, tied in the horizontal direction
+    normal to the truss to the roof diaphragm as a rafter station (model_gmnia): the braced roof and the
+    end-bay bottom-chord bracing the ties are anchored to. Top chord: every chord node at a panel point when the
+    plane declares `purlins_at_nodes`, else `purlins_mm` (plan distances from each eave). Bottom chord:
+    _bottom_chord_ties. Nodes the HR model already ties are left out.
+
+    Review L13 -- assumptions, stated: the restraints are RIGID lateral ties to the roof diaphragm; a flexible tie or
+    end-bay bracing system would restrain less, which matters under uplift (bottom chord in compression). Without a
+    declared list, the bottom-chord ties are taken every Ly (the design's out-of-plane length) from the first eave only;
+    the published list (MSME's BC_TIES as `bottom_chord_ties_mm`) is preferred when it is there."""
+    chords = [m for m in nm.members if getattr(m, "role", None) in TRUSS_CHORD_ROLES]
+    if not chords:
+        return
+    nodes = nm.nodes
+    planes = (cfg or {}).get("roof_planes") or []
+    out.setdefault("truss_basis", [])
+    for ip, pl in enumerate(planes):
+        ax = 1 if str(pl.get("axis", "Y")).upper() == "Y" else 0
+        lo, hi = sorted(float(v) for v in pl.get("eave_coords_mm") or (0.0, 0.0))
+        d = 1 if ax == 1 else 2
+        lines = {}
+        for m in chords:
+            a1, a2 = nodes[m.n1][ax], nodes[m.n2][ax]
+            if lo - END_TOL_MM <= min(a1, a2) and max(a1, a2) <= hi + END_TOL_MM:
+                lines.setdefault((m.role, round(nodes[m.n1][1 - ax], 0)), []).append(m)
+        ties, tsrc = _bottom_chord_ties(cfg, pl, lo, hi)
+        purl = sorted({round(a, 3) for v in pl.get("purlins_mm") or [] for a in (lo + float(v), hi - float(v))
+                       if lo - 1 <= a <= hi + 1})
+        out["truss_basis"].append(dict(plane=ip, top_chord=("every panel point (purlins_at_nodes)"
+                                                            if pl.get("purlins_at_nodes") else
+                                                            ("purlins_mm" if purl else "none declared")),
+                                       bottom_chord=tsrc or "none declared", bottom_chord_ties_mm=[round(a, 1) for a in ties]))
+        for (role, line), ms in sorted(lines.items()):
+            cid = "%s@%g" % (role, line)
+            if role == "truss_top_chord":
+                if pl.get("purlins_at_nodes"):
+                    for n in sorted({int(x) for m in ms for x in (m.n1, m.n2)}, key=lambda q: nodes[q][ax]):
+                        if (n, d) not in hr_ties:
+                            add(cid, role, nodes[n][ax], {"lateral"}, d, ("node", n), next(m for m in ms if n in (m.n1, m.n2)))
+                    continue
+                pos = purl
+            else:
+                pos = ties
+            for a in pos:
+                target, m = _station_on_chain(ms, nodes, lambda p: p[ax], a)
+                if target is None or (target[0] == "node" and (target[1], d) in hr_ties):
+                    continue
+                add(cid, role, a, {"lateral"}, d, target, m)
+
+
 def _plan(nm, cfg, chains, pm, fb, both, col_tops=None, rafter_abs=None):
     nodes = nm.nodes
     by_tag = {int(m.tag): m for m in nm.members}
@@ -267,6 +344,7 @@ def _plan(nm, cfg, chains, pm, fb, both, col_tops=None, rafter_abs=None):
                 if add(cid, "canopy", a, {"torsion"}, None, target, m):
                     tors.append(a)
             _warping_intervals(ms, nodes, pos, 0.0, Lc, tors, out["warping_intervals"])
+    _truss_chords(nm, cfg, out, hr_ties, add)
     # several chains can name the same HR node (an apex shared by both slopes): keep one station per node and direction
     seen, keep = {}, []
     for i, s in enumerate(out["stations"]):
@@ -293,6 +371,8 @@ def _plan(nm, cfg, chains, pm, fb, both, col_tops=None, rafter_abs=None):
     c["split_elements"] = len(out["member_fracs"])
     c["not_modelled_one_flange"] = one_flange[0]
     c["canopy_torsion"] = sum(1 for s in keep if s["member_kind"] == "canopy" and "torsion" in s["kinds"])
+    c["truss_top_chord_lateral"] = sum(1 for s in keep if s["member_kind"] == "truss_top_chord")
+    c["truss_bottom_chord_lateral"] = sum(1 for s in keep if s["member_kind"] == "truss_bottom_chord")
     wl = [iv[2] for ivs in out["warping_intervals"].values() for iv in ivs]
     c["warping_length_mm"] = [min(wl), max(wl)] if wl else None
     return out

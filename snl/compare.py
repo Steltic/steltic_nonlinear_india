@@ -328,26 +328,73 @@ def build_india(job, out_name="four_analyses.html"):
                 rows.append(("Pushover %s %s" % (d, lv), "Sa(Te=%.3f s) = %.3f g (elastic, no R)" % (n.get("Te") or 0, n.get("Sa") or 0),
                              resp))
         caps = [(d, dd.get("capacity") or {}) for d, dd in po["directions"].items()]
-        if any(c.get("Vmax_kN") is not None for _, c in caps):
-            lb = [d for d, dd in po["directions"].items() if vmax_lower_bound(dd)]
-            ge = lambda d: "≥ " if d in lb else ""             # check fixes, finding 2: a lower bound reads as one
-            vw = " / ".join("%s%.3f" % (ge(d), c["Vmax_over_W"]) for d, c in caps if c.get("Vmax_over_W") is not None)
-            vb = " / ".join("%s%.1f" % (ge(d), c["Vmax_over_VB"]) for d, c in caps if c.get("Vmax_over_VB") is not None)
-            rows.append(("Pushover strength Vmax (%s)" % " / ".join(d for d, _ in caps),
-                         " / ".join("%s%.0f kN" % (ge(d), c["Vmax_kN"]) for d, c in caps if c.get("Vmax_kN") is not None),
-                         ("Vmax/W%s %s (strength coefficient)" % (":" if lb else " =", vw))
-                         + ("" if shed["shed"] else "; Vmax/VB%s %s" % (":" if lb else " =", vb))
-                         + ("; ≥ marks a lower bound (%s: the curve ended in a numerical stop before it lost strength, so the "
-                            "peak is not established)" % ", ".join(lb) if lb else "")
-                         + "".join("; %s: UNDER REVIEW (see the note below)" % d for d, _ in caps if d in review)))
+        from pushover import vmax_policy as _VP              # third wave, P10 / review M1: the headline up to δt,MCE
+        hv = {}
+        for d, dd in po["directions"].items():
+            h = _VP.vmax_to_target(dd)
+            if h is None and (dd.get("capacity") or {}).get("Vmax_kN") is not None:   # no IS-MCE target: whole curve
+                c = dd["capacity"]
+                h = dict(V_kN=c["Vmax_kN"], V_over_VB=c.get("Vmax_over_VB"), V_over_W=c.get("Vmax_over_W"),
+                         lower_bound=vmax_lower_bound(dd), kind="peak", at_target=False, is_strength=True,
+                         label="Vmax (whole curve)", qualifier="no IS-MCE target recorded", peak_analysed=None,
+                         target_mm=None)
+            if h is not None:
+                hv[d] = h
+                if d in p:
+                    p[d]["headline_to_target"] = {k: v for k, v in h.items() if k != "basis"}
+        if hv:
+            lb = [d for d, h in hv.items() if h.get("lower_bound")]
+            ge = lambda d: "≥ " if d in lb else ""             # "≥" only where the curve ended before δt still rising
+
+            def ratios(base, key, fmt):
+                vals = [(d, _VP.ratio_label(h, base), ge(d) + fmt % h[key]) for d, h in hv.items() if h.get(key) is not None]
+                if not vals:
+                    return None
+                if len({lab for _, lab, _ in vals}) == 1:
+                    return "%s = %s" % (vals[0][1], " / ".join(v for _, _, v in vals))
+                return "; ".join("%s (%s) = %s" % (lab, d, v) for d, lab, v in vals)
+            vw, vb = ratios("W", "V_over_W", "%.3f"), ratios("VB", "V_over_VB", "%.1f")
+            capped = any(h.get("target_mm") is not None for h in hv.values())
+            all_peak = all(h.get("kind") == "peak" for h in hv.values())
+            label = ("Pushover strength Vmax%s" % (" up to the IS-MCE target" if capped else "")) if all_peak else \
+                "Pushover headline up to the IS-MCE target"
+            if all_peak:
+                kinds = ""
+            elif len({h["kind"] for h in hv.values()}) == 1:
+                h0 = next(iter(hv.values()))
+                kinds = "%s, %s (%s)" % (h0["label"], " / ".join(hv), h0["qualifier"])
+            else:
+                kinds = "; ".join("%s: %s (%s)" % (d, h["label"], h["qualifier"]) for d, h in hv.items())
+            strength_w = all(h.get("is_strength") for h in hv.values())
+            rows.append(("%s (%s)" % (label, " / ".join(hv)),
+                         " / ".join("%s%.0f kN" % (ge(d), h["V_kN"]) for d, h in hv.items()),
+                         "; ".join(x for x in (kinds, (("%s (strength coefficient)" if strength_w else "%s") % vw) if vw else None,
+                                               None if shed["shed"] else vb) if x)
+                         + ("; ≥ marks a lower bound (%s: the curve ended in a numerical stop before the IS-MCE target "
+                            "while still rising, so the strength is at least this)" % ", ".join(lb) if lb else "")
+                         + "".join("; %s: UNDER REVIEW (see the note below)" % d for d in hv if d in review)))
+            if capped:
+                notes.append(_VP.BASIS)
+                for d, h in hv.items():
+                    pt = _VP.peak_text(d, h) if (d not in review and h.get("peak_analysed")) else None
+                    if pt:
+                        notes.append("Pushover " + pt + ".")
             if shed["shed"]:
                 notes.append("%s: VB, the R-reduced IS 1893 design base shear, is small for a light shed (%s), so V/VB is "
-                             "large (Vmax/VB = %s) and is not a measure of the structure's reserve. V/W (W = %s kN, the IS 1893 "
+                             "large (%s) and is not a measure of the structure's reserve. V/W (W = %s kN, the IS 1893 "
                              "seismic weight) is shown instead." % (
                                  shed["basis"], "VB = %s kN" % " / ".join("%.1f" % v for v in (db.get("VB_x_kN"), db.get("VB_y_kN"))
                                                                          if v is not None) if (db.get("VB_x_kN") or db.get("VB_y_kN"))
-                                 else ("VB = %.1f kN" % db["VB_kN"] if db.get("VB_kN") else "VB not recorded"), vb,
+                                 else ("VB = %.1f kN" % db["VB_kN"] if db.get("VB_kN") else "VB not recorded"), vb or "—",
                                  "{:,.0f}".format(W_sh) if W_sh else "?"))
+        for d, dd in po["directions"].items():                # third wave, P10 / review M2: Te flags
+            tf = _VP.te_flags(dd)
+            tn = _VP.te_note(d, tf)
+            if tn:
+                notes.append(tn)
+                if d in p:
+                    p[d]["te_below_t1"] = any(f[3] == "below" for f in tf)
+                    p[d]["te_far_above_t1"] = any(f[3] == "far_above" for f in tf)
         for d in sorted(review):
             notes.append(_RV.note_text(job, d))
         summ["pushover"] = p
@@ -469,7 +516,8 @@ def build_india(job, out_name="four_analyses.html"):
         H.append("<h2 id='record-set'>Ground-motion record set (NLRHA)</h2><ul>%s</ul>" % "".join(
             "<li>%s</li>" % html.escape(x) for x in notes_rs))
     # check fixes, finding 5: the package fingerprints stay in snl_summary.json (the gate's freshness check), not on the page
-    open(os.path.join(job, out_name), "w", encoding="utf-8").write("\n".join(H))
+    from .public_text import words_html                # third wave (P10): no role keys or solver tokens on the page
+    open(os.path.join(job, out_name), "w", encoding="utf-8").write(words_html("\n".join(H)))
     json.dump(summ, open(os.path.join(job, "snl_summary.json"), "w"), indent=1, default=str)
     return os.path.join(job, out_name)
 

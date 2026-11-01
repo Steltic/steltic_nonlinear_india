@@ -34,6 +34,23 @@ STATES = {"D": dict(fD=1.0), "L": dict(fL=1.0), "Lr": dict(fLr=1.0), "S": dict(f
           # reduces by IS 875-2 3.2.1 when cfg['column_imposed_load_reduction'] is set (static_model N_LL)
           "Lfloor": dict(fL=1.0, _cfg=dict(partition_load_kNm2=0.0, clad=0.0))}
 SCHEMA = 3
+# third wave: the engine files whose code makes the gravity states; a record taken with another engine is re-recorded
+ENGINE_FILES = ("static_model.py", "engine3d.py", "india_loads.py", "india_combos.py", "roof_geometry.py")
+DP_NOTE = ("Dp = dead load without the roof collateral and rooftop PV (steltic_india first wave item 5): IS 800 Table 4 "
+           "0.9 DL rows leave them off (dead load that may be absent, engine3d.nonpermanent_factor); used for every "
+           "combination with a dead-load factor below 1.0")
+
+
+def engine_fingerprint(eng_dir) -> str | None:
+    """sha256 (16 hex) of the HR engine files that make the gravity states, or None without an engine folder."""
+    if not eng_dir or not os.path.isdir(str(eng_dir)):
+        return None
+    h = hashlib.sha256()
+    for name in ENGINE_FILES:
+        p = os.path.join(str(eng_dir), name)
+        if os.path.exists(p):
+            h.update(name.encode()); h.update(open(p, "rb").read())
+    return h.hexdigest()[:16]
 
 
 def pattern_key(prefix, pattern) -> str:
@@ -99,24 +116,38 @@ def load(job) -> dict | None:
     return d
 
 
+class GravityRecordFailed(RuntimeError):
+    """Review L10: the HR engine is there but recording its gravity states failed. Never silently replaced by an
+    earlier engine's record or by the NL's own idealisation: the caller stops with this message."""
+
+
 def ensure(job, engine_dir=None, timeout=900) -> dict | None:
     """The recorded states for this job (recording them in a child process when absent or stale). None when the HR
     engine is not available -- the caller then falls back to its own idealisation and says so."""
     job = os.path.abspath(str(job))
     d = load(job)
-    if d is not None:
-        return d
     eng = engine_dir or os.environ.get("STELTIC_ENGINE_DIR")
+    fp = engine_fingerprint(eng)
+    if d is not None and (fp is None or d.get("engine_sha") == fp):
+        return d                                        # same engine (or none to compare with): the record stands
     if not eng or not os.path.exists(os.path.join(eng, "static_model.py")) or not os.path.exists(os.path.join(job, "cfg.py")):
-        return None
+        return d
+    if d is not None:
+        print("[hr_gravity] the record was taken with another HR engine (%s); re-recording with %s"
+              % (d.get("engine_sha") or "before the third wave", eng))
     env = dict(os.environ, STELTIC_ENGINE_DIR=eng, MPLBACKEND="Agg", PYTHONDONTWRITEBYTECODE="1")
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
     r = subprocess.run([sys.executable, "-m", "snl.hr_gravity", job], capture_output=True, text=True, env=env,
                        timeout=timeout, cwd=root)
     if r.returncode != 0:
-        print("[hr_gravity] recording failed (rc %s): %s" % (r.returncode, (r.stderr or r.stdout)[-800:]))
-        return None
+        # review L10: fail loudly -- an earlier engine's record would present results "against" this engine on another
+        # engine's gravity, and the NL idealisation is not the HR gravity
+        raise GravityRecordFailed(
+            "recording the HR gravity states with %s failed (rc %s)%s: %s" % (
+                eng, r.returncode, (" -- the record on file (engine %s) is not used" % (d.get("engine_sha") or "before the "
+                                                                                       "third wave")) if d is not None else "",
+                (r.stderr or r.stdout or "")[-800:].strip()))
     return load(job)
 
 
@@ -172,6 +203,14 @@ def record(job) -> dict:
         ops.eleLoad, ops.load = rec_ele, rec_load
         out = {}
         states = dict(STATES)
+        dn = 0.0
+        if hasattr(E, "roof_nonpermanent_kNm2"):          # HR main (first wave item 5): collateral + PV on the roof
+            try:
+                dn = float(E.roof_nonpermanent_kNm2(cfg) or 0.0)
+            except Exception:                             # noqa: BLE001
+                dn = 0.0
+        if dn > 0.0:
+            states["Dp"] = dict(fD=1.0, _cfg=dict(D_roof_collateral=0.0, D_roof_pv=0.0))
         snow_p, crane_p = _patterns(cfg)
         for sp in snow_p:
             states[pattern_key("S", sp)] = dict(fS=1.0, snow_pattern=sp)
@@ -200,7 +239,8 @@ def record(job) -> dict:
             k_top = max(int(c["n1"]), int(c["n2"])) // 100000
             llr[str(c["tag"])] = SM.imposed_load_reduction_321(NF - k_top + 1)
     return dict(schema=SCHEMA, job=os.path.basename(job), units="N, mm (w in N/mm, moments N-mm)",
-                column_imposed_load_reduction=llr,
+                column_imposed_load_reduction=llr, engine_sha=engine_fingerprint(eng_dir),
+                roof_nonpermanent_kNm2=dn, dp_note=(DP_NOTE if dn > 0.0 else None),
                 source="steltic_india static_model.build_static(nseg=10) + apply_gravity_state (the HR design's gravity)",
                 engine=os.environ.get("STELTIC_ENGINE_DIR"), inputs_sha256=_inputs_sha(job), states=out,
                 note=("EV = IS 1893 7.3 seismic weight as a load (dead + Table 10 imposed share, roof imposed excluded); "
@@ -223,8 +263,14 @@ def main(argv=None):
 def combine(d: dict, factors: dict) -> dict:
     """{'ele': [[parent, x0, x1, type, vals]], 'node': {node: [6]}} for sum(f x state). factors keys D/L/Lr/S/EV and
     the patterned states S@.. / C@.. (NL-15). A non-zero factor on a state that was not recorded raises KeyError:
-    silently dropping it (the pre-NL-15 behaviour for partial snow and crane loads) under-loads the model."""
+    silently dropping it (the pre-NL-15 behaviour for partial snow and crane loads) under-loads the model.
+    Third wave: when the record has a 'Dp' state (roof collateral / PV declared), a dead-load factor below 1.0 applies to
+    Dp instead of D -- the HR engine leaves collateral and PV off the IS 800 Table 4 0.9 DL rows (DP_NOTE)."""
     ele, node = [], {}
+    factors = dict(factors)
+    fD = factors.get("D") or 0.0
+    if fD and fD < 1.0 - 1e-9 and "Dp" in (d.get("states") or {}):
+        factors["Dp"] = factors.pop("D")
     for name, f in factors.items():
         if not f:
             continue

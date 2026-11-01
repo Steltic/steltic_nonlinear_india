@@ -16,6 +16,7 @@ flags (compression + lateral mid-point offset beyond L/200), storey drifts.
 """
 import math, time
 import openseespy.opensees as ops
+from snl import checkpoint as _CK
 from .loads import lateral_direction
 
 
@@ -446,10 +447,10 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
                                 drifts=(storey_drifts(model, ldir) if ldir else None), step=step, hist_i=len(hist) - 1,
                                 disp={t: ops.nodeDisp(t) for t in _track_nodes(model)})
                 log.append("plateau: tangent stiffness %.1f%% of elastic at step %d -- lambda_u taken at the plateau" % (100 * k_t / k_el, step)); term = "plateau"; break
-        if time_limit and time.time() - t0 > time_limit:
+        if time_limit and _CK.clock(t0) > time_limit:          # third wave: the journal's clock on a resume
             log.append("time limit reached at step %d" % step); term = "time_limit"; break
         if verbose and step % 10 == 0:
-            print("   %-38s step %4d  lambda %.3f  d %.3f  (%.0f s)" % (label[:38], step, lam, d, time.time() - t0), flush=True)
+            print("   %-38s step %4d  lambda %.3f  d %.3f  (%.0f s)" % (label[:38], step, lam, d, _CK.clock(t0)), flush=True)
     # make sure lambda_u itself is a viewer frame: exact masters (recorded every step); member states from the closest
     # earlier record (a frame or the peak snapshot, at most frame_every-1 steps before the peak)
     if hi_at_max and all(f["step"] != hi_at_max for f in frames) and hi_at_max < len(hist):
@@ -488,7 +489,7 @@ def sweep(model, combo, pres, dlam=0.02, max_steps=600, post_peak=0.85, disp_cap
                 step_at_max=step_at_max, d_at_max=d_at_max,
                 first_yield=first_yield, lam_at_1p25d=lam_125, hist=hist, control=(cnode, cdof),
                 lateral=(ldir, lsgn), gravity_kip=W, steps=len(hist), fails=fails, log=log, plateau=plateau,
-                snapshot=snap, frames=frames, seconds=round(time.time() - t0, 1))
+                snapshot=snap, frames=frames, seconds=round(_CK.clock(t0), 1))
 
 
 def classify(res, model):
