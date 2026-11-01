@@ -69,7 +69,29 @@ drift, where L/e × drift gives 0.02–0.10 rad. The Y pushovers lost 12–52 % 
 - the gravity chain of the halves;
 - the GMNIA links (two halves plus one spring, V_pL), on the IN_Ex15 gold when present.
 
-**Re-runs (proof, sandbox copies):** RESULTS_P1
+**Re-runs (proof, sandbox copies).**
+Main push only (`--tail none`), Y direction, the frozen HR engine e340df8 as in October, so that only the link
+model differs. The October package is the reference; `scratch/compare_push.py` reads both.
+
+| IN_Ex15 Y (L/e = 10) | October (one-element link) | Link fix |
+|---|---|---|
+| Largest one-step loss of base shear | 16 % (126 → 137 mm) | none |
+| Link rotation at the IS-DBE target, against (L/e) × drift | 0.398 rad against 0.023 | 0.007 against 0.015 |
+| Link rotation at the IS-MCE target, against (L/e) × drift | 0.434 rad against 0.048 | 0.044 against 0.053 |
+| Te / T1 | — | 0.871 / 0.871 s |
+| V / VB at the IS-DBE / IS-MCE target | — | 2.33 / 2.58 |
+| Vmax up to the IS-MCE target | 8,773 kN | 11,333 kN (at 93 mm) |
+| End of the main push | 17,404 kN peak at 1,229 mm | 19,170 kN peak at 999 mm; numerical stop at 1,014 mm |
+
+- The run took 3,860 s.
+- The rotations are now of the order of (L/e) × drift. Near the DBE target they are below it, because part of the
+  drift there is still elastic; (L/e) × drift is the kinematics of the plastic mechanism.
+
+{{STEM_EX19}}
+
+- The IN_Ex19 stem pushover with the default tail (fine steps, then arc length) grew to 5 GB in the arc-length tail
+  and was stopped by the box's memory limit (rc 137) after its main push had finished cleanly. The re-run of the stem
+  needs about 6 GB free, or the tail run alone. The proofs above use the main push only.
 
 ## Engine version (P2): NL against current HR main (`snl/hr_gravity.py`)
 
@@ -203,6 +225,55 @@ cannot be saved half-way, but they are deterministic, and a failed `analyze` rev
 
 **IN_Ex19 earthquake combination (1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z).** RESULTS_EX19
 
+## IN_Ex21 angle-truss shed support (stage 2; MSME CHANGES_2026-10-msme-shed.md)
+
+The new gold IN_Ex21_MSME_angle_truss_shed_Hosur (knee-braced Pratt angle trusses on MB columns, Zone II) builds and
+runs gravity in all three analyses. Checked on the MSME gold with the MSME engine (`STELTIC_EX21_JOB`,
+`STELTIC_ENGINE_DIR`; the tests skip when the job is absent):
+- 36 columns, 180 beam elements and 208 braces;
+- 165 nonlinear axial members: 73 verticals, 70 diagonals, 14 knee braces and 8 wall braces;
+- the gravity analysis converges in 5 s;
+- the DDM gravity-transfer gate passes (48 comparisons, none outside ±5 %, worst ratio 1.027).
+
+- **Member kind `truss`** (diagonals, verticals and knee braces) is a nonlinear axial member exactly as `brace`: the
+  brace backbone in the pushover / NLRHA (`fibre_model.AXIAL_KINDS`, `nonlinear_model`). So the knee braces are the
+  yielding / buckling members across the span, as the design intends; the chords stay fibre beam-columns.
+- **Double angles** (TABLE D custom sections, `2ISA…`, cfg `custom_sections` type `double_angle`):
+  - `india_sections.double_angle_props_mm` uses the steltic_india formulae: A, both I, the plastic and elastic
+    moduli, J = 2 J1, r_min;
+  - 2ISA70X70X6 on an 8 mm gusset gives A 1,630 mm², I 760,000 / 1,667,845 mm⁴, the HR element properties;
+  - an undeclared `2ISA…` label is read with no gap and flagged VERIFY;
+  - IS 800 buckling class c; brace strengths with r_min;
+  - fibre sections of leg strips scaled to the catalogue area (`FiberSectionBuilder.double_angle`). The outstanding
+    legs are put at the top: an assumption, since the HR record does not fix up or down, and the elastic properties
+    do not depend on it.
+- **Single angles in the DDM** (`FiberSectionBuilder.single_angle`):
+  - the GMNIA models braces as fibre members and had no angle section;
+  - the legs run from the heel, so the inclined principal axes, and buckling about v-v, follow from the fibre
+    positions (v-v within 6 % of A r_min²);
+  - torsional-flexural buckling of an angle (shear centre at the heel, no warping DOF) is not represented. The
+    design's IS 800 7.5.1.2 equivalent slenderness covers it.
+- **Truss chord restraints in the DDM** (`peb_restraints._truss_chords`):
+  - the HR model ties only the eaves, so a GMNIA of the bare trusses would buckle the 18 m chords out of plane
+    between the eaves;
+  - the chords are now tied laterally (the horizontal direction normal to the truss) to the roof diaphragm, as the
+    NL-33 rafter purlins are. A compact angle chord is held whole by a purlin cleat or a tie: lateral restraint only,
+    no torsional spring;
+  - top chord: every panel point when the roof plane declares `purlins_at_nodes`. That is 11 per inner truss; the
+    HR model already ties the two gable trusses at every node;
+  - bottom chord: a declared `bottom_chord_ties_mm` (on the roof plane or in cfg `truss_restraints`), else every Ly of
+    the design's `member_overrides` for the bottom chord. The IN_Ex21 cfg publishes only Ly = 4,500 mm, giving ties at
+    4.5 / 9.0 / 13.5 m. These are the design's stations, but MSME may prefer to publish the list
+    (`ROOF_PLANE["bottom_chord_ties_mm"] = BC_TIES`).
+- The column girts / fly braces (3.0 / 4.75 m) were already read by the NL-33 plan: 36 stations. Packages without
+  truss chord roles are unchanged.
+- Not modelled: the knee-brace connection check (connections designed for 1.2 × the brace strength) is a design check,
+  not an analysis item.
+- The pushover / NLRHA chords use Linear transformations with no imperfections, so they need no chord restraints.
+- **Queue:** `scripts/nl_orchestrate.py plan --queue Q --jobs <copy of the IN_Ex21 job> --engine <HR steel_engine with
+  the MSME custom sections>` plans gravity, pushover, NLRHA, DDM and report (dry run checked). The engine must carry
+  the MSME changes: `register_truss_member` and the double-angle custom sections.
+
 ## Tests
 
 - New file: `tests/test_third_wave_2026_10.py`. It covers:
@@ -218,5 +289,7 @@ cannot be saved half-way, but they are deterministic, and a failed `analyze` rev
   - angle braces;
   - the journal (fake OpenSees: failed calls skipped, divergence refused);
   - a real chunked EBF pushover repeating the uninterrupted one bit for bit;
-  - the orchestrator.
+  - the orchestrator;
+  - IN_Ex21: double-angle registry values, fibre stiffness in and out of plane, the single-angle v-v stiffness,
+    `truss` members, bottom-chord tie reading, and the gold package build, restraint plan and DDM gate (skip-able).
 - Full suite: RESULTS_SUITE

@@ -163,6 +163,9 @@ def next_steps(args, runner=None):
         d = d_dry if (args.dry_run and d_dry is not None) else load(args.queue)
         ready = [s for s in d["steps"] if _ready(d, s)]
         if not ready:
+            if args.dry_run:
+                print("dry run: %d step(s) listed in order; the queue file is unchanged" % n)
+                return 0
             left = [s["id"] for s in d["steps"] if s["state"] != "done"]
             print("nothing ready; not done: %s" % (", ".join(left) or "none -- the queue is complete"))
             return 0
@@ -203,7 +206,8 @@ def main(argv=None):
     n.add_argument("--stop-on-failure", action="store_true")
     s = sub.add_parser("status"); s.add_argument("--queue", required=True)
     a = ap.parse_args(argv)
-    return {"plan": plan, "next": next_steps, "status": status}[a.cmd](a)
+    r = {"plan": plan, "next": next_steps, "status": status}[a.cmd](a)
+    return r if isinstance(r, int) else 0          # plan / status return the queue (for callers), the CLI exits 0
 
 
 if __name__ == "__main__":
