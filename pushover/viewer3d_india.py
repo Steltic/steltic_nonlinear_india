@@ -349,7 +349,7 @@ def _lite_snapshot(keys, resp, eg=None):
         else:
             st = "yield" if g.get("yielded") else "elastic"
             info = [["Peak link shear ductility γ/γy", "%.2f" % g.get("shear_ductility_max", 0)],
-                    ["Peak link rotation γ", "%.4f rad" % g.get("gamma_max_rad", 0)],
+                    ["Peak inelastic link rotation γp (IS 18168 12.3.3.1)", "%.4f rad" % g.get("gamma_max_rad", 0)],
                     ["IS 18168 12.3.3.1 link rotation (reference only)", "0.08 rad"]]
         out[gid] = dict(state=st, info=info)
     return out

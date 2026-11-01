@@ -81,6 +81,12 @@ def gravity_source(gtable) -> str:
     return "hr_engine" if rows and all(r.get("HR_EV_kN") is not None for r in rows) else "idealised"
 
 
+def gravity_engine(gtable):
+    """Review L10: the HR engine fingerprint of the gravity record used (snl.hr_gravity engine_sha), or None."""
+    shas = {r.get("HR_engine_sha") for r in (gtable or []) if r.get("HR_engine_sha")}
+    return shas.pop() if len(shas) == 1 else (sorted(shas) if shas else None)
+
+
 def _sha(path):
     try:
         return hashlib.sha256(open(path, "rb").read()).hexdigest()
@@ -300,7 +306,8 @@ def write(out, pkg, prm, runs, results, gtable, stats, seconds, modal_info=None)
                                                                   member_nseg=(stats or {}).get("member_nseg")),
         fibre_eles=len((stats or {}).get("fibre_eles") or []), fibre_secs=(stats or {}).get("fibre_secs"),
         restrained_dofs=(stats or {}).get("restrained_zero_stiffness_dofs"),
-        gravity=gtable, gravity_source=gravity_source(gtable), reference_rotation=ref, modal=modal_info,
+        gravity=gtable, gravity_source=gravity_source(gtable), gravity_engine=gravity_engine(gtable),
+        reference_rotation=ref, modal=modal_info,
         links=(stats or {}).get("links") or 0,
         elastic_members=_elastic_block(results, stats),
         params_verified=prm.get("verified"), params_state=_state(prm, out), spec_values_collected=bool(prm.get("spec_values_collected")),

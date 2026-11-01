@@ -116,6 +116,11 @@ def load(job) -> dict | None:
     return d
 
 
+class GravityRecordFailed(RuntimeError):
+    """Review L10: the HR engine is there but recording its gravity states failed. Never silently replaced by an
+    earlier engine's record or by the NL's own idealisation: the caller stops with this message."""
+
+
 def ensure(job, engine_dir=None, timeout=900) -> dict | None:
     """The recorded states for this job (recording them in a child process when absent or stale). None when the HR
     engine is not available -- the caller then falls back to its own idealisation and says so."""
@@ -136,10 +141,13 @@ def ensure(job, engine_dir=None, timeout=900) -> dict | None:
     r = subprocess.run([sys.executable, "-m", "snl.hr_gravity", job], capture_output=True, text=True, env=env,
                        timeout=timeout, cwd=root)
     if r.returncode != 0:
-        print("[hr_gravity] recording failed (rc %s): %s" % (r.returncode, (r.stderr or r.stdout)[-800:]))
-        if d is not None:
-            print("[hr_gravity] keeping the earlier record (engine %s)" % (d.get("engine_sha") or "unknown"))
-        return d
+        # review L10: fail loudly -- an earlier engine's record would present results "against" this engine on another
+        # engine's gravity, and the NL idealisation is not the HR gravity
+        raise GravityRecordFailed(
+            "recording the HR gravity states with %s failed (rc %s)%s: %s" % (
+                eng, r.returncode, (" -- the record on file (engine %s) is not used" % (d.get("engine_sha") or "before the "
+                                                                                       "third wave")) if d is not None else "",
+                (r.stderr or r.stdout or "")[-800:].strip()))
     return load(job)
 
 

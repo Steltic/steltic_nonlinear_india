@@ -40,8 +40,11 @@ def link_axes(p1, p2, vecxz):
     return x, [c / n for c in y]
 
 
+LINK_K = {}          # spring tag -> its elastic stiffness K (model units), for the inelastic rotation (review L2)
+
+
 def link_spring(ops_, bld, tag, n1, n2, p1, p2, vecxz, sec, fy_MPa, RIGID_MAT_T=1, RIGID_MAT_R=2, tiny_mass=None,
-                node_base=LINK_NODE_BASE, ele_base=LINK_ZL_BASE):
+                node_base=LINK_NODE_BASE, ele_base=LINK_ZL_BASE, fy_web_MPa=None, web_note=None):
     """Mid-length shear spring of an EBF link (third wave, P1; pushover, NLRHA and DDM): two coincident nodes at the
     middle of n1-n2 (`na` ends the first half, `nb` starts the second) joined by a zeroLength oriented on the link
     (local x along it, local y = the beam's local y), rigid on every DOF except local z, which carries
@@ -53,22 +56,35 @@ def link_spring(ops_, bld, tag, n1, n2, p1, p2, vecxz, sec, fy_MPa, RIGID_MAT_T=
     ops_.node(na, *pm); ops_.node(nb, *pm)
     if tiny_mass:
         ops_.mass(na, *([tiny_mass] * 6)); ops_.mass(nb, *([tiny_mass] * 6))
-    mt, rec = bld.link_shear_spring(sec, fy_MPa, L)
+    mt, rec = bld.link_shear_spring(sec, fy_MPa, L, fy_web_MPa=fy_web_MPa, web_note=web_note)
     x, y = link_axes(p1, p2, vecxz)
     zl = ele_base + tag
     ops_.element("zeroLength", zl, na, nb, "-mat", RIGID_MAT_T, RIGID_MAT_T, mt, RIGID_MAT_R, RIGID_MAT_R, RIGID_MAT_R,
                  "-dir", 1, 2, 3, 4, 5, 6, "-orient", *x, *y)
     rec.update(spring=zl, na=na, nb=nb, axis=x, yp=y)
+    LINK_K[zl] = rec["K"]
     return zl, rec
 
 
-def link_rotation(spring_tag, e):
-    """Link rotation (rad) now in OpenSees: the shear spring's deformation across the link / e (local z)."""
+def link_rotation(spring_tag, e, inelastic=True):
+    """Link rotation (rad) now in OpenSees. IS 18168:2023 12.3.3.1 defines the link rotation angle as the INELASTIC
+    angle between the link and the beam outside it (review L2): the shear spring's deformation across the link less its
+    elastic part V / K, over e. `inelastic=False` gives the total shear rotation (deformation / e). The flexural
+    rotation at the ends of the halves is not in it: for a short link (e < 1.6 M_pL / V_pL, IS 18168 11.3, checked when
+    the spring is built) the ends stay below M_pL."""
     try:
         d = ops.eleResponse(int(spring_tag), "deformation")
     except Exception:
         return 0.0
-    return (d[2] / e) if d and len(d) >= 3 and e else 0.0
+    if not (d and len(d) >= 3 and e):
+        return 0.0
+    if not inelastic or int(spring_tag) not in LINK_K:
+        return d[2] / e
+    try:
+        V = ops.eleResponse(int(spring_tag), "basicForce")[2]
+    except Exception:
+        return d[2] / e
+    return (d[2] - V / LINK_K[int(spring_tag)]) / e
 
 
 def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_web=(16, 2), residual="none"):
@@ -216,12 +232,19 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
         raw = e["raw"]; transf = int(raw[12])
         fib = _fibre_sec(sec, "beam", e["tag"])
         bld = _builder_for(sec, "beam", e["tag"])
-        fy = IMD_fy(sec, e["tag"]) if india else float(Fy) * 6.894757293168361
+        fy_web = note = None
+        if india:
+            from . import india_model as IMD_, india_materials as IM_
+            mrec = IMD_.fy_section(pkg, sec, "beam", tag=e["tag"])
+            fy = mrec["fye_MPa"]
+            fy_web, note = IM_.link_web_fy(sec, mrec)         # review L4: V_pL on the web's IS 2062 band
+        else:
+            fy = float(Fy) * 6.894757293168361
         p1, p2 = m.nodes[e["n1"]], m.nodes[e["n2"]]
         L = math.dist(p1, p2)
         tr = m.transfs.get(transf) or ("Linear", 0.0, 0.0, 1.0)
         zl, recd = link_spring(ops, bld, e["tag"], e["n1"], e["n2"], p1, p2, (tr[1], tr[2], tr[3]), sec, fy,
-                               RIGID_MAT_T=1, RIGID_MAT_R=2, tiny_mass=tiny)
+                               RIGID_MAT_T=1, RIGID_MAT_R=2, tiny_mass=tiny, fy_web_MPa=fy_web, web_note=note)
         h2 = SEG_ELE_BASE + e["tag"] * 100 + 1
         ops.element("forceBeamColumn", e["tag"], e["n1"], recd["na"], transf, fib, "-iter", 30, 1e-8)
         ops.element("forceBeamColumn", h2, recd["nb"], e["n2"], transf, fib, "-iter", 30, 1e-8)
@@ -239,7 +262,13 @@ def build_fibre(pkg, prm, PG, verbose=True, nseg=4, nip=5, nf_flange=(8, 4), nf_
     for e in m.elements:
         if "etype" in e:
             kind = member_kind(pkg, e); sec = pkg.schedule.get(e["tag"], {}).get("section")
-            if e["etype"] == "ElasticTimoshenkoBeam" and sec and (pkg.schedule.get(e["tag"]) or {}).get("role") == "link":
+            if sec and (pkg.schedule.get(e["tag"]) or {}).get("role") == "link":
+                if e["etype"] != "ElasticTimoshenkoBeam" or e.get("release"):
+                    # review L7: the link model (two flexural halves + the mid-length shear spring) is built from the
+                    # HR model's unreleased Timoshenko link; any other element would lose its shear yielding silently
+                    raise ValueError("EBF link %d is a %s%s in the HR model: the NL link model needs an unreleased "
+                                     "ElasticTimoshenkoBeam (every gold link is one)" % (
+                                         e["tag"], e["etype"], " with end releases" if e.get("release") else ""))
                 _link(e, sec)
                 continue
             if e["etype"] in ("Truss", "truss", "corotTruss") and kind in AXIAL_KINDS and sec and str(sec).upper() != "GHOST":

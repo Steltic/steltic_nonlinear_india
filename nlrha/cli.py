@@ -312,10 +312,10 @@ def _india_prepare(args, pkg, prm, ch16):
     from . import ground_motions as GM
     loads, gtab = IMD.is_gravity_loads(pkg)
     W = sum(r["W_kN"] for r in gtab)
-    from pushover.report_india import gravity_source
+    from pushover.report_india import gravity_source, gravity_engine
     gsrc = gravity_source(gtab)
     split = dict(sum_D=sum(r["QG_kip"] for r in gtab), sum_Lexp=0.0, ratio=0.0, no_live_case_needed=False,
-                 gravity_source=gsrc,
+                 gravity_source=gsrc, gravity_engine=gravity_engine(gtab),
                  basis=("IS 1893 seismic weight per level (D + Table 10 imposed share); W = %.1f kN; %s" % (
                      W, "HR engine seismic-weight load state + top-up to W_i (NL-14)" if gsrc == "hr_engine"
                      else "IDEALISED: W_i as equal diaphragm nodal loads (HR engine not importable)")))
@@ -538,6 +538,7 @@ def _run_india(args, pkg, prm, ch16, TL, t0):
     numerics = dict(plasticity="fibre", member_nseg=int(os.environ.get("SNL_MEMBER_NSEG") or 4), damping=damp,
                     torsion=dict(mode=tors_mode, **(torsion or {}), clause="IS 1893 7.8.2 (0.05 b), default on for India"),
                     integrator=args.integrator, dt_s=args.dt, gravity=split["basis"], gravity_source=split["gravity_source"],
+                    gravity_engine=split.get("gravity_engine"),
                     record_trim=dict(method=os.environ["SNL_RECORD_TRIM"], free_vib_s=args.free_vib,
                                      basis=(RN.TRIM_BASIS if os.environ["SNL_RECORD_TRIM"] == "arias5-95" else "full record head")),
                     gravity_elastic=(os.environ.get("SNL_GRAVITY_ELASTIC", "1") not in ("0", "off", "false")))

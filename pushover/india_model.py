@@ -124,6 +124,8 @@ def is_gravity_loads(pkg):
         if rec and (rec.get("states") or {}).get("EV"):
             hr = rec
     except Exception as ex:                                  # noqa: BLE001
+        if type(ex).__name__ == "GravityRecordFailed":         # review L10: never replaced silently
+            raise
         print("[gravity IS] HR gravity state unavailable (%s) -- W_i as diaphragm nodal loads" % ex)
     if hr is not None:
         from snl import hr_gravity as HG
@@ -137,7 +139,7 @@ def is_gravity_loads(pkg):
                 loads[n] = loads.get(n, 0.0) - top * KN_TO_KIP / len(slaves)
             table.append(dict(level=k, z_in=z, z_mm=z * 25.4, W_kN=float(Wi), QG_kN=float(Wi), QG_kip=round(float(Wi) * KN_TO_KIP, 2),
                               WD_kip=round(float(Wi) * KN_TO_KIP, 2), QL25_kip=0.0, nodes=len(slaves),
-                              HR_EV_kN=round(hr_kN, 1), topup_kN=round(top, 1),
+                              HR_EV_kN=round(hr_kN, 1), topup_kN=round(top, 1), HR_engine_sha=hr.get("engine_sha"),
                               basis="HR engine seismic-weight gravity state (element loads, IS 1893 7.3) + top-up to W_i on the "
                                     "diaphragm nodes"))
         return loads, table

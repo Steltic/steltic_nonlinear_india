@@ -905,3 +905,252 @@ def test_cache_and_journal_keys_cover_every_input(tmp_path, monkeypatch):
             f.write("\n# changed\n")
         c1 = CK.code_key(); assert c1 != c0, rel; c0 = c1
         changed(rel)
+
+
+def _spring_to(bld, mt, K, e, theta_in):
+    """Drive one zeroLength carrying spring material `mt` to an inelastic rotation theta_in; returns (V, inelastic, total)."""
+    import openseespy.opensees as ops
+    from pushover import fibre_model as FM
+    ops.node(1, 0, 0, 0); ops.node(2, 0, 0, 0); ops.fix(1, 1, 1, 1, 1, 1, 1); ops.fix(2, 1, 1, 0, 1, 1, 1)
+    ops.uniaxialMaterial("Elastic", 990001, 1e12)
+    ops.element("zeroLength", 9, 1, 2, "-mat", 990001, 990001, mt, 990001, 990001, 990001, "-dir", 1, 2, 3, 4, 5, 6,
+                "-orient", 1, 0, 0, 0, 1, 0)
+    FM.LINK_K[9] = K
+    ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.sp(2, 3, 1.0)
+    ops.constraints("Penalty", 1e14, 1e14); ops.numberer("Plain"); ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1e-12, 30); ops.algorithm("Newton")
+    n = 400
+    target = None
+    for i in range(1, n + 1):                         # imposed deformation, in steps up to 0.12 e
+        ops.integrator("LoadControl", 0.12 * e / n); ops.analysis("Static"); assert ops.analyze(1) == 0
+        g = FM.link_rotation(9, e)
+        if g >= theta_in:
+            target = (ops.eleResponse(9, "basicForce")[2], g, FM.link_rotation(9, e, inelastic=False))
+            break
+    return target
+
+
+def test_link_spring_reaches_the_is18168_overstrength_at_the_rotation_limit():
+    """Review L6 / L2 / L5: the calibrated post-yield slope takes the spring to Sh x V_pL (IS 18168:2023 12.3.2.2: 1.25 I,
+    1.4 box) at 0.08 rad of INELASTIC rotation (12.3.3.1); the reported rotation is the inelastic one, the total less
+    V / K over e; a box link has two webs; e V_pL / M_pL is checked against 1.6 (11.3)."""
+    import openseespy.opensees as ops
+    from unittest import mock
+    from pushover import india_materials as IM
+    from steltic_ddm.sections_fiber import FiberSectionBuilder
+    real = IM.section_props_mm
+    for box, Sh in ((False, 1.25), (True, 1.4)):
+        ops.wipe(); ops.model("basic", "-ndm", 3, "-ndf", 6)
+        b = FiberSectionBuilder(ops, Fy=250.0, units="N-mm", residual="none")
+        with mock.patch.object(IM, "section_props_mm", lambda lab: dict(real("WPB400X300X155.26"), box=box)):
+            mt, rec = b.link_shear_spring("WPB400X300X155.26", 250.0, 900.0)
+        assert rec["box"] is box and rec["Sh"] == Sh and rec["short_link"] and rec["e_Vp_over_Mp"] < 1.6
+        sp = real("WPB400X300X155.26")
+        assert rec["Aw_mm2"] == pytest.approx((2 if box else 1) * (sp["d"] - 2 * sp["tf"]) * sp["tw"])
+        assert rec["overstrength_at_limit"] == pytest.approx(Sh)
+        V, g_in, g_tot = _spring_to(b, mt, rec["K"], 900.0, 0.08)
+        assert V / (rec["Vp_kN"] * 1e3) == pytest.approx(Sh, rel=0.01)
+        assert g_in == pytest.approx(g_tot - V / rec["K"] / 900.0, rel=1e-9) and g_tot - g_in > rec["gamma_y"]
+    ops.wipe()
+    b = FiberSectionBuilder(ops, Fy=250.0, units="N-mm", residual="none")
+    ops.model("basic", "-ndm", 3, "-ndf", 6)
+    _, long_ = b.link_shear_spring("WPB400X300X155.26", 250.0, 4000.0)       # a 4 m "link": not short (11.3)
+    assert not long_["short_link"] and long_["e_Vp_over_Mp"] > 1.6 and "NOT a short link" in b.log[-1][4]
+    ops.wipe()
+
+
+def test_link_shear_strength_takes_the_web_band():
+    """Review L4: WPB500X300X187.34 E250 -- the member fy is the 28 mm flange's band (240 MPa), the link shear takes the
+    14.5 mm web's (250 MPa); the expected-strength factor is kept; a section whose web shares the band is unchanged."""
+    from pushover import india_materials as IM
+    fy, note = IM.link_web_fy("WPB500X300X187.34", dict(grade="E250", fy_MPa=240.0, fye_MPa=264.0))
+    assert fy == pytest.approx(264.0 * 250.0 / 240.0) and "web" in note and "250" in note
+    assert IM.link_web_fy("WPB220X220X71.47", dict(grade="E250", fy_MPa=250.0, fye_MPa=250.0)) == (250.0, None)
+    assert IM.link_web_fy("CHS114.3X3.6", dict(grade="YSt310", fy_MPa=310.0, fye_MPa=310.0)) == (310.0, None)
+
+
+def test_a_link_the_models_cannot_carry_is_refused(tmp_path):
+    """Review L7: a released link (DDM) or a link that is not the HR model's unreleased Timoshenko element (pushover)
+    raises instead of silently becoming an ordinary member without its shear yielding."""
+    import types
+    from steltic_ddm.model_gmnia import GMNIAModel
+    from pushover import nonlinear_model as NM, hinge_models as HM
+    g = GMNIAModel.__new__(GMNIAModel)
+    g.nsub_col = g.nsub_beam = g.nsub_brace = 2
+    g._transf_for = lambda m: 3
+    with pytest.raises(ValueError, match="end releases"):
+        g._add_member(types.SimpleNamespace(tag=30, kind="beam", role="link", relz=3, rely=0, n1=5, n2=6, section="X"))
+    os.environ["SNL_PLASTICITY"] = "fibre"
+    pkg = _ebf_pkg("X", str(tmp_path))
+    e = next(x for x in pkg.model.elements if x.get("tag") == 30)
+    e.update(etype="elasticBeamColumn", release=["-releasez", 3])
+    with pytest.raises(ValueError, match="needs an unreleased ElasticTimoshenkoBeam"):
+        NM.build_nonlinear(pkg, HM.load_params(None, jurisdiction="india"), {}, verbose=False, plasticity="fibre")
+
+
+def _push_hard(tmp, n=10, counter=None):
+    """The one-bay EBF push (Y) with a first attempt that fails after yield (Newton, 3 iterations at 1e-10) and the
+    pushover's own fallback ladder (NM._try_analyze) -- REAL failed OpenSees calls, as the step cuts of a pushover."""
+    import openseespy.opensees as ops
+    from pushover import nonlinear_model as NM, hinge_models as HM
+    os.environ["SNL_PLASTICITY"] = "fibre"
+    pkg = _ebf_pkg("Y", tmp)
+    NM.build_nonlinear(pkg, HM.load_params(None, jurisdiction="india"), {}, verbose=False, plasticity="fibre")
+    wl = [0.0, -30.0, 0.0]
+    loads = {"_hr": {"ele": [[30, 0.0, 1.0, "beamUniform", wl], [21, 0.0, 1.0, "beamUniform", wl],
+                             [22, 0.0, 1.0, "beamUniform", wl]], "node": {}}}
+    assert NM._apply_gravity(loads) == 0
+    ops.timeSeries("Linear", 2); ops.pattern("Plain", 2, 2); ops.load(9, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0)
+    ops.constraints("Transformation"); ops.numberer("RCM"); ops.system("UmfPack")
+    du = 0.01 * H / n
+    ops.integrator("DisplacementControl", 9, 2, du); ops.analysis("Static")
+    rows = []
+    for _ in range(n):
+        ops.test("NormDispIncr", 1e-10, 3, 0); ops.algorithm("Newton")
+        if ops.analyze(1) != 0:
+            assert NM._try_analyze(du, 9, 2)
+        ops.reactions()
+        rows.append((ops.nodeDisp(9, 2), -sum(ops.nodeReaction(t, 2) for t in (1, 2))))
+    return rows
+
+
+def test_chunked_pushover_with_real_failed_steps_repeats_the_uninterrupted_one(tmp_path):
+    """Review (weak tests): a real OpenSees push whose step attempts fail and fall back (6 failed calls in 16),
+    interrupted after 7 live calls -- past a failed one -- and resumed in a rebuilt model. The journaled failures are
+    answered without calling OpenSees, and the curve is the uninterrupted one to 1e-9 -- NOT bit for bit: a failed
+    analyze is not perfectly state-neutral in OpenSees, so skipping it changes the last digits (here ~1e-15 relative;
+    the documented limit of snl/checkpoint.py), well inside the replay's fingerprint tolerance."""
+    import contextlib, io
+    import openseespy.opensees as ops
+    from snl import checkpoint as CK
+    with contextlib.redirect_stderr(io.StringIO()):
+        full = _push_hard(str(tmp_path))
+        path = str(tmp_path / "hard.ckpt")
+        real = ops.analyze
+        J = CK.Journal(path, key="hard", max_live_calls=7).begin("push Y", ops)
+        with pytest.raises(CK.ChunkExpired):
+            _push_hard(str(tmp_path))
+        J.end()
+        seg = J.data["segments"]["push Y"]
+        assert len(seg) == 7 and any(ok != 0 for ok, *_ in seg)              # a failed call inside the chunk
+        n_real = [0]
+
+        def counted(*a):
+            n_real[0] += 1
+            return real(*a)
+        ops.analyze = counted
+        try:
+            J2 = CK.Journal(path, key="hard").begin("push Y", ops)
+            again = _push_hard(str(tmp_path))
+            J2.end()
+        finally:
+            ops.analyze = real
+    calls = J2.data["segments"]["push Y"]
+    failed_in_chunk1 = sum(1 for ok, *_ in seg if ok != 0)
+    # 17 journaled calls: the gravity analysis and the 16 calls of the push (6 failed)
+    assert len(again) == len(full) and len(calls) == 17 and sum(1 for ok, *_ in calls if ok != 0) == 6
+    for (u0, v0), (u1, v1) in zip(full, again):
+        assert u1 == pytest.approx(u0, rel=1e-9) and v1 == pytest.approx(v0, rel=1e-9)
+    assert max(abs(v1 - v0) / abs(v0) for (_, v0), (_, v1) in zip(full, again) if v0) < 1e-12
+    assert n_real[0] == len(calls) - failed_in_chunk1                       # the journaled failures were not recomputed
+
+
+def test_pushover_cli_restores_a_finished_direction(tmp_path, monkeypatch):
+    """Review (weak tests): the pushover CLI's journal path. Chunk 1 finishes X and runs out inside Y (exit 75); chunk 2
+    restores X from the journal (no push) and replays and finishes Y. Both directions' results equal an uninterrupted
+    run's."""
+    import argparse, types
+    from snl import checkpoint as CK
+    from pushover import cli as PC, nonlinear_model as NM, member_response as MR, postprocess as PP, report_india as RI
+    from nlrha import india_hazard as IH
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+    ops = _FakeOps(set())
+    monkeypatch.setattr(NM, "ops", ops)
+    pushed = []
+
+    def fake_push(pkg, hinges, d, loads, prm, **kw):
+        pushed.append(d)
+        ops.t, ops.u, ops.n = 0.0, 0.0, 0                           # a new model (build_nonlinear wipes)
+        u, V = [0.0], [0.0]
+        for i in range(3):
+            assert NM.ops.analyze(1) == 0
+            u.append(ops.getTime()); V.append(100.0 * ops.getTime() * (1.0 if d == "X" else 2.0))
+        return dict(rec=dict(u=u, V=V), stop_reason="reached max roof drift", tail=None)
+    monkeypatch.setattr(NM, "pushover", fake_push)
+    monkeypatch.setattr(NM, "gravity_loads", lambda pkg, prm: ({}, [dict(W_kN=1.0)]))
+    monkeypatch.setattr(NM, "column_gravity_axials", lambda pkg, loads: {})
+    monkeypatch.setattr(NM, "build_nonlinear", lambda pkg, prm, PG: ({}, {}))
+    monkeypatch.setattr(MR, "MemberRecorder", lambda pkg, h, s: types.SimpleNamespace(braces=[], meta=lambda: {"m": 1}))
+    monkeypatch.setattr(PP, "nsp_target", lambda run, basis, prm, lv: dict(Te=1.0, Sa=0.1, C0=1.0, C1=1.0, C2=1.0,
+                                                                            target_disp_in=run["rec"]["u"][-1] / 2, target_over_H=0.01))
+    monkeypatch.setattr(PP, "capacity_summary", lambda run, basis, n, V_design_kip=None: dict(Vmax_kN=max(run["rec"]["V"]), Vmax_over_VB=1.0))
+    monkeypatch.setattr(PP, "response_at", lambda run, dt, lv, meta, ref, basis, V_design_kip=None: dict(
+        base_shear_kN=dt * 10.0, V_over_VB=1.0, max_story_drift=0.001, census=None))
+    monkeypatch.setattr(IH, "vb_direction_kN", lambda ind, d: 100.0)
+    monkeypatch.setattr(PC, "elastic_check", lambda run, nsp: None)
+    monkeypatch.setattr(RI, "write", lambda *a, **k: str(tmp_path / "report.html"))
+    monkeypatch.setattr(PC, "_copy_params", lambda *a, **k: None)
+    pkg = types.SimpleNamespace(root=str(tmp_path / "job"), calc={},
+                                basis=types.SimpleNamespace(india=dict(Z=0.16, I=1.0, soil="II"), system="SCBF", jurisdiction="india"))
+    os.makedirs(pkg.root)
+
+    def args(ck):
+        return argparse.Namespace(params=None, plasticity="fibre", gravity_elastic=None, member_nseg=4, tail="none",
+                                  out=str(tmp_path / ("out_" + ("ck" if ck else "plain"))), max_drift=0.1, stop_at=0.8,
+                                  dirs=["X", "Y"], checkpoint_dir=(str(tmp_path / "ck") if ck else None), chunk_seconds=None)
+    ref = PC._run_india(args(False), pkg, 0.0)
+    real_journal = PC._journal
+
+    def chunk1(a, p):
+        J = real_journal(a, p)
+        J.max_live_calls = 5                                         # X takes 3 calls, Y runs out at its 3rd
+        return J
+    monkeypatch.setattr(PC, "_journal", chunk1)
+    del pushed[:]
+    with pytest.raises(SystemExit) as ex:
+        PC._run_india(args(True), pkg, 0.0)
+    assert ex.value.code == CK.EXIT_RESUME and pushed == ["X", "Y"]
+    monkeypatch.setattr(PC, "_journal", real_journal)
+    del pushed[:]
+    out = PC._run_india(args(True), pkg, 0.0)
+    assert pushed == ["Y"]                                            # X restored, not pushed again
+    assert out == ref
+
+
+def test_words_html_keeps_attribute_values():
+    """Review L11: class, id and data-* values keep their keys (the pages' CSS and scripts use them); the text is in words."""
+    from snl import public_text as PT
+    h = '<tr class="lateral_col" data-role="gravity_col"><td id="r_lateral_col">lateral_col, NO_LIMIT_POINT</td></tr>'
+    out = PT.words_html(h)
+    assert 'class="lateral_col"' in out and 'data-role="gravity_col"' in out and 'id="r_lateral_col"' in out
+    assert ">lateral column, no limit point<" in out
+
+
+def test_replay_fingerprint_covers_every_node():
+    """Review L9: a displacement at node 450 (above the old first-400 window) changes the fingerprint."""
+    from snl import checkpoint as CK
+
+    class O:
+        u = 0.0
+        def getTime(self): return 1.0
+        def getNodeTags(self): return list(range(1, 501))
+        def nodeDisp(self, n): return [self.u if n == 450 else 0.0]
+    o = O()
+    a = CK._fingerprint(o); o.u = 1.0
+    assert CK._fingerprint(o) != a
+
+
+def test_a_failed_gravity_record_fails_loudly(tmp_path):
+    """Review L10: with an HR engine present, a recording that fails raises GravityRecordFailed -- the record of an
+    earlier engine is not kept, and the NL idealisation is not used in its place."""
+    import json
+    from snl import hr_gravity as HG
+    eng = tmp_path / "engine"; eng.mkdir()
+    (eng / "static_model.py").write_text("raise ImportError('a broken engine')\\n")
+    job = tmp_path / "job"; job.mkdir()
+    (job / "cfg.py").write_text("cfg = {}\\n")
+    (job / HG.OUT_NAME).write_text(json.dumps(dict(schema=HG.SCHEMA, inputs_sha256=HG._inputs_sha(str(job)),
+                                                   engine_sha="an older engine", states={})))
+    assert HG.load(str(job))["engine_sha"] == "an older engine"
+    with pytest.raises(HG.GravityRecordFailed, match="the record on file .engine an older engine. is not used"):
+        HG.ensure(str(job), engine_dir=str(eng), timeout=120)

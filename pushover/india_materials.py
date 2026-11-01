@@ -250,6 +250,32 @@ def _fy_from_grade(grade, sp) -> tuple:
     return fy, None, band, IS2062_CITE, g
 
 
+def link_web_fy(section: str, member: dict | None) -> tuple:
+    """Review L4: the fy of an EBF link's shear strength V_pL = fy A_wL / sqrt(3) (IS 18168:2023 11.2 a) is the
+    IS 2062 Table 3 band of the WEB thickness. The member fy (fy_for_member) is the band of the governing -- thickest --
+    element, a flange of a heavy section (WPB500X300X187.34: 240 MPa from the 28 mm flange, 250 MPa for the 14.5 mm
+    web). `member` is the fy_for_member record; its expected-strength factor is kept. Returns (fye for V_pL, note or
+    None); the member value when the web and the governing element share a band, or for a tube or unknown grade."""
+    m = member or {}
+    fye = m.get("fye_MPa")
+    sp = section_props_mm(section)
+    if fye is None or sp.get("tube") or not m.get("grade") or not m.get("fy_MPa"):
+        return fye, None
+    try:
+        g = normalize_grade(m["grade"])
+    except ValueError:
+        return fye, None
+    tw, t = float(sp.get("tw") or 0.0), governing_thickness_mm(sp)
+    if tw <= 0.0 or tw >= t:
+        return fye, None
+    fw, bw = fy_is2062(g, tw)
+    if abs(fw - float(m["fy_MPa"])) < 0.5:
+        return fye, None
+    return float(fye) * fw / float(m["fy_MPa"]), ("IS 2062 Table 3, %s: the web (tw %.1f mm, band %s) fy %.0f MPa; the member fy "
+                                                  "%.0f MPa is the band of its %.1f mm governing element"
+                                                  % (g, tw, bw, fw, float(m["fy_MPa"]), t))
+
+
 def fy_for_member(section: str, role: str | None = None, plan: dict | None = None) -> dict:
     """fy (nominal, MPa), expected fye = factor*fy, grade and band for one member.
 
@@ -373,8 +399,8 @@ def brace_strengths(section: str, L_mm: float, fye_MPa: float, K: float = 1.0, h
     cls = buckling_classes(sp, hollow_forming)
     r = min(v for v in (sp.get("rx"), sp.get("ry")) if v)
     ax = "yy" if r == sp.get("ry") else "zz"
-    if sp.get("r_min") and sp["r_min"] < r - 1e-9:      # third wave: a single angle (ISA) buckles about its v-v axis
-        r, ax = sp["r_min"], "yy"
+    if sp.get("type") in ("ISA", "DOUBLE_ANGLE") and sp.get("r_min") and sp["r_min"] < 0.99 * r:
+        r, ax = sp["r_min"], "yy"                    # third wave: an angle buckles about v-v; review L1: angles only
     KLr = K * float(L_mm) / r
     fcc = math.pi ** 2 * E_MPA / KLr ** 2
     lam = math.sqrt(fye_MPa / fcc)

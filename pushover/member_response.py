@@ -137,9 +137,10 @@ class MemberRecorder:
             out_b[b["tag"]] = (v / b["dT"] if b["dT"] else 0.0, bool(v < -b["dc"]))
         out_l = {}
         from .fibre_model import link_rotation
-        for lk in self.links:
-            g = abs(link_rotation(lk["spring"], lk["e"])) if lk.get("spring") else 0.0
-            out_l[lk["tag"]] = (g, g / lk["gamma_y"] if lk["gamma_y"] else 0.0)
+        for lk in self.links:                   # review L2: the INELASTIC rotation (IS 18168 12.3.3.1); the ductility
+            g = abs(link_rotation(lk["spring"], lk["e"])) if lk.get("spring") else 0.0          # on the total
+            gt = abs(link_rotation(lk["spring"], lk["e"], inelastic=False)) if lk.get("spring") else 0.0
+            out_l[lk["tag"]] = (g, gt / lk["gamma_y"] if lk["gamma_y"] else 0.0)
         return dict(m=out_m, b=out_b, l=out_l)
 
     @staticmethod

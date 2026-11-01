@@ -616,40 +616,74 @@ class FiberSectionBuilder:
         self.log.append((aggTag, label, "LINK", 0, "shear Vp %.1f kN on Vz, fibre section %d" % (Vp_N / 1e3, fibreTag)))
         return rec
 
-    def link_shear_spring(self, label, fy_MPa, e_len, box=False, hardening=0.005):
+    LINK_THETA = 0.08                  # IS 18168:2023 12.3.3.1: the link rotation angle (inelastic) limit, rad
+    LINK_SH = {False: 1.25, True: 1.4}  # IS 18168:2023 12.3.2.2: Sh, I-shaped / box links
+    LINK_E_MAX = 1.6                   # IS 18168:2023 11.3: e < 1.6 M_pL / V_pL
+
+    def link_shear_spring(self, label, fy_MPa, e_len, box=None, hardening=None, fy_web_MPa=None, web_note=None):
         """EBF link shear yielding as ONE shear spring at the middle of the link (third wave, P1): the material of a
         zeroLength between the two halves of the link, acting on their relative displacement across the link (the
-        beam's local z). Same strength and stiffness as link_aggregator, per unit relative displacement:
-        V_pL = fy A_wL / sqrt(3) (IS 18168:2023 11.2), K = G A_wL / e, so the link rotation is the spring
-        deformation / e and gamma_y = V_pL / (K e) = fy / (sqrt(3) G).
+        beam's local z). V_pL = fy_w A_wL / sqrt(3) (IS 18168:2023 11.2 a), K = G A_wL / e, so the link rotation is the
+        spring deformation / e and gamma_y = V_pL / (K e) = fy_w / (sqrt(3) G).
 
         Why not the aggregated section any more: with the shear on the sections of ONE force-based element, a shear
         that varies along the link (the gravity load on it) lets the element's local iteration accept a false state
         once the link yields -- the end sections yield in OPPOSITE directions (+/-0.4 rad), their shear strains cancel
         in the element deformations, so the element's energy test passes while the sections are out of equilibrium by
-        about 2 V_pL and the link drops its shear. A single spring has no such mode. `e_len` is the link length in the
-        model's length unit. Returns (material tag, record)."""
+        about 2 V_pL and the link drops its shear. A single spring has no such mode.
+
+        Review fixes: fy_w is the web's IS 2062 band (`fy_web_MPa`, L4; the flexural halves keep the member fy); a box
+        link has two webs (`box` from the section, L5); the post-yield slope (`hardening` None) is calibrated so the
+        spring reaches the IS 18168 12.3.2.2 strain-hardening factor Sh x V_pL (1.25 I-shaped, 1.4 box) at the
+        12.3.3.1 limit of 0.08 rad of inelastic rotation (L6) -- kinematic (Steel01), no isotropic hardening, no
+        degradation; the material is the model's fy (characteristic x the design engineer's expected factor), so the
+        12.3.2.2 Ry is not in it; e V_pL / M_pL is checked against the 11.3 limit 1.6 (L2). `e_len` is the link length
+        in the model's length unit. Returns (material tag, record)."""
         from pushover import india_materials as IM
         sp = IM.section_props_mm(label)
+        if box is None:
+            box = bool(sp.get("box")) or str(label).upper().startswith("BOX")
         d, tf, tw = float(sp["d"]), float(sp["tf"]), float(sp["tw"])
         Aw_mm2 = (2.0 if box else 1.0) * (d - 2.0 * tf) * tw
-        Vp_N = float(fy_MPa) * Aw_mm2 / math.sqrt(3.0)
+        fy_v = float(fy_web_MPa if fy_web_MPa is not None else fy_MPa)
+        Vp_N = fy_v * Aw_mm2 / math.sqrt(3.0)
         G_MPa_ = E_MPA / 2.6
         if self.units == "N-mm":
-            Vp, GA = Vp_N, G_MPa_ * Aw_mm2
+            Vp, GA, e_mm = Vp_N, G_MPa_ * Aw_mm2, float(e_len)
         else:
-            Vp, GA = Vp_N / 4448.2216152605, (G_MPa_ / 6.894757293168361) * Aw_mm2 / MM_PER_IN ** 2
+            Vp, GA, e_mm = Vp_N / 4448.2216152605, (G_MPa_ / 6.894757293168361) * Aw_mm2 / MM_PER_IN ** 2, float(e_len) * MM_PER_IN
         K = GA / float(e_len)
+        Sh = self.LINK_SH[bool(box)]
+        if hardening is None:
+            # Steel01: V = V_pL + b K (d - dy) and the inelastic deformation d - V/K = (1 - b)(d - dy), so V = Sh V_pL at
+            # an inelastic rotation theta when b / (1 - b) = (Sh - 1) / (theta sqrt(3) G / fy_w)
+            c_ = (Sh - 1.0) / (self.LINK_THETA * math.sqrt(3.0) * G_MPa_ / fy_v)
+            hardening = c_ / (1.0 + c_)
+            h_basis = ("calibrated: V = Sh V_pL (Sh = %.2f, IS 18168:2023 12.3.2.2) at %.2f rad of inelastic rotation "
+                       "(12.3.3.1); kinematic hardening only (Steel01)" % (Sh, self.LINK_THETA))
+        else:
+            h_basis = "given (%.4g of K)" % hardening
+        Zp = float(sp.get("Zx") or 0.0)                # mm3, the strong-axis plastic modulus
+        Mp_Nmm = float(fy_MPa) * Zp
+        ratio = (e_mm * Vp_N / Mp_Nmm) if Mp_Nmm > 0 else None
+        short = ratio is not None and ratio < self.LINK_E_MAX
+        if ratio is not None and not short:
+            print("[link] WARNING %s: e V_pL / M_pL = %.2f is not below %.1f (IS 18168:2023 11.3): a longer link also yields "
+                  "in flexure at its ends; the shear spring gives only its shear rotation" % (label, ratio, self.LINK_E_MAX),
+                  flush=True)
         mt = self.next_mat; self.next_mat += 1
         if self.elastic:
             self.ops.uniaxialMaterial("Elastic", mt, K)
         else:
             self.ops.uniaxialMaterial("Steel01", mt, Vp, K, hardening)
-        rec = dict(section=label, Aw_mm2=Aw_mm2, fy_MPa=float(fy_MPa), Vp_kN=Vp_N / 1e3, gamma_y=float(fy_MPa) / math.sqrt(3.0) / G_MPa_,
-                   hardening=hardening, clause="IS 18168:2023 11.2 a) V_pL = fy A_wL / sqrt(3) (Pu/Py <= 0.15)",
-                   hardening_basis="modelling assumption (no IS link hysteresis)", model="shear_spring", e=float(e_len),
-                   spring_mat=mt)
-        self.log.append((mt, label, "LINK", 0, "shear spring Vp %.1f kN, K = G Aw / e (e = %.3f)" % (Vp_N / 1e3, float(e_len))))
+        rec = dict(section=label, Aw_mm2=Aw_mm2, box=bool(box), fy_MPa=fy_v, fy_member_MPa=float(fy_MPa), fy_web_note=web_note,
+                   Vp_kN=Vp_N / 1e3, gamma_y=fy_v / math.sqrt(3.0) / G_MPa_, K=K,
+                   hardening=hardening, hardening_basis=h_basis, Sh=Sh, overstrength_at_limit=1.0 + hardening / (1.0 - hardening) * self.LINK_THETA * GA / Vp,
+                   clause="IS 18168:2023 11.2 a) V_pL = fy A_wL / sqrt(3) (Pu/Py <= 0.15)",
+                   e_Vp_over_Mp=ratio, short_link=short, length_clause="IS 18168:2023 11.3: e < 1.6 M_pL / V_pL",
+                   model="shear_spring", e=float(e_len), spring_mat=mt)
+        self.log.append((mt, label, "LINK", 0, "shear spring Vp %.1f kN, K = G Aw / e (e = %.3f), b %.4f%s" % (
+            Vp_N / 1e3, float(e_len), hardening, "" if short else ", NOT a short link (11.3)")))
         return mt, rec
 
     def double_angle(self, secTag, label, axis="z", n_leg=10, n_t=2):

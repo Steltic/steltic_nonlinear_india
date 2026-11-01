@@ -22,7 +22,12 @@ process resumes. Completed pieces (a finished sweep rung, a finished pushover di
 journal (`done`) and are not replayed at all.
 
 Cost of a resume: the converged steps are recomputed; the failed ones are not. A run whose CONVERGED steps alone take
-more than a chunk cannot progress this way -- `progress_possible` says so, and the orchestrator reports it.
+more than a chunk cannot progress this way (review M3): the journal checks it when a piece begins (`progress_possible`)
+and while it replays, and raises NoProgress (exit 76) with the reason; a piece whose replay diverges again after one
+live restart does the same. The orchestrator then marks the step `stalled` instead of re-running it every chunk.
+Keys (review M4 / M5, `run_key`): the analysis code including the drivers and post-processing, the HR engine
+fingerprint, the SNL_* model knobs, an outside --params file and a fixed PYTHONHASHSEED (required, L12). The replay
+fingerprint covers every node (L9).
 
 Limit found on the real models (third wave): a failed `analyze` is NOT perfectly state-neutral in OpenSees. On the
 one-bay EBF with forced failures the replayed run differs from the uninterrupted one by 4.5e-13 (relative); on IN_Ex15 Y

@@ -123,12 +123,23 @@ def words(text):
 _SCRIPT_OR_STYLE = re.compile(r"(<script\b.*?</script>|<style\b.*?</style>)", re.S | re.I)
 
 
+_TAG = re.compile(r"(<[^>]*>)")
+
+
 def words_html(h):
-    """`words` on the text of a page, outside <script> and <style> (a viewer's data keys drive its code and colours)."""
+    """`words` on the TEXT of a page only: outside <script> and <style> (a viewer's data keys drive its code and
+    colours), and outside tags -- review L11: class, id and data-* attribute values keep their keys."""
     if not h:
         return h
     parts = _SCRIPT_OR_STYLE.split(h)
-    return "".join(p if (i % 2 == 1) else words(p) for i, p in enumerate(parts))
+    out = []
+    for i, p in enumerate(parts):
+        if i % 2 == 1:
+            out.append(p)
+            continue
+        bits = _TAG.split(p)
+        out.append("".join(b if (j % 2 == 1) else words(b) for j, b in enumerate(bits)))
+    return "".join(out)
 
 
 def has_internal_words(text):

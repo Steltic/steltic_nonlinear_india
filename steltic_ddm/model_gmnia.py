@@ -425,6 +425,11 @@ class GMNIAModel:
             if link:                                  # NL-10 / third wave P1: the shear yielding is the mid-length spring
                 fy_mpa = fy if (self.fy_fn is not None or getattr(self, "_fibre_units", "kip-in") == "N-mm") else fy * 6.894757293168361
                 props["link_fy_MPa"] = fy_mpa         # (_add_link): the halves carry flexure only
+                plan = getattr(self.fy_fn, "plan", None)
+                if plan is not None:                  # review L4: V_pL on the web's IS 2062 band, as the pushover
+                    from pushover import india_materials as IM
+                    props["link_fy_web_MPa"], props["link_fy_web_note"] = IM.link_web_fy(
+                        m.section, IM.fy_for_member(m.section, "link", plan))
                 self._link_builders[tag] = bld
             ops.beamIntegration("Lobatto", tag, tag, self.nip)
             self.secs[key] = tag
@@ -503,7 +508,12 @@ class GMNIAModel:
         """Third wave, P1: an EBF link is two flexural fibre halves joined at mid-length by the IS 18168 11.2 shear
         spring (pushover.fibre_model.link_spring) -- the pushover / NLRHA link model. The old single force-based element
         with the shear aggregated on its sections accepted a false state once the link yielded under its gravity load
-        (end sections yielding in opposite directions, the link shedding its shear)."""
+        (end sections yielding in opposite directions, the link shedding its shear).
+
+        Review L8: no rigid end stubs on a link, whatever rigid_end_offset says. The stubs model the continuity of a
+        beam framing into a column (US default 0.05 L); a link frames into the beam and the braces, not a column, and
+        the HR models have no rigid end offsets at all (no -jntOffset in any gold model). The India DDM default is off
+        (WP4.9), so the stored India EBF sweeps had no link stubs either."""
         from pushover.fibre_model import link_spring
         p1, p2 = self._coord(m.n1), self._coord(m.n2)
         L = math.dist(p1, p2)
@@ -522,7 +532,9 @@ class GMNIAModel:
         mt_t = bld.next_mat; bld.next_mat += 1; ops.uniaxialMaterial("Elastic", mt_t, kt)
         mt_r = bld.next_mat; bld.next_mat += 1; ops.uniaxialMaterial("Elastic", mt_r, kr)
         zl, rec = link_spring(ops, bld, m.tag, m.n1, m.n2, p1, p2, self.VECXZ[tr], m.section, fy_mpa,
-                              RIGID_MAT_T=mt_t, RIGID_MAT_R=mt_r, ele_base=self.LINK_ELE0)
+                              RIGID_MAT_T=mt_t, RIGID_MAT_R=mt_r, ele_base=self.LINK_ELE0,
+                              fy_web_MPa=self.sec_props[secTag].get("link_fy_web_MPa"),
+                              web_note=self.sec_props[secTag].get("link_fy_web_note"))
         etype = "dispBeamColumn" if self.fast else "forceBeamColumn"
         extra = () if self.fast else ("-iter", 20, 1e-8)
         halves = ((m.n1, rec["na"]), (rec["nb"], m.n2))
@@ -537,7 +549,11 @@ class GMNIAModel:
     def _add_member(self, m):
         nsub = {"col": self.nsub_col, "beam": self.nsub_beam, "brace": self.nsub_brace}[m.kind]
         tr = self._transf_for(m)
-        if getattr(m, "role", "") == "link" and not (m.relz or m.rely):
+        if getattr(m, "role", "") == "link":
+            if m.relz or m.rely:
+                # review L7: a released link would become an ordinary member with no shear yielding or flexibility
+                raise ValueError("EBF link %d has end releases (relz %s, rely %s): the GMNIA link model (two flexural "
+                                 "halves + the mid-length shear spring) needs an unreleased link" % (m.tag, m.relz, m.rely))
             return self._add_link(m, tr)
         p1, p2 = self._coord(m.n1), self._coord(m.n2)
         L = math.dist(p1, p2)
@@ -714,6 +730,8 @@ class GMNIAModel:
                     from snl import hr_gravity as HG
                     hr = HG.ensure(self.nm.job_dir) or False
                 except Exception as ex:                       # noqa: BLE001
+                    if type(ex).__name__ == "GravityRecordFailed":   # review L10: never replaced silently
+                        raise
                     print("[gmnia] HR gravity state unavailable (%s) -- own tributary loads" % ex)
                     hr = False
                 self.nm._hr_gravity = hr

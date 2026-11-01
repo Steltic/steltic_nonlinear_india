@@ -157,7 +157,12 @@ def _truss_chords(nm, cfg, out, hr_ties, add):
     normal to the truss to the roof diaphragm as a rafter station (model_gmnia): the braced roof and the
     end-bay bottom-chord bracing the ties are anchored to. Top chord: every chord node at a panel point when the
     plane declares `purlins_at_nodes`, else `purlins_mm` (plan distances from each eave). Bottom chord:
-    _bottom_chord_ties. Nodes the HR model already ties are left out."""
+    _bottom_chord_ties. Nodes the HR model already ties are left out.
+
+    Review L13 -- assumptions, stated: the restraints are RIGID lateral ties to the roof diaphragm; a flexible tie or
+    end-bay bracing system would restrain less, which matters under uplift (bottom chord in compression). Without a
+    declared list, the bottom-chord ties are taken every Ly (the design's out-of-plane length) from the first eave only;
+    the published list (MSME's BC_TIES as `bottom_chord_ties_mm`) is preferred when it is there."""
     chords = [m for m in nm.members if getattr(m, "role", None) in TRUSS_CHORD_ROLES]
     if not chords:
         return
