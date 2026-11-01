@@ -225,6 +225,9 @@ def test_ki_is_the_initial_slope():
     u = [0.0] + [2.43 * i for i in range(1, 12)]
     assert PP.initial_stiffness(u, [0.0] + [94.0 + 236.4 * x for x in u[1:]]) == pytest.approx(236.4)
     assert PP.initial_stiffness([0.0, 0.004, 6.48, 12.97, 19.45], [0.0, 1.1, 384.0, 769.0, 1153.0]) == pytest.approx(59.3, rel=0.01)
+    # a coarse first step after which the curve softens (the shipped IN_Ex1 X curve): the secant to the first point
+    assert PP.initial_stiffness([0.0, 0.47244, 0.94488, 1.41732], [0.0, 1174.932, 2244.614, 2962.203]) == \
+        pytest.approx(1174.932 / 0.47244)
     u = [float(i) for i in range(0, 201)]                     # elastic 10 to u = 5, then a long rising branch to 245
     V = [10.0 * x if x <= 5 else 50.0 + (x - 5.0) for x in u]
     assert PP.initial_stiffness(u, V) == pytest.approx(10.0)

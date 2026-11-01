@@ -54,27 +54,31 @@ def idealize(u, V, u_target):
     return dict(Vy=float(Vy), uy=float(uy), Ke=float(Ke), ud=float(ud), Vd=float(Vd), alpha1=float(alpha1))
 
 
-KI_FIRST_STEPS = 4
+KI_STRAIGHT = 0.02          # two segment slopes within 2 %: the curve is straight there
 
 
-def initial_stiffness(u, V, n_first=KI_FIRST_STEPS):
+def initial_stiffness(u, V):
     """Ki of ASCE 41-17 7.4.3.2.5, Eq. 7-27 (Te = Ti sqrt(Ki / Ke)): the ELASTIC lateral stiffness of the building in
-    the direction considered, consistent with Ti -- here T1, the eigen period of the same model under gravity. Review
-    M2: the slope of the curve over its first `n_first` converged steps (least squares with an intercept, so the base
-    shear some plans carry from gravity at the start of the push does not inflate it, and a near-zero first point does
-    not either). It was the secant at 0.3 x the WHOLE-curve Vmax, which falls on a softened part of the curve when the
-    peak lies far beyond the target (IN_Ex10 X: 303 against an initial 536 kN/mm; Te 0.166 s against T1 0.220 s)."""
-    pts = [(float(a), float(b)) for a, b in zip(u, V) if float(a) > 1e-12][:max(1, int(n_first))]
+    the direction considered, consistent with Ti (T1, the eigen period of the same model under gravity). Review M2:
+    read at the START of the curve, from its first recorded points p1, p2, p3 (u > 0):
+      * the curve is straight after p1 (slopes p1-p2 and p2-p3 within 2 %): Ki = that slope -- a base shear the
+        first step carries from gravity (IN_Ex15 Y: about 94 kN) or a near-zero first point does not bias it;
+      * else (a coarse first step after which the curve already softens): the larger of the secant to p1 and the
+        slope p1-p2.
+    It was the secant at 0.3 x the WHOLE-curve Vmax, which falls on a softened part of the curve when the peak lies far
+    beyond the target (IN_Ex10 X: 303 against an initial 536 kN/mm; Te 0.166 s against T1 0.220 s)."""
+    pts = [(float(a), float(b)) for a, b in zip(u, V) if float(a) > 1e-12]
     if not pts:
         return float("nan")
-    if len(pts) == 1:
-        return pts[0][1] / pts[0][0]
-    n = len(pts)
-    mu, mv = sum(a for a, _ in pts) / n, sum(b for _, b in pts) / n
-    suu = sum((a - mu) ** 2 for a, _ in pts)
-    if suu <= 0:
-        return pts[-1][1] / pts[-1][0]
-    return sum((a - mu) * (b - mv) for a, b in pts) / suu
+    s0 = pts[0][1] / pts[0][0]
+    if len(pts) < 2:
+        return s0
+    t1 = (pts[1][1] - pts[0][1]) / (pts[1][0] - pts[0][0])
+    if len(pts) >= 3:
+        t2 = (pts[2][1] - pts[1][1]) / (pts[2][0] - pts[1][0])
+        if t1 > 0 and abs(t1 - t2) <= KI_STRAIGHT * t1:
+            return t1
+    return max(s0, t1)
 
 
 # --------------------------------------------------------------------------- NSP target displacement

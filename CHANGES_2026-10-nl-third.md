@@ -223,9 +223,13 @@ the IS-MCE target displacement δt (interpolated at δt), and it says what kind 
 
 **Effective period and the NSP initial stiffness (review M2).**
 - Ki of Te = Ti √(Ki / Ke) (ASCE 41-17 7.4.3.2.5, Eq. 7-27: "Ki = elastic lateral stiffness of the building in the
-  direction under consideration") is now the slope of the curve over its first converged steps (least squares with an
-  intercept: some plans carry a base shear from gravity at the start of the push, IN_Ex15 Y about 94 kN, and a curve
-  may start with a near-zero point). It was the secant at 0.3 × the WHOLE-curve Vmax, which falls on a softened part
+  direction under consideration") is now read at the START of the curve: the slope after its first point when the
+  curve is straight there (two segment slopes within 2 % -- some plans carry a base shear from gravity in the first
+  step, IN_Ex15 Y about 94 kN, and a curve may start with a near-zero point), else the larger of the secant to the
+  first point and the first segment slope (a coarse first step after which the curve already softens: the shipped
+  IN_Ex1 X curve, where Ki then equals Ke and Te = T1 = 0.267 s, δt,DBE 0.286 in against 0.277 in before). A
+  least-squares slope over the first steps was tried first and rejected: on that coarse curve it fell below Ke. It was
+  the secant at 0.3 × the WHOLE-curve Vmax, which falls on a softened part
   of the curve when the peak lies far beyond the target (IN_Ex10 X: 303 against an initial 536 kN/mm, Te 0.166 s
   against T1 0.220 s). ASCE 41 is not in the India corpus; the clause is quoted as the module's existing ASCE 41-17
   references are (`pushover/postprocess.py` header: to be confirmed against ASCE 41-23 before a stamped report).
