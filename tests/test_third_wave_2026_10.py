@@ -562,3 +562,20 @@ def test_ex21_ddm_truss_restraints_and_gate():
     assert c["truss_top_chord_lateral"] == 5 * 11 and c["truss_bottom_chord_lateral"] == 7 * 3
     assert c["column_lateral"] > 0 and pl["truss_basis"][0]["bottom_chord_ties_mm"] == [4500.0, 9000.0, 13500.0]
     assert not [r for r in g["rows"] if not r["ok"]]
+
+
+def test_india_design_criteria_page_in_public_words(tmp_path):
+    """The India design-criteria draft (docx + html for the hub) says 'design engineer', and its page carries no
+    sweep-status key, plan key path or role key (P10)."""
+    job = os.path.join(GOLD, "IN_Ex10_SCBF_bigbox_flexdiaphragm_Indore")
+    if not os.path.isdir(job) or not ENGINE:
+        pytest.skip("IN_Ex10 gold job or HR engine not available")
+    import contextlib, io, re
+    from nlrha import design_criteria as DC
+    from snl import public_text as PT
+    with contextlib.redirect_stdout(io.StringIO()):
+        docx, html = DC.write(job, out=str(tmp_path))
+    h = open(html, encoding="utf-8").read()
+    vis = re.sub(r"(?s)<[^>]+>", " ", re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", h))
+    assert "design engineer" in vis and "engineer of record" not in vis.lower()
+    assert "NO_LIMIT_POINT" not in vis and "nl_plan" not in vis and PT.words(vis) == vis

@@ -5,6 +5,21 @@ the stage-2 tooling. This change alters one analysis model, the EBF link, so eve
 the IN_Ex19 stem: pushover, NLRHA and DDM) is due a re-run. Non-EBF models are built exactly as before. The full
 re-runs of all buildings were not started; the designs are still changing. The orchestrator below is for that re-run.
 
+## Status of the building-level runs (owner hold, 2026-11-01 19:03: no further nonlinear runs until the owner says go)
+
+Done, on sandbox copies:
+- the IN_Ex15 Y link-fix proof (main push, 3,860 s; table under P1);
+- the gravity regression against HR main for IN_Ex9, IN_Ex11, IN_Ex15 and IN_Ex1, plus the 00336f6 branch;
+- the IN_Ex9 and IN_Ex11 pushover X + Y regression against HR main.
+
+Pending (the commands are below; none were started after the hold):
+- the IN_Ex19 stem Y and IN_Ex19 main Y link-fix proofs;
+- the IN_Ex11 DDM B-1.2 refresh against HR main;
+- the IN_Ex19 earthquake DDM combination with the fixed link;
+- the IN_Ex21 nonlinear runs (stage 2);
+- the full re-runs of every EBF analysis (pushover, NLRHA, DDM) and of the other buildings, when the designs are
+  final.
+
 ## P1 — EBF link model (`pushover/fibre_model.py`, `member_response.py`, `steltic_ddm/model_gmnia.py`, `sections_fiber.py`)
 
 **What was wrong.** The Y-direction links of IN_Ex15, IN_Ex19 and the stem rotated 0.40–0.50 rad at 0.2–1.1 % storey
@@ -70,16 +85,17 @@ drift, where L/e × drift gives 0.02–0.10 rad. The Y pushovers lost 12–52 % 
 - the GMNIA links (two halves plus one spring, V_pL), on the IN_Ex15 gold when present.
 
 **Re-runs (proof, sandbox copies).**
+`scripts/link_proof.py` (new, read-only) prints the evidence below for any EBF job.
 Main push only (`--tail none`), Y direction, the frozen HR engine e340df8 as in October, so that only the link
-model differs. The October package is the reference; `scratch/compare_push.py` reads both.
+model differs. The October package is the reference; `scripts/link_proof.py <job> Y <L/e> pushover_proof` reads both.
 
 | IN_Ex15 Y (L/e = 10) | October (one-element link) | Link fix |
 |---|---|---|
 | Largest one-step loss of base shear | 16 % (126 → 137 mm) | none |
 | Link rotation at the IS-DBE target, against (L/e) × drift | 0.398 rad against 0.023 | 0.007 against 0.015 |
 | Link rotation at the IS-MCE target, against (L/e) × drift | 0.434 rad against 0.048 | 0.044 against 0.053 |
-| Te / T1 | — | 0.871 / 0.871 s |
-| V / VB at the IS-DBE / IS-MCE target | — | 2.33 / 2.58 |
+| Te / T1 | 0.870 / 0.871 s | 0.871 / 0.871 s |
+| V / VB at the IS-DBE / IS-MCE target | 1.83 / 2.00 | 2.33 / 2.58 |
 | Vmax up to the IS-MCE target | 8,773 kN | 11,333 kN (at 93 mm) |
 | End of the main push | 17,404 kN peak at 1,229 mm | 19,170 kN peak at 999 mm; numerical stop at 1,014 mm |
 
@@ -87,7 +103,14 @@ model differs. The October package is the reference; `scratch/compare_push.py` r
 - The rotations are now of the order of (L/e) × drift. Near the DBE target they are below it, because part of the
   drift there is still elastic; (L/e) × drift is the kinematics of the plastic mechanism.
 
-{{STEM_EX19}}
+- **Pending (owner hold):** the same proof for the IN_Ex19 stem (L/e = 9.44; its main push took about 12 min in the
+  OOM-stopped run, and was smooth to 109 in with no step loss) and for IN_Ex19 main Y (about an hour expected).
+  Command, from this checkout with `STELTIC_ENGINE_DIR` = the e340df8 steel_engine (or HR main for the official
+  re-run):
+  `python -m pushover run <job> --params <job>/hinge_params_collected.json --plasticity fibre --member-nseg 4 --dirs Y
+  --tail none --out <job>/pushover_proof --checkpoint-dir <job>/nl_checkpoints/pushover_proof --chunk-seconds 3300`.
+  Exit 75 means not finished: run the same command again. Then `python scripts/link_proof.py <job> Y <L/e>
+  pushover_proof`, the same reading as for IN_Ex15.
 
 - The IN_Ex19 stem pushover with the default tail (fine steps, then arc length) grew to 5 GB in the arc-length tail
   and was stopped by the box's memory limit (rc 137) after its main push had finished cleanly. The re-run of the stem
@@ -117,7 +140,15 @@ model differs. The October package is the reference; `scratch/compare_push.py` r
   member records, not the gravity states. Its records are identical to HR main's for IN_Ex15 and IN_Ex1; only the
   fingerprint differs, so a re-record follows. The 9 vendored modules and 2 section tables are byte-identical to both
   44b74de and 00336f6.
-- Analyses against HR main: RESULTS_ENGINE
+- Analyses against HR main:
+  - IN_Ex9 and IN_Ex11 pushover X + Y (this branch at f011521, HR main 44b74de): the curve CSVs are byte-identical to
+    the October packages, and T1, Vmax and the targets are equal.
+  - The analysis changes made since then reach only angle, double-angle and `truss` members, the DDM link spring,
+    the journal's restart path and the Vmax presentation. These two models have none of those members, so the result
+    holds for the final code. The planned re-check is on hold.
+  - Pending (owner hold): the IN_Ex11 DDM B-1.2 refresh against HR main:
+    `python -m steltic_ddm retry <job> --workers 1 --b12-only --no-block --combos 1.5DL+1.5LL 1.2DL+1.2LL+1.2W_X
+    1.2DL+1.2LL-1.2W_X 1.2DL+1.2LL+1.2W_Y 1.2DL+1.2LL-1.2W_Y`.
 - New section families: an IS 808 angle brace (ISA) now buckles about its v-v axis (`r_min_mm` of the IS 808 table)
   in the brace strengths and the backbone slenderness. MB / MC / CHS labels of HR main's tables resolve. A channel (MC)
   fibre section is built as an equal-flange I-section (same area, strong-axis inertia and plastic modulus): a modelling
@@ -165,6 +196,9 @@ displacement from it is uncertain (shown as computed)". IN_Ex10, for example, ha
     words;
   - the log lines stay in ddm_results.json.
 - DDM report footer "engineer of record" → "design engineer".
+- The India design-criteria draft (`nlrha/design_criteria.py`: docx, and html for the hub) now says "design
+  engineer". "No limit point" and the plan settings are in words instead of a status key and key paths, and the page
+  passes through `scrub_html`. The ASCE 7 (US) variant keeps "engineer of record", the term of that standard.
 - DDM viewer: roles shown in words (`role_labels`) and the mechanism text in words; colours are still keyed by role.
 - Meta line: the gravity status is in words.
 
@@ -223,7 +257,24 @@ cannot be saved half-way, but they are deterministic, and a failed `analyze` rev
 - `status` prints the queue. Q.runtime.log gets one line per chunk; Q.lock allows one `next` at a time.
 - Commands are the October re-run commands, with the checkpoint options added.
 
-**IN_Ex19 earthquake combination (1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z).** RESULTS_EX19
+**IN_Ex19 earthquake combination (1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z).** Not run (owner hold). What it needs:
+- The October result does not stand either way.
+  - The combination loads the Y-direction EBF links, and its numerical runaway at λ 1.318 matches the P1 symptom: a
+    probable cause, which the re-run will confirm or not.
+  - It must be re-run from the first step size with the fixed link.
+- The NL-30 ladder: Δλ 0.05 / 0.025 / 0.0125, with 2,400 / 4,800 / 9,600 s and 250 / 500 / 1,000 steps. The worst
+  case is 16,800 s on one core.
+- In chunks (the orchestrator's DDM step does the same):
+  - run `python -m steltic_ddm retry <job> --workers 1 --combos "1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z" --only-listed
+    --checkpoint-dir <job>/nl_checkpoints/ddm --chunk-seconds 3300 --no-block` again while it exits 75, then
+    `python -m snl report <job>`;
+  - each finished step size is stored;
+  - a step size longer than a chunk resumes by replay. In the October retry the converged steps were cheap: steps
+    1–50 in 108 s of the sweep's 2,592 s, the rest in step cuts near the end. So a replay costs little, unless it
+    diverges at a near-singular step; that rung then restarts live in its chunk, as IN_Ex15 did at call 86.
+- If a step size has to run whole: a process with no 2-hour cap (the owner's PC), with `STELTIC_ENGINE_DIR` = HR
+  main's steel_engine. Run `python -m steltic_ddm retry <job> --workers 1 --combos "1.2DL+1.2LL+1.2EQ_Y[ea]+0.3EQ_Z"
+  --only-listed`, then `python -m snl report <job>`: up to 4.7 h.
 
 ## IN_Ex21 angle-truss shed support (stage 2; MSME CHANGES_2026-10-msme-shed.md)
 
@@ -291,5 +342,10 @@ runs gravity in all three analyses. Checked on the MSME gold with the MSME engin
   - a real chunked EBF pushover repeating the uninterrupted one bit for bit;
   - the orchestrator;
   - IN_Ex21: double-angle registry values, fibre stiffness in and out of plane, the single-angle v-v stiffness,
-    `truss` members, bottom-chord tie reading, and the gold package build, restraint plan and DDM gate (skip-able).
-- Full suite: RESULTS_SUITE
+    `truss` members, bottom-chord tie reading, and the gold package build, restraint plan and DDM gate (skip-able);
+  - the India design-criteria page in public words.
+- Full suite with the HR main engine: **496 passed, 6 skipped** in 330 s (baseline 470 / 4).
+  - The 6 skips are the 4 of the baseline and the 2 IN_Ex21 gold tests, because the job is not yet in
+    /home/claude/gold.
+  - Against the MSME gold and engine (`STELTIC_EX21_JOB`, `STELTIC_ENGINE_DIR`), all 28 tests of the third-wave file
+    pass.
