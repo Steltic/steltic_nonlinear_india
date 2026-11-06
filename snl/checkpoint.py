@@ -529,8 +529,8 @@ def cpu_clock(c0):
     return j.cpu_elapsed() if j is not None and j.seg is not None else time.process_time() - c0
 
 
-CALIBRATION_BASIS = ("a fixed OpenSees run (a 10-element fibre cantilever, Steel01, 200 displacement steps), CPU seconds, "
-                     "the best of 3: about twice as long on a machine with half the speed")
+CALIBRATION_BASIS = ("a fixed OpenSees run (a 30-element fibre cantilever, Steel01, 2,000 displacement steps), CPU seconds, "
+                     "the best of 3 (about 0.5 s on the 2-core box): about twice as long on a machine with half the speed")
 
 
 def calibration_benchmark(repeats=3):
@@ -546,9 +546,9 @@ def calibration_benchmark(repeats=3):
         for _ in range(repeats):
             c0 = time.process_time()
             ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 3)
-            n = 10
+            n = 30
             for i in range(n + 1):
-                ops.node(i + 1, 0.0, 100.0 * i)
+                ops.node(i + 1, 0.0, 1000.0 * i / n)
             ops.fix(1, 1, 1, 1)
             ops.uniaxialMaterial("Steel01", 1, 50.0, 29000.0, 0.01)
             ops.section("Fiber", 1)
@@ -560,8 +560,8 @@ def calibration_benchmark(repeats=3):
             ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(n + 1, 1.0, 0.0, 0.0)
             ops.constraints("Plain"); ops.numberer("RCM"); ops.system("BandGeneral")
             ops.test("NormDispIncr", 1e-8, 50); ops.algorithm("Newton")
-            ops.integrator("DisplacementControl", n + 1, 1, 0.5); ops.analysis("Static")
-            for _ in range(200):
+            ops.integrator("DisplacementControl", n + 1, 1, 0.05); ops.analysis("Static")
+            for _ in range(2000):
                 if ops.analyze(1) != 0:
                     break
             ops.wipe()

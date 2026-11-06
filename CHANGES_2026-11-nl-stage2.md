@@ -256,7 +256,7 @@ the journal keeps a CPU clock. Stage 2 starts fresh anyway. One decision differs
     longer moves a DDM result.
   - Each sweep, run row and retry rung records `cpu_seconds`, and each run row its `time_limit_s`.
   - Each DDM output, and every retry or B-1.2 refresh record, carries the speed factor and `calibration_s`: the CPU
-    time of a fixed small OpenSees run, best of 3. The manifest gives the host's calibration and each job's DDM
+    time of a fixed small OpenSees run, best of 3 (about 0.5 s on this box). The manifest gives the host's calibration and each job's DDM
     settings. A wrong factor thus shows as a calibration time that does not fit it.
   - The gate requires the limit to equal 2,400 × the recorded factor. The PC uses 1.0.
 - **M7. Queue robustness.**
@@ -321,5 +321,23 @@ The earlier stage-2 tests were adapted:
 - the CPU-seconds wording;
 - the gate's factor rule;
 - the journal tests' fake clock now has `process_time`.
+
+**Real end-to-end check after the fixes** (Linux, one heavy slot, 2 workers).
+- **The bundle**, made by `bundle` from the HR gold, holds the whole IN_Ex12 building with its two nested units, at
+  HR e927f35 and NL 1f40a61. Only unitC_gym has collected values: the building and unitB_link are skipped, with the
+  reason. The NLRHA was cut to 2 records per level and the DDM to 1.5DL+1.5LL.
+- **Run 1** checked the versions (both matched). It was killed after 22 s with all its analyses, while the NLRHA ran;
+  gravity, pushover (each direction in its own process) and DDM were done.
+- **Run 2, the same command,** found every step current and finished the NLRHA and the report in 3 min.
+- **Run 3** found nothing to do. Both resumes reported `0 updated`: the unit's calc package kept its DDM block (M9).
+- **The zip:** 213 files; `verify` found 0 problems, with versions ok.
+- **What the manifest records:**
+  - the libraries: openseespy 3.8.0.0, numpy 2.5.4, scipy 1.18.1;
+  - the DDM's factor 1.0, its limit of 2,400 CPU seconds and the calibration time;
+  - per sweep and per record, the CPU time beside the wall time. With the other slot loaded, the NLRHA records got
+    about 50 % of the wall time as CPU.
+- **Peak memory:** pushover 218 MB (two direction processes), DDM 94 MB, NLRHA ×2 312 MB.
+- **One adjustment it led to:** the first calibration run took only 0.016 s, too short to time reliably. It is now
+  about 0.5 s.
 
 **Full suite** with HR main e927f35 as the engine: **558 passed, 4 skipped** (540 / 4 before the review fixes).
