@@ -195,5 +195,8 @@ the DDM to 1.5DL+1.5LL (`--job-args`).
   - a bundle folder named `stage2_*` was taken for a runner log;
   - the calc-package comparison (above).
 
-Full suite, with `STELTIC_ENGINE_DIR` set to the HR engine: 537 passed, 6 skipped. On `main` it was 515 passed,
-6 skipped.
+**Full suite**, with `STELTIC_ENGINE_DIR` set to HR main e927f35 (the engine the new IN_Ex21 gold needs): **539
+passed, 4 skipped**. On `main`, with the engine of the time, it was 515 passed and 6 skipped.
+- The two extra passes are the IN_Ex21 gold tests: the gold arrived on 2026-11-06, and these tests skip without it.
+- With the older HR engine 44b74de, those two fail on `main` too (`sections.double_angle_label` missing), so the
+  failure comes from the engine version, not from this branch.
