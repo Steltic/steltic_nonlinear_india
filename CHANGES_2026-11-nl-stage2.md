@@ -151,7 +151,7 @@ and can be resumed.
   the promotion.
 - **`sync`:**
   - takes `inputs` (NL input files taken from the source) and `quiet`;
-  - `NL_OUTPUTS` adds `stage2_*` and `*.before_refresh_*`.
+  - `NL_OUTPUTS` adds `stage2_*.log` (the runner's step logs) and `*.before_refresh_*`.
 
 ## Tests
 

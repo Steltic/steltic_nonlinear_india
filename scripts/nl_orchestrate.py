@@ -67,7 +67,7 @@ NL_OUTPUTS = ("pushover", "nlrha", "nl_checkpoints", "nlrha_probe", "pushover_pr
               "nl_hr_gravity.json", "steltic_viewer_bundle.html", "pushover_review.json", "nl_orchestrate_*",
               ".nl_orchestrate_*", "nl_promote_fibre.json", "nl_plan.json", "hinge_params*.json", "collect_*",
               ".batch_step_*", "batch.log", "batch_done.json", "merge_report.log", "retrieval_log.md", "*.pre_ddm.bak",
-              ".nl_sync.json", "stage2_*", "*.before_refresh_*")
+              ".nl_sync.json", "stage2_*.log", "*.before_refresh_*")
 SYNC_SKIP = ("__pycache__", "*.pyc")          # neither copied nor removed
 GRAVITY_META = ("engine_sha", "engine", "inputs_sha256", "source", "note", "dp_note", "job")
 

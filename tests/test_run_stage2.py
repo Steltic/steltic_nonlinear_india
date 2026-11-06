@@ -129,7 +129,7 @@ def test_plan_lists_the_runs_and_the_skips(tmp_path, capsys):
         for base, ds, fs in os.walk(gold):
             for f in fs:
                 p = os.path.join(base, f)
-                zf.write(p, "bundle/" + os.path.relpath(p, gold))
+                zf.write(p, "stage2_bundle/" + os.path.relpath(p, gold))   # a wrapper folder named like the runner files
     r2 = NS.main(["plan", "--gold", str(z), "--work", str(tmp_path / "w"), "--workers", "12", "--memory-gb", "16"])
     assert r2["jobs"] == r["jobs"] and r2["skipped"] == ["IN_ExU"]
 
@@ -221,7 +221,8 @@ def test_run_kill_and_resume_end_to_end(tmp_path):
 def test_a_closed_window_leaves_the_step_running_and_the_next_run_waits(tmp_path):
     """Only the runner is stopped (its window closed); its analysis process carries on. The next run waits for it,
     then continues: nothing runs twice at once."""
-    gold = _gold(tmp_path / "gold", names=("IN_ExT",), unit=False, params=("IN_ExT",))
+    _gold(tmp_path / "g" / "stage2_gold", names=("IN_ExT",), unit=False, params=("IN_ExT",))
+    gold = str(tmp_path / "g")                              # the jobs one folder down, in a folder named stage2_*
     eng = _engine(tmp_path)
     work, res = str(tmp_path / "work"), str(tmp_path / "res")
     cmd = _cmd(gold, work, res, eng, workers=2)
