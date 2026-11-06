@@ -328,7 +328,8 @@ def code_key() -> str:
     return h.hexdigest()[:16]
 
 
-NON_MODEL_ENV = ("SNL_DEADLINE", "SNL_JOBS", "SNL_FULL_CHUNK")   # scheduling, not model knobs
+NON_MODEL_ENV = ("SNL_DEADLINE", "SNL_JOBS", "SNL_FULL_CHUNK", "SNL_SPEED_FACTOR")   # scheduling, not model knobs
+# (SNL_SPEED_FACTOR scales the DDM sweep time limit, which is in the DDM journal key through its options)
 
 
 def model_env() -> dict:
@@ -372,10 +373,93 @@ def require_hash_seed() -> str:
 
 
 def run_key(params_path=None) -> dict:
-    """The parts every journal / cache key carries: the analysis code, the engine, the model knobs, the hash seed and
-    an outside --params file."""
-    return dict(code=code_key(), engine=engine_key(), env=model_env(), hashseed=require_hash_seed(),
-                params=file_digest(params_path) if params_path else None)
+    """The parts every journal / cache key carries: the analysis code, the engine, the section tables, the model knobs,
+    the hash seed and an outside --params file."""
+    return dict(code=code_key(), engine=engine_key(), tables=section_tables_key(), env=model_env(),
+                hashseed=require_hash_seed(), params=file_digest(params_path) if params_path else None)
+
+
+# ---------------------------------------------------------------------------------------------------------- stage 2
+# Every input file of a job that the NL analyses read. The HR files: the model, the configuration, the load plan, the
+# IS 1893 calculation, the design of record and everything under design/; the NL inputs beside them: the NL plan (of
+# the job and, for a unit, of its building) and the collected hinge parameters. They are in every journal / cache key
+# (hr_digest) and in the orchestrator's step fingerprint. Files the NL analyses WRITE are not inputs: the HR gravity
+# states and the site hazard are added to a key by name where an analysis reads them (NL_DERIVED_INPUTS), and the
+# DDM block the DDM writes into design/calc_package.json ("ddm_analysis", with its backup) is left out of the digest.
+HR_INPUT_FILES = ("model_opensees.py", "cfg.py", "load_plan.json", "seismic_calc.json", "design_of_record.json",
+                  "nl_plan.json", "hinge_params_collected.json")
+HR_INPUT_DIRS = ("design",)
+NL_DERIVED_INPUTS = ("nl_hr_gravity.json", "nlrha/site_hazard.json")
+NL_WRITES_IN_DESIGN = (("design/calc_package.json", "ddm_analysis"),)     # (file, the key the NL writes into it)
+NL_BACKUP_SUFFIXES = (".pre_ddm.bak",)
+SECTION_TABLES = ("is808_shapes.csv", "is1161_tubes.csv", "aisc_shapes.csv")
+
+
+def hr_input_files(job) -> list:
+    """(name relative to the job, path) of every input file of the job (HR_INPUT_FILES, the building's nl_plan.json for
+    a unit as '../nl_plan.json', and every file under design/ in sorted order, the NL backups left out). Files that are
+    not there are listed too: a file that appears or disappears changes the digest."""
+    job = os.path.normpath(str(job))
+    out = [(rel, os.path.join(job, rel)) for rel in HR_INPUT_FILES]
+    out.append(("../nl_plan.json", os.path.join(os.path.dirname(job), "nl_plan.json")))
+    for d in HR_INPUT_DIRS:
+        for root, dirs, files in os.walk(os.path.join(job, d)):
+            dirs.sort()
+            for f in sorted(files):
+                if f.endswith(NL_BACKUP_SUFFIXES):
+                    continue
+                p = os.path.join(root, f)
+                out.append((os.path.relpath(p, job).replace(os.sep, "/"), p))
+    return out
+
+
+def hr_content(job, rel, path) -> bytes:
+    """The bytes of one input file as the digest sees them: a file the NL writes a block into (design/calc_package.json)
+    without that block, so the DDM's own write is not an input change; b'<missing>' when the file is not there."""
+    if not os.path.isfile(path):
+        return b"<missing>"
+    raw = open(path, "rb").read()
+    for f, key in NL_WRITES_IN_DESIGN:
+        if rel == f:
+            try:
+                import json as _json
+                d = _json.loads(raw.decode("utf-8"))
+                if isinstance(d, dict) and key in d:
+                    d.pop(key)
+                    return _json.dumps(d, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            except Exception:                            # noqa: BLE001 -- unreadable: the bytes as they are
+                pass
+    return raw
+
+
+def hr_digest(job, extra=()) -> str:
+    """sha256 (16 hex) of the job's input files (hr_input_files) by relative name and content, plus the named `extra`
+    files of the job (NL_DERIVED_INPUTS an analysis reads)."""
+    import hashlib
+    h = hashlib.sha256()
+    files = hr_input_files(job) + [(rel, os.path.join(str(job), rel)) for rel in extra]
+    for rel, p in files:
+        h.update(rel.encode() + b"\0")
+        h.update(hr_content(job, rel, p))
+        h.update(b"\0")
+    return h.hexdigest()[:16]
+
+
+def section_tables_key(engine_dir=None) -> str:
+    """sha256 (16 hex) of the section tables the NL reads (pushover/sections_db.py, steltic_ddm/sections_fiber.py):
+    $IS808_CSV and $AISC_CSV when set, the engine's tables, and the NL's own copies."""
+    import hashlib
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    eng = engine_dir if engine_dir is not None else os.environ.get("STELTIC_ENGINE_DIR")
+    paths = [os.environ.get("IS808_CSV"), os.environ.get("AISC_CSV")]
+    paths += [os.path.join(eng, t) for t in SECTION_TABLES] if eng else []
+    paths += [os.path.join(root, "steltic_ddm", "data", t) for t in SECTION_TABLES]
+    paths.append(os.path.join(root, "pushover", "aisc_shapes.csv"))
+    h = hashlib.sha256()
+    for p in paths:
+        if p and os.path.isfile(p):
+            h.update(os.path.basename(p).encode()); h.update(open(p, "rb").read())
+    return h.hexdigest()[:16]
 
 
 def clock(t0):

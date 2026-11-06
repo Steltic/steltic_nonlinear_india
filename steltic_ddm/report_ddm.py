@@ -5,6 +5,16 @@ import datetime, hashlib, html, json, os
 from . import phi_s
 
 
+
+def _time_limit_text(o):
+    """Stage 2: the sweep time limit as a compute budget -- the limit, and (when recorded) the reference-machine base
+    and this machine's speed factor; October outputs carry the limit alone (the owner's PC, factor 1.0)."""
+    tl = float(o.get("time_limit") or 0)
+    if o.get("speed_factor") is None:
+        return "%.0f s" % tl
+    return "%.0f s (%.0f s on the reference machine x speed factor %g; x2, x4 for the smaller-step retries)" % (
+        tl, float(o.get("time_limit_base") or tl), float(o["speed_factor"]))
+
 def _h(s):
     return html.escape(str(s))
 
@@ -524,8 +534,8 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
              'A converged step beyond the plausibility bounds — |λ| &gt; 10, a λ change &gt; 1.0 in one step, drift from the '
              'base &gt; 10 %%, max fibre strain &gt; 1 000 ε<sub>y</sub> — is a numerical runaway: the step is discarded '
              '(not in the curve, the peak or the forces at λ = 1) and the sweep is SOLVER_FAILURE, never a capacity. '
-             'Time limit per sweep %.0f s.</li></ul>' % (
-                 o.get("strain_cap") or 0, o.get("time_limit") or 0))
+             'Time limit per sweep %s.</li></ul>' % (
+                 o.get("strain_cap") or 0, _h(_time_limit_text(o))))
     b11 = o.get("b11") or {}
     if b11:
         P.append('<p>B-1.1 preconditions: sections %s (IS 800 Table 2); lateral restraint: %s. <i>%s</i></p>' % (
