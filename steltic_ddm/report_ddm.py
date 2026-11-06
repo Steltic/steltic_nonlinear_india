@@ -14,7 +14,9 @@ def _time_limit_text(o):
         return "%.0f s" % tl
     cal = (", calibration run %.2f s" % float(o["calibration_s"])) if o.get("calibration_s") is not None else ""
     return ("%.0f CPU seconds (%.0f s on the reference machine x speed factor %g%s; x2, x4 for the smaller-step "
-            "retries)" % (tl, float(o.get("time_limit_base") or tl), float(o["speed_factor"]), cal))
+            "retries). The CPU-time budget gives somewhat more compute than October's wall-clock limit (which also "
+            "counted time spent waiting for a processor), so a sweep stopped on the limit is not directly comparable "
+            "with an October one" % (tl, float(o.get("time_limit_base") or tl), float(o["speed_factor"]), cal))
 
 def _h(s):
     return html.escape(str(s))

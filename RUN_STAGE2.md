@@ -126,7 +126,15 @@ python scripts/run_stage2.py run --gold <bundle.zip> --engine <steltic_india/ste
 - Send the owner the two commits with the bundle.
 
 **Checking a results zip.** `python scripts/run_stage2.py verify --zip <zip>` checks every file against the
-manifest's sha256 and prints whether the versions matched.
+manifest's sha256 and prints whether the versions matched. It also checks that every DDM output records speed factor
+1.0 and the 2,400 CPU-second budget (each sweep at 2,400, 4,800 or 9,600 s), and fails otherwise.
+
+**A bundle without commits.** A bundle made from a folder that is not a clean git clone (`bundle --accept-versions`)
+records no commit, so `plan` and `run` refuse it. Only `--accept-versions` runs it.
+
+**Moved-aside outputs.** When a new bundle changes a job, that job's earlier outputs and saves are renamed
+`*.before_refresh_<time>` in the work folder. They are never in the zip, and they are deleted once the analysis has
+run again successfully. The earlier design's `nl_promote_fibre.json.before_refresh_*` is kept; it is a few kB.
 
 **Testing only.** `--accept-versions` runs past a version mismatch and records it in the manifest. The owner never
 uses it.

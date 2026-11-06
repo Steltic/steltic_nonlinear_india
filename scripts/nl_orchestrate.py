@@ -209,6 +209,7 @@ def plan(args):
     d = dict(version=1, created=_now(), nl_root=NL_ROOT, heavy=args.heavy, python=args.python,
              env=dict(STELTIC_ENGINE_DIR=os.path.abspath(args.engine) if args.engine else os.environ.get("STELTIC_ENGINE_DIR", ""),
                       MPLBACKEND="Agg", RAG_API_URL="", PYTHONDONTWRITEBYTECODE="1", PYTHONHASHSEED="0",
+                      OMP_NUM_THREADS="1",
                       SNL_SPEED_FACTOR="%g" % float(sf)),
              steps=steps)
     save(args.queue, d)
@@ -315,7 +316,24 @@ def set_aside_outputs(s, stamp):
             pass
     if ck:
         s["set_aside"] = next((m for m in moved if m.startswith(ck)), s.get("set_aside"))
+    s.setdefault("set_aside_paths", []).extend(m for m in moved if ".before_refresh_" in m)
     return moved
+
+
+def drop_set_aside(s):
+    """Re-check (low): once a step's re-run has finished, the outputs and journals set aside for it are removed --
+    only what set_aside_outputs moved for this step (names with .before_refresh_)."""
+    for p in s.pop("set_aside_paths", None) or []:
+        if ".before_refresh_" not in os.path.basename(p):
+            continue
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            elif os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+    s.pop("set_aside", None)
 
 
 def refresh(args):
@@ -547,6 +565,7 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
     s.pop("stalled_reason", None)
     if rc == 0:
         s["state"] = "done"
+        drop_set_aside(s)                                        # the re-run succeeded: the old outputs go
         try:
             s["fingerprint"] = fingerprint(d, s)                 # stage 2: what the finished step read
         except Exception as ex:                                   # noqa: BLE001 -- never lose the finished state

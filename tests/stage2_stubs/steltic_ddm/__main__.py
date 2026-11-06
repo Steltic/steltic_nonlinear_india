@@ -13,4 +13,4 @@ if __name__ == "__main__":
     sf = float(opt(a, "--speed-factor", os.environ.get("SNL_SPEED_FACTOR", "1")))
     n = pieces(job, ck, ["s%02d" % i for i in range(6)], speed() / max(1, w) * 2, "ddm")
     note(job, "ddm run workers=%d computed=%d speed_factor=%g" % (w, n, sf))
-    json.dump(dict(options=dict(speed_factor=sf, time_limit=2400.0 * sf)), open(os.path.join(job, "ddm_results.json"), "w"))
+    json.dump(dict(options=dict(speed_factor=sf, time_limit=2400.0 * sf, time_limit_base=2400.0)), open(os.path.join(job, "ddm_results.json"), "w"))

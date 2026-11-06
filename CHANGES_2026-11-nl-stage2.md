@@ -259,6 +259,9 @@ the journal keeps a CPU clock. Stage 2 starts fresh anyway. One decision differs
     time of a fixed small OpenSees run, best of 3 (about 0.5 s on this box). The manifest gives the host's calibration and each job's DDM
     settings. A wrong factor thus shows as a calibration time that does not fit it.
   - The gate requires the limit to equal 2,400 × the recorded factor. The PC uses 1.0.
+  - The CPU-time budget gives somewhat more compute than October's wall-clock limit, which also counted the time a
+    sweep waited for a processor on the loaded 12-worker PC; a sweep stopped on its limit is therefore not directly
+    comparable with an October one. The DDM report's basis says so.
 - **M7. Queue robustness.**
   - The queue is written with flush and fsync, and the previous one is kept as `.bak`; an unreadable queue falls
     back to it.
@@ -341,3 +344,56 @@ The earlier stage-2 tests were adapted:
   about 0.5 s.
 
 **Full suite** with HR main e927f35 as the engine: **558 passed, 4 skipped** (540 / 4 before the review fixes).
+
+## Fixes from the re-check of c39942b (`briefs/NL_STAGE2_REVIEW.md`, top section)
+
+- **R1. The watchdog counts every process a step has started.**
+  - Before, the watchdog summed the CPU of the processes alive at each poll. When the pushover's X child ended, its
+    CPU left the sum, and the Y child, computing at full speed, looked flat until it had used more than X. A pushover
+    with an X longer than 30 minutes was killed 30 minutes into Y.
+  - Now `Run.poll` gives the watchdog the cumulative sample of the command: every process it has started, with the
+    last CPU time of those that have ended. The step progresses while any of them computes.
+  - The NLRHA and DDM parents use the same measure, so a parent's own work after its pool has closed counts too.
+  - A step whose processes all stop computing is still stopped after the window.
+- **R2. A step interrupted in its first run follows the redone gravity record.**
+  - A step part-way through its first run has no finished command, so an engine change does not put it into
+    `recheck`. It kept its old start fingerprint, and a later refresh set aside the records computed since.
+  - Now, when the gravity record is redone, `reconcile_rechecks` also looks at every unfinished step of the job that
+    has a start fingerprint:
+    - if the gravity states, the section tables or the inputs differ, the step starts again (its partial outputs set
+      aside, a fresh start fingerprint);
+    - otherwise its records stand, and its start fingerprint becomes the current one.
+  - The reviewer's case now computes the 22 records once (26 before).
+- **R3. A bundle without commits is refused.** `plan` and `run` refuse a bundle with no HR or NL commit, or one made
+  from unclean checkouts (`accepted_unclean`), unless `--accept-versions` is given.
+- **M6. `verify` checks the DDM budget.**
+  - Every `ddm_results.json` in a results zip must record speed factor 1.0, a limit of 2,400 CPU seconds and a base
+    of 2,400 s.
+  - Every sweep and retry rung must have 2,400, 4,800 or 9,600 s.
+  - Otherwise `verify` lists each output and fails (exit 4).
+  - The stand-in DDM records `time_limit_base` as the real one does.
+- **Low notes.**
+  - `run` checks the versions before it extracts or syncs the bundle, so a refused run changes nothing in the work
+    folder.
+  - `results` deletes only its own `stage2_results_*` temporary files in `_claude_stage`.
+  - The outputs and journals set aside for a step (`*.before_refresh_*`) are deleted once that step's re-run has
+    finished successfully, by the PC runner and the box orchestrator alike. A failed re-run keeps them. The earlier
+    design's fibre promotions file belongs to no single step and is kept.
+  - The box orchestrator's queue sets `OMP_NUM_THREADS=1`, as the PC's does, so threaded BLAS cannot count extra
+    threads' CPU against a DDM budget.
+  - `status` before any run says so and exits 0. The launcher no longer reports it as an unexpected error.
+  - RUN_STAGE2.md, "For the lead": the DDM check of `verify`, the refusal of a bundle without commits, and when
+    moved-aside outputs are deleted.
+
+**Tests.** `tests/test_stage2_recheck_2026_11.py`, 12 tests:
+- R1: two children run one after the other, each computing longer than the window; a pool, then the parent's own
+  post-processing; a step that stops computing after its child has ended is still stopped. The first two fail on
+  c39942b.
+- R2: the reconcile cases, and the reviewer's end-to-end run. With the stand-in gravity record taken from the engine
+  (`STUB_GRAVITY_FROM_ENGINE`), the run is killed twice, with the engine changed in between; it computes 22 records
+  after the change, against 26 on c39942b.
+- R3, with the run refused before anything is extracted.
+- M6, `verify`, and the report text.
+- The low notes.
+
+**Full suite** with HR main e927f35 as the engine: **570 passed, 4 skipped** (558 / 4 at c39942b).

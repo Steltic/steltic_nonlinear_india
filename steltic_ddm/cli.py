@@ -41,7 +41,8 @@ def resolve_time_limit(explicit=None, factor=None, base=None):
     return dict(time_limit=b * f, speed_factor=f, time_limit_base=b,
                 time_limit_basis="compute budget: %.0f s on the reference machine (the owner's PC, speed factor 1.0) x "
                                  "this machine's speed factor %g = %.0f CPU seconds of the sweep's process for the first "
-                                 "step size (x2, x4 for the NL-30 retries); a pause or other programs do not count"
+                                 "step size (x2, x4 for the NL-30 retries); a pause or other programs do not count, "
+                                 "so this gives somewhat more compute than the October wall-clock limit"
                                  % (b, f, b * f))
 
 

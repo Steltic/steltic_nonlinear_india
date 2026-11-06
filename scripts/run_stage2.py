@@ -651,7 +651,7 @@ def plan_queue(work, jobs_root, job_ids, args, src, log=None):
             if s["kind"] == "gravity" and "input files changed" in reason:
                 p = os.path.join(s["job"], "nl_promote_fibre.json")
                 if os.path.exists(p):
-                    NO._replace(p, p + ".before_refresh_" + time.strftime("%Y%m%d%H%M%S"))
+                    NO._replace(p, p + ".before_refresh_" + time.strftime("%Y%m%d%H%M%S"))   # kept: no one step owns it
                     _say("%s: the design changed -- the earlier fibre promotions set aside" % sid, log)
         have = {s["id"].rsplit("/", 1)[0] for s in d["steps"]}
     else:
@@ -949,6 +949,7 @@ def _finish_step(d, s, r, rc, log, py, env, live, sch):
             s["fingerprint"] = dict(error="%s: %s" % (type(ex).__name__, ex))
         if s["kind"] == "gravity":
             NO.reconcile_rechecks(d, s["job"])
+        NO.drop_set_aside(s)                                     # the re-run succeeded: the old outputs go
     elif r.hung:
         s["state"] = "failed"
         s["failed_reason"] = ("no CPU progress for %.0f min: an analysis process probably died (it was stopped); see "
@@ -1168,7 +1169,7 @@ def write_results(work, d, args, results_dir, log=None, totals=None):
     every file) and STAGE2_RUN.log. Written beside as <zip>.manifest.json too."""
     os.makedirs(results_dir, exist_ok=True)
     for f in os.listdir(results_dir):                            # review L11: a zip left half-written by a kill
-        if f.endswith((".zip_tmp", ".json_tmp")):
+        if f.startswith("stage2_results_") and f.endswith((".zip_tmp", ".json_tmp")):   # only the runner's own
             try:
                 os.remove(os.path.join(results_dir, f))
             except OSError:
@@ -1467,8 +1468,8 @@ def cmd_status(a):
     a = _defaults(a)
     q = os.path.join(a.work, QUEUE_NAME)
     if not os.path.exists(q) and not os.path.exists(q + ".bak"):
-        print("no stage-2 queue in %s" % a.work)
-        return 1
+        print("No stage-2 run in %s yet." % a.work)
+        return 0
     d = NO.load(q) if os.path.exists(q) else NO.load(q + ".bak")
     print("%-62s %-8s %4s %9s %9s %8s" % ("step", "state", "runs", "time", "CPU", "peak MB"))
     for s in d["steps"]:
@@ -1495,6 +1496,32 @@ def cmd_results(a):
     return 0
 
 
+def ddm_budget_problems(zpath, want_factor=SPEED_FACTOR, base=2400.0):
+    """Re-check M6: every DDM output in a results zip must record the speed factor `want_factor` and the budget
+    base x factor (2,400 CPU seconds on the PC), and every sweep a rung limit of that budget x 1, 2 or 4. A problem
+    text per output that does not."""
+    out, want = [], base * want_factor
+    with zipfile.ZipFile(zpath) as z:
+        for n in sorted(x for x in z.namelist() if x.endswith("/ddm_results.json")):
+            try:
+                d = json.loads(z.read(n))
+                o, runs = (d.get("options") or {}), (d.get("runs") or [])
+                f, tl, tb = o.get("speed_factor"), o.get("time_limit"), o.get("time_limit_base")
+                ok = (f is not None and abs(float(f) - want_factor) < 1e-9 and tl is not None
+                      and abs(float(tl) - want) < 0.5 and tb is not None and abs(float(tb) - base) < 0.5)
+                limits = [float(x["time_limit_s"]) for r in runs for x in [r] + list(r.get("retries") or [])
+                          if x.get("time_limit_s") is not None]
+            except Exception as ex:                              # noqa: BLE001
+                out.append("DDM budget: %s unreadable (%s: %s)" % (n, type(ex).__name__, ex)); continue
+            if not ok:
+                out.append("DDM budget: %s records speed factor %s and a limit of %s s (base %s s), not factor %g and "
+                           "%.0f CPU seconds" % (n, f, tl, tb, want_factor, want))
+            odd = sorted({x for x in limits if not any(abs(x - want * k) < 0.5 for k in (1, 2, 4))})
+            if odd:
+                out.append("DDM budget: %s has sweeps with limits %s s, not %.0f s x 1, 2 or 4" % (n, odd, want))
+    return out
+
+
 def cmd_verify(a):
     """The lead's side: every file of a results zip against the sha256 in its manifest."""
     bad, n = [], 0
@@ -1513,8 +1540,9 @@ def cmd_verify(a):
                 bad.append("changed: " + rel)
         extra = sorted(x for x in names if x.startswith("jobs/") and not x.endswith("/") and x not in man.get("files", {}))
     bad += ["not in the manifest: " + x for x in extra]
+    bad += ddm_budget_problems(a.zip, want_factor=SPEED_FACTOR)  # re-check M6: the PC's factor and budget
     s = man.get("summary") or {}
-    print("%s: %d files checked, %d problem(s); steps %s; versions ok %s%s" % (
+    print("%s: %d files checked (and every DDM output's factor and budget), %d problem(s); steps %s; versions ok %s%s" % (
         a.zip, n, len(bad), {k: v for k, v in s.items()}, (man.get("versions") or {}).get("ok"),
         "; MIXED versions %s" % man["mixed_versions"] if man.get("mixed_versions") else ""))
     for b in bad[:50]:
