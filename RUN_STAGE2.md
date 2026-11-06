@@ -31,8 +31,8 @@ git fetch
 git checkout <the HR version from the lead>
 ```
 
-The first run sets up its own Python (3.12, with OpenSees) in `%USERPROFILE%\india\stage2`. It downloads about
-500 MB once. There is nothing else to install.
+The first run sets up its own Python (3.12, with OpenSees) in `%USERPROFILE%\india\stage2`. It downloads Python
+and the analysis libraries once, a few hundred MB. There is nothing else to install.
 
 ## 2. Put the gold bundle in place
 
