@@ -156,6 +156,8 @@ and can be resumed.
   - takes `inputs` (NL input files taken from the source) and `quiet`;
   - `NL_OUTPUTS` adds `stage2_*.log` (the runner's step logs) and `*.before_refresh_*`.
 
+**CPU time beside wall time** in each NLRHA record (`cpu_seconds`), the orchestrator chunks, the runner steps and STAGE2_MANIFEST (`cpu_s`, `nlrha_records`): a pause shows as wall time far above CPU time.
+
 ## Tests
 
 `tests/test_stage2_2026_11.py`, 15 tests:

@@ -50,7 +50,7 @@ def summarise(results, pkg, level: str, target_label: str, T1: float | None = No
                         peak_roof_mm=[v * 25.4 for v in (r.get("peak_roof_in") or [0, 0])],
                         residual_max=(max(r["residual_drift"]) if r["converged"] else None),
                         base_shear_kN=[(v * KIP_TO_KN if v is not None else None) for v in vb],
-                        seconds=r.get("seconds"), steps=r.get("steps"), retry=r.get("retry")))
+                        seconds=r.get("seconds"), cpu_seconds=r.get("cpu_seconds"), steps=r.get("steps"), retry=r.get("retry")))
     drifts = np.array([r["peak_story_drift"] for r in ok]) if ok else np.zeros((0, n_story, 2))
     storey = []
     for i in range(n_story):

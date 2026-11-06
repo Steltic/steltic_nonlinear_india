@@ -176,6 +176,35 @@ def tree_rss_mb(pid):
         return None
 
 
+def children_cpu_s():
+    """POSIX: CPU seconds (user + system) of every child this process has reaped, with their own reaped children --
+    read just before and after one step's process is reaped, the difference is that step's CPU exactly. None on
+    Windows (no resource module): the step's process tree is sampled instead (tree_cpu_s)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    u = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return u.ru_utime + u.ru_stime
+
+
+def tree_cpu_s(pid):
+    """{(pid, start time): CPU seconds so far} of a process and its descendants (psutil); {} without psutil."""
+    try:
+        import psutil
+        p = psutil.Process(pid)
+        out = {}
+        for x in [p] + p.children(recursive=True):
+            try:
+                t = x.cpu_times()
+                out[(x.pid, x.create_time())] = t.user + t.system
+            except Exception:                                    # noqa: BLE001 -- it just ended
+                pass
+        return out
+    except Exception:                                            # noqa: BLE001
+        return {}
+
+
 def kill_tree(proc):
     """Stop a step's process and its pool workers."""
     try:
@@ -518,6 +547,7 @@ class Run:
         self.s, self.width, self.mem, self.py, self.env, self.cwd = s, width, mem, py, env, cwd
         self.cmds = [fill(c, py, width) for c in (s.get("pre") or [])] + [fill(s["cmd"], py, width)]
         self.i, self.proc, self.peak, self.t0 = 0, None, None, time.time()
+        self.cpu, self._seen = 0.0, {}                          # CPU seconds of the finished commands; tree samples
         self.logp = os.path.join(s["job"], "stage2_%s.log" % s["kind"])
         self.rcs = []
 
@@ -536,9 +566,15 @@ class Run:
         m = tree_rss_mb(self.proc.pid)
         if m is not None:
             self.peak = max(self.peak or 0.0, m)
+        c0 = children_cpu_s()
+        if c0 is None:                                          # Windows: sample the tree (the last poll is lost)
+            self._seen.update(tree_cpu_s(self.proc.pid))
         rc = self.proc.poll()
         if rc is None:
             return None
+        c1 = children_cpu_s()
+        self.cpu += (c1 - c0) if c0 is not None else sum(self._seen.values())
+        self._seen = {}
         self._lf.close()
         self.rcs.append(rc)
         if self.i + 1 < len(self.cmds):                          # the report's design criteria: never blocks the report
@@ -606,7 +642,8 @@ def run_queue(q, d, workers, mem_gb, py, log=None, poll_s=3.0, stop_after=None):
                 s = r.s
                 sec = time.time() - r.t0
                 ch = dict(start=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(r.t0)), end=_now(), rc=rc,
-                          seconds=round(sec), workers=r.width, peak_rss_mb=round(r.peak) if r.peak else None)
+                          seconds=round(sec), cpu_s=round(r.cpu, 1), workers=r.width,
+                          peak_rss_mb=round(r.peak) if r.peak else None)
                 s["chunks"].append(ch)
                 s.pop("pid", None)
                 again = False
@@ -647,8 +684,9 @@ def run_queue(q, d, workers, mem_gb, py, log=None, poll_s=3.0, stop_after=None):
                 else:
                     s["state"] = "failed"
                     s["failed_reason"] = "exit code %s; see %s" % (rc, r.logp)
-                _say("%-6s %-60s rc %s, %s, peak %s MB" % ("done" if rc == 0 else "FAILED", sid, rc, _hms(sec),
-                                                         ch["peak_rss_mb"] if ch["peak_rss_mb"] is not None else "?"), log)
+                _say("%-6s %-60s rc %s, %s, CPU %s, peak %s MB" % ("done" if rc == 0 else "FAILED", sid, rc, _hms(sec),
+                                                                  _hms(r.cpu),
+                                                                  ch["peak_rss_mb"] if ch["peak_rss_mb"] is not None else "?"), log)
                 NO.save(q, d)
     except KeyboardInterrupt:
         _say("stopped by the user: the running steps are interrupted; run the same command again to continue", log)
@@ -694,6 +732,19 @@ def fingerprints(d):
                 hr_git=git(os.path.dirname(eng)) if eng else None, section_tables=CK.section_tables_key(eng))
 
 
+def nlrha_record_times(job):
+    """Per NLRHA record: the wall and CPU seconds the analysis recorded (nlrha/<level>/nlrha_package.json)."""
+    out = []
+    for lv in ("DBE", "MCE"):
+        try:
+            d = json.load(open(os.path.join(job, "nlrha", lv, "nlrha_package.json"), encoding="utf-8"))
+        except Exception:                                        # noqa: BLE001
+            continue
+        for r in ((d.get("response_summary") or d).get("per_record") or []):
+            out.append(dict(level=lv, record=r.get("record"), seconds=r.get("seconds"), cpu_seconds=r.get("cpu_seconds")))
+    return out
+
+
 def manifest(d, work, args, totals):
     jobs = {}
     for s in d["steps"]:
@@ -704,6 +755,10 @@ def manifest(d, work, args, totals):
                                                          "fingerprint", "notes") if s.get(k) is not None}
         sec = sum(c.get("seconds") or 0 for c in s.get("chunks") or [])
         j["steps"][s["kind"]]["seconds"] = sec
+        # CPU time beside the wall time (all processes of the step): a pause of the PC shows as seconds >> cpu_s
+        j["steps"][s["kind"]]["cpu_s"] = round(sum(c.get("cpu_s") or 0 for c in s.get("chunks") or []), 1)
+        if s["kind"] == "nlrha":
+            j["nlrha_records"] = nlrha_record_times(s["job"])
         pk = [c.get("peak_rss_mb") for c in s.get("chunks") or [] if c.get("peak_rss_mb") is not None]
         j["steps"][s["kind"]]["peak_rss_mb"] = max(pk) if pk else None
         if s.get("estimate"):

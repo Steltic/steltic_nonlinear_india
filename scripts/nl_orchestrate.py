@@ -446,10 +446,12 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
     except Exception:                                                  # noqa: BLE001
         had, st = None, {}
     peak = st.get("peak_rss_mb") if isinstance(st, dict) else None    # stage 2: the analysis's peak memory
+    cpu = st.get("cpu_s") if isinstance(st, dict) else None           # ... and its CPU time
     after = progress_of(s)
     is_full = (had if had is not None else chunk) >= FULL_SHARE * full_chunk
     ch = dict(start=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0)), end=_now(), rc=rc, seconds=round(sec),
-              progress=after, had_s=round(had) if had is not None else None, full=bool(is_full), peak_rss_mb=peak)
+              progress=after, had_s=round(had) if had is not None else None, full=bool(is_full), peak_rss_mb=peak,
+              cpu_s=cpu)
     s["chunks"].append(ch)
     s.pop("stalled_reason", None)
     if rc == 0:
@@ -478,8 +480,9 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
                                        "cached record: %s)" % (s["no_gain_full_chunks"], after))
     else:
         s["state"] = "failed"
-    _log(q, "%s  %s  %-48s rc=%s seconds=%.0f peak_rss=%s state=%s%s" % (
-        ch["start"], ch["end"], s["id"], rc, sec, ("%.0fMB" % peak) if peak is not None else "n/a", s["state"],
+    _log(q, "%s  %s  %-48s rc=%s seconds=%.0f cpu=%s peak_rss=%s state=%s%s" % (
+        ch["start"], ch["end"], s["id"], rc, sec, ("%.0f" % cpu) if cpu is not None else "n/a",
+        ("%.0fMB" % peak) if peak is not None else "n/a", s["state"],
         (" (%s)" % s["stalled_reason"]) if s.get("stalled_reason") else ""))
     save(q, d)
     return rc
@@ -494,15 +497,18 @@ def _exec(a):
     with open(a.stamp, "w", encoding="utf-8") as f:
         json.dump(dict(slot_start=t0, deadline=dl), f)
     env = dict(os.environ, SNL_DEADLINE="%.0f" % dl)
+    u0 = resource.getrusage(resource.RUSAGE_CHILDREN)
     try:
         rc = subprocess.call(a.command, env=env, timeout=max(1.0, dl - t0 + MARGIN_S / 2))
     except subprocess.TimeoutExpired:
         rc = 124
     # stage 2: the peak resident memory of the analysis and the processes it waited for (Linux: kB; a killed command
-    # is waited for too)
-    peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.0
+    # is waited for too), and their CPU time beside the wall time (a pause of the machine shows as wall >> CPU)
+    u = resource.getrusage(resource.RUSAGE_CHILDREN)
+    peak = u.ru_maxrss / 1024.0
     with open(a.stamp, "w", encoding="utf-8") as f:
-        json.dump(dict(slot_start=t0, deadline=dl, end=time.time(), rc=rc, peak_rss_mb=round(peak, 1)), f)
+        json.dump(dict(slot_start=t0, deadline=dl, end=time.time(), rc=rc, peak_rss_mb=round(peak, 1),
+                       cpu_s=round(u.ru_utime + u.ru_stime - u0.ru_utime - u0.ru_stime, 1)), f)
     return rc
 
 

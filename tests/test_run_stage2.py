@@ -202,6 +202,9 @@ def test_run_kill_and_resume_end_to_end(tmp_path):
     assert man["jobs"]["IN_ExU"]["steps"]["pushover"]["state"] == "skipped"
     assert man["jobs"]["IN_ExT"]["gate"]["status"] == "COMPLETE"
     assert man["jobs"]["IN_ExT"]["steps"]["nlrha"]["seconds"] > 0
+    assert all(st_.get("cpu_s") is not None for st_ in man["jobs"]["IN_ExT"]["steps"].values() if st_["state"] == "done")
+    assert man["jobs"]["IN_ExT"]["nlrha_records"] == [dict(level="DBE", record=1, seconds=2.0, cpu_seconds=1.9),
+                                                       dict(level="MCE", record=1, seconds=2.0, cpu_seconds=1.9)]
     assert set(man["files"]) == {n for n in names if n.startswith("jobs/")}
     import run_stage2 as NS
     import argparse
@@ -249,3 +252,40 @@ def test_a_second_runner_on_the_same_folder_is_refused(tmp_path):
     (w / "stage2.lock").write_text("999999 then\n")                  # a dead runner's lock is taken over
     with NS.Lock(str(w)):
         assert (w / "stage2.lock").read_text().startswith(str(os.getpid()))
+
+
+def test_cpu_time_is_recorded_beside_the_wall_time(tmp_path):
+    """A pause of the machine shows as wall time far above CPU time: the runner's step record, the orchestrator's chunk
+    stamp and every NLRHA record carry the CPU time. A sleeping command (a stand-in for a pause) has wall >> CPU; a
+    computing one has CPU close to wall."""
+    import run_stage2 as NS
+    import nl_orchestrate as NO
+    burn = "import time\nwhile time.process_time() < 1.0: pass"      # 1 s of CPU, whatever else the box runs
+    nap = "import time; time.sleep(1.5)"
+    got = {}
+    for name, code in (("burn", burn), ("nap", nap)):
+        job = tmp_path / name; job.mkdir()
+        s = dict(id="J/%s" % name, job=str(job), kind="gravity", cmd=[sys.executable, "-c", code])
+        r = NS.Run(s, 1, 1.0, sys.executable, dict(os.environ), str(job))
+        r.start_next()
+        while r.poll() is None:
+            time.sleep(0.1)
+        got[name] = (time.time() - r.t0, r.cpu)
+    assert 0.9 <= got["burn"][1] <= got["burn"][0] + 0.2
+    assert got["nap"][1] < 0.3 and got["nap"][0] > 1.4
+    stamp = str(tmp_path / "stamp.json")                         # the orchestrator's chunk inside the heavy slot
+    NO.main(["_exec", "--deadline", "%.0f" % (time.time() + 60), "--chunk", "60", "--stamp", stamp, "--",
+             sys.executable, "-c", burn])
+    st = json.load(open(stamp))
+    assert 0.9 <= st["cpu_s"] <= st["end"] - st["slot_start"] + 0.2
+    # the NLRHA record: the worker measures its own CPU time, and the per-record table carries it
+    import inspect
+    from nlrha import run as RN
+    src = inspect.getsource(RN.run_record)
+    assert "c0 = time.process_time()" in src and "cpu_seconds=time.process_time() - c0" in src
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_wp4_response_gate_ddm import _pkg, _result
+    from nlrha import response_summary as RS
+    r = dict(_result({}, dict(members={}, braces={}, ips=[1], enabled=True)), seconds=86460.0, cpu_seconds=700.0)
+    p = RS.summarise([r], _pkg("SMF"), "DBE", "IS 1893 elastic DBE", T1=2.0)["per_record"][0]
+    assert p["seconds"] == 86460.0 and p["cpu_seconds"] == 700.0

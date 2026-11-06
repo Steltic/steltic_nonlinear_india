@@ -16,5 +16,6 @@ if __name__ == "__main__":
     note(job, "nlrha run parallel=%d computed=%d" % (par, n))
     for lv in ("DBE", "MCE"):
         os.makedirs(os.path.join(job, "nlrha", lv), exist_ok=True)
-        json.dump(dict(level=lv, elastic_members=dict(flagged_elastic=[])),
+        json.dump(dict(level=lv, elastic_members=dict(flagged_elastic=[]),
+                       response_summary=dict(per_record=[dict(record=1, seconds=2.0, cpu_seconds=1.9)])),
                   open(os.path.join(job, "nlrha", lv, "nlrha_package.json"), "w"))

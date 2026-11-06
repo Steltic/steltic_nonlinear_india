@@ -91,6 +91,7 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
                sample_brace=None, integrator="hht"):
     """Build a fresh model and run one scaled pair. Returns peaks/histories for the acceptance module."""
     t0 = time.time()
+    c0 = time.process_time()          # stage 2: CPU time beside the wall time -- a pause of the machine shows as wall >> CPU
     hinges, stats, elastic = MD.build(pkg, prm, ch16, PG)
     recorder = None
     try:
@@ -251,7 +252,8 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
         resid_end[i] = max(np.max(np.abs(uA - prev[0])), np.max(np.abs(uB - prev[1]))) / H[i]; prev = np.array([uA, uB])
     resid = residual_drift(resid_acc, resid_n, resid_end, converged)
     out = dict(record=rec["id"], label="%s %s (%s)" % (rec.get("earthquake") or rec["id"], rec.get("station") or "", rec.get("year") or "?"), sf=sf, x_comp=rec["x_comp"],
-               converged=converged, reason=reason, steps=step, fails=fails, seconds=time.time() - t0, t_window=(t_start, t_sig), T1x=modal["T1x"], T1y=modal["T1y"],
+               converged=converged, reason=reason, steps=step, fails=fails, seconds=time.time() - t0,
+               cpu_seconds=time.process_time() - c0, t_window=(t_start, t_sig), T1x=modal["T1x"], T1y=modal["T1y"],
                damping=damp, peak_story_drift=peak_drift.tolist(), peak_roof_in=peak_roof.tolist(), residual_drift=resid.tolist(),
                residual_drift_end=resid_end.tolist(), residual_basis=("drift averaged over the last %.2f s of the free vibration"
                                                                       % (t_end - t_resid0) if resid_n else "instantaneous at the end"),
@@ -265,9 +267,9 @@ def run_record(pkg, prm, ch16, PG, loads, rec, xi, elastic_eles_cb, dt_max=0.02,
                member_meta=(recorder.meta() if recorder is not None else None),
                torsion=getattr(pkg, "_torsion_shift", None))
     if verbose:
-        print("[nlrha] %-40s sf=%.2f  %s  steps=%d fails=%d  max drift X %.2f%% Y %.2f%%  roof %.1f/%.1f in  (%.0f s)"
+        print("[nlrha] %-40s sf=%.2f  %s  steps=%d fails=%d  max drift X %.2f%% Y %.2f%%  roof %.1f/%.1f in  (%.0f s, CPU %.0f s)"
               % (out["label"][:40], sf, "ok " if converged else "NC ", step, fails, 100 * peak_drift[:, 0].max(), 100 * peak_drift[:, 1].max(),
-                 peak_roof[0], peak_roof[1], out["seconds"]))
+                 peak_roof[0], peak_roof[1], out["seconds"], out["cpu_seconds"]))
     return out
 
 
