@@ -1,0 +1,248 @@
+{
+ "_about": [
+  "Stage-2 time estimates per job, in seconds on the owner's PC (speed factor 1.0), from the October runs: the pushover (both directions, the last run), the NLRHA records (22, DBE + MCE; the October pause taken out of IN_Ex14 and the stem), the DDM sweeps (the stored governing sweeps with their smaller-step retries, x 1.5 for the cases not stored). Runs measured on the 2-core box are divided by 1.6.",
+  "The designs change in stage 2, so these are planning figures only; a job not listed is estimated from its element count (run_stage2.py estimate_for)."
+ ],
+ "jobs": {
+  "IN_Ex10_SCBF_bigbox_flexdiaphragm_Indore": {
+   "ddm_longest_s": 16,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 209,
+   "elements": 109,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 88,
+   "nlrha_total_s": 847,
+   "pushover_s": 6
+  },
+  "IN_Ex11_OCBF_4levels_splitlevel_Jaipur": {
+   "ddm_longest_s": 1566,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 9664,
+   "elements": 268,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 621,
+   "nlrha_total_s": 5854,
+   "pushover_s": 105
+  },
+  "IN_Ex11_OCBF_4levels_splitlevel_Jaipur/units/workshop": {
+   "ddm_longest_s": 27,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 461,
+   "elements": 106,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 151,
+   "nlrha_total_s": 1492,
+   "pushover_s": 6
+  },
+  "IN_Ex12_SMF_3levels_Zplan_school_Chandigarh": {
+   "ddm_longest_s": 22,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 775,
+   "elements": 87,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 181,
+   "nlrha_total_s": 1456,
+   "pushover_s": 25
+  },
+  "IN_Ex12_SMF_3levels_Zplan_school_Chandigarh/unitB_link": {
+   "ddm_longest_s": 6,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 272,
+   "elements": 42,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 81,
+   "nlrha_total_s": 700,
+   "pushover_s": 12
+  },
+  "IN_Ex12_SMF_3levels_Zplan_school_Chandigarh/unitC_gym": {
+   "ddm_longest_s": 1,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 60,
+   "elements": 20,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 44,
+   "nlrha_total_s": 384,
+   "pushover_s": 8
+  },
+  "IN_Ex13_SCBF_5levels_Delhi": {
+   "ddm_longest_s": 134,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 7114,
+   "elements": 575,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 1357,
+   "nlrha_total_s": 13082,
+   "pushover_s": 585
+  },
+  "IN_Ex14_SCBF_hospital_Kolkata": {
+   "ddm_longest_s": 250,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 5151,
+   "elements": 856,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 2219,
+   "nlrha_total_s": 19709,
+   "pushover_s": 977
+  },
+  "IN_Ex15_EBF_8levels_Lplan_Pune": {
+   "ddm_longest_s": 9416,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 44463,
+   "elements": 1066,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 2629,
+   "nlrha_total_s": 25259,
+   "pushover_s": 3924
+  },
+  "IN_Ex16_SMF_office_Mumbai": {
+   "ddm_longest_s": 121,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 3537,
+   "elements": 585,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 1880,
+   "nlrha_total_s": 17892,
+   "pushover_s": 149
+  },
+  "IN_Ex17_SCBF_10levels_Ahmedabad": {
+   "ddm_longest_s": 555,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 14466,
+   "elements": 1170,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 2996,
+   "nlrha_total_s": 26881,
+   "pushover_s": 17974
+  },
+  "IN_Ex18_SMF_podium_11levels_Kochi": {
+   "ddm_longest_s": 1068,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 11742,
+   "elements": 561,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 2053,
+   "nlrha_total_s": 20371,
+   "pushover_s": 187
+  },
+  "IN_Ex19_EBF_12levels_Tplan_Guwahati": {
+   "ddm_longest_s": 8260,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 99790,
+   "elements": 1308,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 4109,
+   "nlrha_total_s": 39308,
+   "pushover_s": 10718
+  },
+  "IN_Ex19_EBF_12levels_Tplan_Guwahati/units/stem": {
+   "ddm_longest_s": 7832,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 42393,
+   "elements": 540,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 1739,
+   "nlrha_total_s": 16677,
+   "pushover_s": 10536
+  },
+  "IN_Ex1_PEB_factory_shed_tapered_Bengaluru": {
+   "ddm_longest_s": 348,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 3510,
+   "elements": 401,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 1305,
+   "nlrha_total_s": 11850,
+   "pushover_s": 841
+  },
+  "IN_Ex20_SCBF_18levels_slender_Noida": {
+   "ddm_longest_s": 398,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 14712,
+   "elements": 918,
+   "measured_on": "owner's PC",
+   "nlrha_longest_s": 2851,
+   "nlrha_total_s": 26797,
+   "pushover_s": 21715
+  },
+  "IN_Ex2_PEB_GradeA_warehouse_multispan_Bhiwandi": {
+   "ddm_longest_s": 152,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 3193,
+   "elements": 709,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 2082,
+   "nlrha_total_s": 17257,
+   "pushover_s": 139
+  },
+  "IN_Ex3_PEB_crane_shed_10t_Nagpur": {
+   "ddm_longest_s": 122,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 3924,
+   "elements": 325,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 775,
+   "nlrha_total_s": 6421,
+   "pushover_s": 110
+  },
+  "IN_Ex4_PEB_warehouse_SMRF_Zone4_NCR": {
+   "ddm_longest_s": 98,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 3682,
+   "elements": 549,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 1764,
+   "nlrha_total_s": 14968,
+   "pushover_s": 1792
+  },
+  "IN_Ex5_PEB_rooftop_solar_check_Bengaluru": {
+   "ddm_longest_s": 734,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 4883,
+   "elements": 401,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 1272,
+   "nlrha_total_s": 11484,
+   "pushover_s": 104
+  },
+  "IN_Ex6_OMRF_warehouse_mezzanine_Hyderabad": {
+   "ddm_longest_s": 16,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 232,
+   "elements": 88,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 308,
+   "nlrha_total_s": 2636,
+   "pushover_s": 54
+  },
+  "IN_Ex7_Crane_bay_OMRF_OCBF_Vizag": {
+   "ddm_longest_s": 62,
+   "ddm_sweeps": 61,
+   "ddm_work_s": 1602,
+   "elements": 93,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 311,
+   "nlrha_total_s": 2195,
+   "pushover_s": 19
+  },
+  "IN_Ex8_SMF_portal_Chennai_wind": {
+   "ddm_longest_s": 19,
+   "ddm_sweeps": 25,
+   "ddm_work_s": 289,
+   "elements": 33,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 83,
+   "nlrha_total_s": 717,
+   "pushover_s": 14
+  },
+  "IN_Ex9_Gable_warehouse_SMF_SCBF_snow_Shimla": {
+   "ddm_longest_s": 121,
+   "ddm_sweeps": 64,
+   "ddm_work_s": 2172,
+   "elements": 130,
+   "measured_on": "2-core box (/1.6)",
+   "nlrha_longest_s": 536,
+   "nlrha_total_s": 3339,
+   "pushover_s": 19
+  }
+ }
+}

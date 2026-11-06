@@ -389,7 +389,9 @@ def run_key(params_path=None) -> dict:
 HR_INPUT_FILES = ("model_opensees.py", "cfg.py", "load_plan.json", "seismic_calc.json", "design_of_record.json",
                   "nl_plan.json", "hinge_params_collected.json")
 HR_INPUT_DIRS = ("design",)
-NL_DERIVED_INPUTS = ("nl_hr_gravity.json", "nlrha/site_hazard.json")
+NL_DERIVED_INPUTS = ("nl_hr_gravity.json", "nlrha/site_hazard.json", "nl_promote_fibre.json")
+# nl_promote_fibre.json: the gravity members the NL-21 yield check promoted to fibre (pushover / NLRHA). A promotion
+# changes the model, so a journal or a cached record from before it must not be reused.
 NL_WRITES_IN_DESIGN = (("design/calc_package.json", "ddm_analysis"),)     # (file, the key the NL writes into it)
 NL_BACKUP_SUFFIXES = (".pre_ddm.bak",)
 SECTION_TABLES = ("is808_shapes.csv", "is1161_tubes.csv", "aisc_shapes.csv")

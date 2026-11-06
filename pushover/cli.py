@@ -206,8 +206,8 @@ def _journal(args, pkg):
     from snl import checkpoint as CK
     h = hashlib.sha256()
     # stage 2: every input file of the job (snl.checkpoint.hr_input_files: design/*, the load plan, the IS 1893
-    # calculation, ...) and the HR gravity states
-    h.update(CK.hr_digest(str(pkg.root), extra=("nl_hr_gravity.json",)).encode())
+    # calculation, ...), the HR gravity states and the NL-21 fibre promotions
+    h.update(CK.hr_digest(str(pkg.root), extra=("nl_hr_gravity.json", "nl_promote_fibre.json")).encode())
     # review M4 / M5: the code (drivers and post-processing included), the engine, the SNL_* model knobs, the hash seed
     # and an outside --params file are part of the key
     key = (json.dumps(CK.run_key(getattr(args, "params", None)), sort_keys=True), h.hexdigest()[:16], args.max_drift,

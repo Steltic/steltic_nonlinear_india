@@ -92,6 +92,67 @@ therefore do not match any more, and stage 2 starts every analysis afresh.
   - writes `.nl_sync.json` (source, time, changes, input digest).
   The source is only read. `--dry-run` lists the changes. Run `refresh` after a `sync`.
 
+## The PC runner (`scripts/run_stage2.py`, `windows/Run-Stage2.ps1` / `.bat`, `RUN_STAGE2.md`)
+
+The owner runs every stage-2 production analysis on his PC (Windows, 12 workers). The runner does it in one command
+and can be resumed.
+
+- **`run --gold <bundle .zip or folder>`:**
+  - extracts the bundle (once);
+  - syncs it into `<work>/jobs`, taking the HR files and the bundle's NL inputs (`hinge_params_collected.json`,
+    `nl_plan.json`);
+  - builds or updates `<work>/stage2_queue.json`, in the orchestrator's format, so `refresh`, the fingerprints and
+    `unstall` all apply;
+  - runs the steps side by side.
+- **The steps** are those of the stage-2 plan:
+  - the HR gravity record;
+  - the pushover (X and Y, journaled);
+  - the NLRHA (11 pairs, DBE + MCE, record cache, `--parallel` up to the workers);
+  - the DDM (journaled, `--workers` up to the workers, `--speed-factor 1`: 2,400 s for the first step size);
+  - the report (`nlrha criteria`, then `snl report`).
+- **Scheduling:**
+  - a step starts within `--workers` processes and a memory budget (80 % of the RAM by default; per-step estimates
+    from the October measurements);
+  - the longest jobs go first;
+  - an NLRHA waits for its pushover, which `snl run` also does (its report reads the pushover), even when the
+    pushover failed;
+  - a failed gravity record skips the job's analyses.
+- **The NL-21 yield check after a pushover or an NLRHA.** Elastic gravity members above first yield are promoted to
+  fibre and the analysis runs again, two rounds at most, as `snl run` does. The orchestrator on the box does not do
+  this; for a production run there it would be a gap.
+- **Resume.** A step that was running when the runner stopped (a restart, a closed window, Ctrl+C) continues from its
+  journal or record cache. A step whose process outlived its runner is waited for, never run twice at once. One
+  runner per work folder (a lock file). On Windows the runner keeps the PC awake while it works. `--retry-failed`
+  runs failed steps again.
+- **The results.** ONE zip, `<results>/stage2_results_<date>.zip` (default `%USERPROFILE%\india\_claude_stage`),
+  holds every job folder (journals and record caches left out), `STAGE2_RUN.log` and `STAGE2_MANIFEST.json`. The
+  manifest records:
+  - per step: the state, the skip, failure or promotion reasons, every run (start, end, seconds, workers, peak
+    memory) and the input fingerprint;
+  - per job: the input digest and the gate status;
+  - the host, the settings (workers, memory, speed factor, DDM limit), the gold source and its sha256;
+  - the NL code key and commit, and the HR engine fingerprint, commit and section tables;
+  - the sha256 of every file.
+  `verify --zip` checks a zip against its manifest.
+- **`plan`** (dry run) lists every job and step, with the commands (`--verbose`) and the skips. It estimates the wall
+  time on `--workers` by simulating the same scheduler with the October PC times (`scripts/stage2_estimates.json`;
+  box runs divided by 1.6; a new job scaled by its element count). For the 24 current gold jobs on 12 workers it
+  gives about 23 h. `status` shows where a run stands.
+- **`windows/Run-Stage2.ps1`:**
+  - makes a Python 3.12 environment in `%USERPROFILE%\india\stage2\env` with uv (the Steltic Hub's, or its own,
+    as the hub's launcher does);
+  - installs this checkout and psutil, and checks that OpenSees loads;
+  - finds the HR engine in `%USERPROFILE%\india\steltic_india`, or else the hub's module;
+  - calls the runner.
+  `Run-Stage2.bat` wraps it. `RUN_STAGE2.md` holds the owner's instructions. The PowerShell script has not been run:
+  no Windows machine here.
+- **`nl_promote_fibre.json` is in the pushover journal key and the NLRHA record key** (`NL_DERIVED_INPUTS`). Without
+  it, the re-run after a promotion would have reused the cached records and the finished journal of the model before
+  the promotion.
+- **`sync`:**
+  - takes `inputs` (NL input files taken from the source) and `quiet`;
+  - `NL_OUTPUTS` adds `stage2_*` and `*.before_refresh_*`.
+
 ## Tests
 
 `tests/test_stage2_2026_11.py`, 15 tests:
@@ -106,5 +167,17 @@ therefore do not match any more, and stage 2 starts every analysis afresh.
   in, the gold left unchanged), and `sync` followed by
   `refresh`.
 
-Full suite, with `STELTIC_ENGINE_DIR` set to the HR engine: 530 passed, 6 skipped. On `main` it was 515 passed,
+`tests/test_run_stage2.py`, 7 tests, using stand-in analyses (`tests/stage2_stubs`, no OpenSees):
+- the scheduler (order, widths, the memory budget, the NLRHA after its pushover, a failed gravity);
+- the plan estimate, the estimates, the zip root, plan from a folder and from a zip;
+- end to end:
+  - the PC restarting during an NLRHA (the runner and its analyses killed), then the same command again;
+  - nothing run twice and no record computed twice;
+  - the promotion and its re-run;
+  - the skip of a job without collected values;
+  - the zip, the manifest and `verify`;
+- a closed window (only the runner killed): the next run waits;
+- the lock.
+
+Full suite, with `STELTIC_ENGINE_DIR` set to the HR engine: 537 passed, 6 skipped. On `main` it was 515 passed,
 6 skipped.

@@ -453,7 +453,8 @@ def record_cache_key(pkg, level, job) -> str:
     from snl import checkpoint as CK
     h = hashlib.sha256()
     h.update(CK.code_key().encode())
-    # stage 2: every input file of the job (snl.checkpoint.hr_input_files), the HR gravity states and the site hazard
+    # stage 2: every input file of the job (snl.checkpoint.hr_input_files), the HR gravity states, the site hazard
+    # and the NL-21 fibre promotions
     h.update(CK.hr_digest(str(pkg.root), extra=CK.NL_DERIVED_INPUTS).encode())
     rec = job[5]
     # review M4: the record's own data (not only its length), an outside --params file, the SNL_* model knobs (member

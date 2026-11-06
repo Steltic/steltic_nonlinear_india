@@ -67,7 +67,7 @@ NL_OUTPUTS = ("pushover", "nlrha", "nl_checkpoints", "nlrha_probe", "pushover_pr
               "nl_hr_gravity.json", "steltic_viewer_bundle.html", "pushover_review.json", "nl_orchestrate_*",
               ".nl_orchestrate_*", "nl_promote_fibre.json", "nl_plan.json", "hinge_params*.json", "collect_*",
               ".batch_step_*", "batch.log", "batch_done.json", "merge_report.log", "retrieval_log.md", "*.pre_ddm.bak",
-              ".nl_sync.json")
+              ".nl_sync.json", "stage2_*", "*.before_refresh_*")
 SYNC_SKIP = ("__pycache__", "*.pyc")          # neither copied nor removed
 GRAVITY_META = ("engine_sha", "engine", "inputs_sha256", "source", "note", "dp_note", "job")
 
@@ -589,8 +589,10 @@ def _skipped(rel):
     return any(fnmatch.fnmatchcase(part, pat) for part in rel.replace(os.sep, "/").split("/") for pat in SYNC_SKIP)
 
 
-def _hr_files(root):
-    """Relative paths of the HR files under one job folder (NL outputs and SYNC_SKIP left out; links not followed)."""
+def _hr_files(root, inputs=()):
+    """Relative paths of the HR files under one job folder (NL outputs and SYNC_SKIP left out; links not followed).
+    `inputs`: file names (at any depth) taken although they match NL_OUTPUTS -- the NL inputs a gold bundle carries
+    (the PC runner: hinge_params_collected.json, nl_plan.json)."""
     out = []
     for r, dirs, files in os.walk(root):
         rel_r = os.path.relpath(r, root)
@@ -598,7 +600,7 @@ def _hr_files(root):
                          and not _skipped(os.path.normpath(os.path.join(rel_r, x))))
         for f in sorted(files):
             rel = os.path.normpath(os.path.join(rel_r, f))
-            if not _is_nl(rel) and not _skipped(rel) and not os.path.islink(os.path.join(r, f)):
+            if (not _is_nl(rel) or f in inputs) and not _skipped(rel) and not os.path.islink(os.path.join(r, f)):
                 out.append(rel)
     return out
 
@@ -638,7 +640,8 @@ def sync(args):
     summary = {}
     for name in names:
         src, dst = os.path.join(src_root, name), os.path.join(dst_root, name)
-        s_files, d_files = _hr_files(src), (_hr_files(dst) if os.path.isdir(dst) else [])
+        inputs = tuple(getattr(args, "inputs", None) or ())
+        s_files, d_files = _hr_files(src, inputs), (_hr_files(dst, inputs) if os.path.isdir(dst) else [])
         added = [r for r in s_files if r not in set(d_files)]
         changed = [r for r in s_files if r in set(d_files) and not _same(r, os.path.join(src, r), os.path.join(dst, r))]
         try:
@@ -658,14 +661,16 @@ def sync(args):
                     if r.replace(os.sep, "/") == f and os.path.exists(os.path.join(dst, r + suf)):
                         extra.append(r + suf)
         summary[name] = dict(added=added, changed=changed, removed=removed + extra)
+        quiet = bool(getattr(args, "quiet", False))
         for r in added + changed:
-            print("%-8s %s/%s" % ("add" if r in added else "update", name, r))
+            if not quiet:
+                print("%-8s %s/%s" % ("add" if r in added else "update", name, r))
             if not dry:
                 os.makedirs(os.path.dirname(os.path.join(dst, r)), exist_ok=True)
                 tmp = os.path.join(dst, r) + ".nl_sync_tmp"
                 shutil.copy2(os.path.join(src, r), tmp)
                 os.replace(tmp, os.path.join(dst, r))
-        for r in removed + extra:
+        for r in removed + extra:                                # removals are always listed
             print("%-8s %s/%s" % ("remove", name, r))
             if not dry:
                 os.remove(os.path.join(dst, r))
