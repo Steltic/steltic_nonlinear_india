@@ -821,16 +821,19 @@ class Run:
         self._lf = lf
         self._seen, self._flat_s, self._cpu_max = {}, 0.0, None
 
-    def _watch(self, sample):
+    def _watch(self, seen):
         """Review L10: a step whose processes gain no CPU time for watchdog_s is hung (an OpenSees access violation in a
-        pool worker leaves the pool waiting for ever). Gaps between polls longer than a minute (the PC asleep) are not
-        counted."""
+        pool worker leaves the pool waiting for ever). Re-check R1: the measure is the CUMULATIVE CPU of every process
+        the step has started -- `seen` keeps the last sample of the processes that have exited -- so a step whose
+        children run one after another (the pushover's X then Y since L14, a pool closed before the parent's own
+        post-processing) progresses while any of them computes. Gaps between polls longer than a minute (the PC asleep)
+        are not counted."""
         now = time.time()
         dt = (now - self._last_poll) if self._last_poll is not None else 0.0
         self._last_poll = now
-        if not sample or not self.watchdog_s:
+        if not seen or not self.watchdog_s:
             return
-        tot = sum(sample.values())
+        tot = sum(seen.values())
         if self._cpu_max is None or tot > self._cpu_max + 1e-6:
             self._cpu_max, self._flat_s = tot, 0.0
         elif dt < 60.0:
@@ -845,7 +848,7 @@ class Run:
             self.peak = max(self.peak or 0.0, m)
         sample = tree_cpu_s(self.proc.pid)
         self._seen.update(sample)
-        self._watch(sample)
+        self._watch(self._seen)                                  # re-check R1: cumulative, exited processes kept
         if self.hung:
             kill_tree(self.proc)
         c0 = children_cpu_s()
