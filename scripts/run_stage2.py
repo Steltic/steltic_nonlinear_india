@@ -430,8 +430,8 @@ def plan_queue(work, jobs_root, job_ids, args, src, log=None):
 
 # ----------------------------------------------------------------------------------------------- scheduling
 class Scheduler:
-    """Starts ready steps on `workers` processes within `mem_gb`, longest jobs first. Used live (Launcher) and in
-    `plan` with simulated durations (SimLauncher): the same decisions in both."""
+    """Starts ready steps on `workers` processes within `mem_gb`, longest jobs first. Used by the live run
+    (run_queue) and by the estimate (simulate, with the estimated durations): the same decisions in both."""
 
     def __init__(self, d, workers, mem_gb):
         self.d, self.workers, self.mem_gb = d, int(workers), float(mem_gb)
@@ -854,7 +854,11 @@ def cmd_plan(a):
         pre = _zip_root(jobs)
         ids = [j[len(pre) + 1:] if pre else j for j in jobs]
         has = {j: dirs.get(j, set()) for j in jobs}
-        info = {i: dict(params="hinge_params_collected.json" in has[j], elements=None) for i, j in zip(ids, jobs)}
+        import re
+        with zipfile.ZipFile(path) as z:
+            info = {i: dict(params="hinge_params_collected.json" in has[j],
+                            elements=len(re.findall(r"\belement\(", z.read(j + "/model_opensees.py").decode("utf-8", "replace"))))
+                    for i, j in zip(ids, jobs)}
         root = None
     else:
         root, _ = gold_root(path, a.work)
