@@ -331,6 +331,12 @@ def check_versions(bundle, engine, nl_root=None):
     if not bundle:
         out.append("This gold bundle has no %s, so the engine and code versions it was made for are not known. Ask "
                    "the lead for a bundle made with `run_stage2.py bundle`." % BUNDLE_MANIFEST)
+    elif not bundle.get("hr_commit") or not bundle.get("nl_commit") or bundle.get("accepted_unclean"):
+        # re-check R3: a bundle made from a folder that is no clean git clone carries no (or no reliable) commit
+        out.append("This gold bundle does not record a clean HR engine commit and nonlinear tools commit (HR %s, NL %s%s), "
+                   "so its versions cannot be checked. Ask the lead for a bundle made from clean git clones."
+                   % (bundle.get("hr_commit") or "none", bundle.get("nl_commit") or "none",
+                      ", made from unclean checkouts" if bundle.get("accepted_unclean") else ""))
     if not engine:
         out.append("No HR engine folder was given, so its version cannot be checked (--engine "
                    "<steltic_india\\steel_engine>; the launcher finds %%USERPROFILE%%\\india\\steltic_india).")
@@ -1271,6 +1277,21 @@ def _prepare(a, log):
     return jobs_root, ids, src, bundle
 
 
+def _read_bundle_manifest(path):
+    """STAGE2_BUNDLE.json of a bundle zip or folder, read without extracting or syncing anything; None without one."""
+    path = os.path.abspath(path)
+    if os.path.isfile(path):
+        if not zipfile.is_zipfile(path):
+            refuse("--gold %s: neither a folder nor a .zip" % path)
+        return _zip_bundle(path)[1]
+    if os.path.isdir(path):
+        m = _find_manifest(path)
+        if m:
+            return json.load(open(os.path.join(m, BUNDLE_MANIFEST), encoding="utf-8"))
+        return None
+    refuse("--gold %s: not found" % path)
+
+
 def _zip_bundle(path):
     """(root prefix inside the zip, the bundle manifest or None, the zip's names)."""
     with zipfile.ZipFile(path) as z:
@@ -1410,8 +1431,8 @@ def cmd_run(a):
             refuse("--engine %s: not an HR engine folder (no engine3d.py)" % a.engine)
         _say("stage 2 on %d workers, memory budget %.0f GB (RAM %.0f GB), work folder %s"
              % (a.workers, a.memory_gb, a.ram_gb, a.work), log)
+        versions = _versions_or_refuse(a, _read_bundle_manifest(a.gold), log)   # before anything is synced
         jobs_root, ids, src, bundle = _prepare(a, log)
-        versions = _versions_or_refuse(a, bundle, log)
         q, d = plan_queue(a.work, jobs_root, ids, a, src, log)
         d["versions"] = versions
         NO.save(q, d)

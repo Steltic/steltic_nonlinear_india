@@ -413,6 +413,21 @@ def reconcile_rechecks(d, job):
             set_aside_outputs(s, time.strftime("%Y%m%d%H%M%S"))  # review M1 / M5: no old output, a fresh start print
             s["recheck_note"] = "rechecked %s: the gravity states or section tables changed -- runs again" % _now()
             went_pending = True
+    # re-check R2: a step that had started but not finished (resume / running, no recheck because it had no finished
+    # run) carries the start fingerprint of the earlier gravity record. Gravity states or tables changed: it starts
+    # again from nothing (its partial outputs set aside); only the engine changed: its start fingerprint is renewed,
+    # so a later refresh never sets aside what it computes from now on.
+    for s in d["steps"]:
+        if s["job"] != job or s["kind"] in ("gravity", "report") or s["state"] in ("done", "skipped", "recheck") \
+                or not s.get("started_fingerprint"):
+            continue
+        old, new = s["started_fingerprint"], fingerprint(d, s)
+        if any(old.get(k) != new.get(k) for k in ("inputs", "gravity", "tables")):
+            _reset(s, "pending", "the HR gravity record was redone with other states while this step was part-way")
+            set_aside_outputs(s, time.strftime("%Y%m%d%H%M%S"))
+            went_pending = True
+        else:
+            s["started_fingerprint"] = new
     went_pending = went_pending or any(s["job"] == job and s["kind"] not in ("report", "gravity") and s["state"] != "done"
                                        for s in d["steps"])
     for s in d["steps"]:
