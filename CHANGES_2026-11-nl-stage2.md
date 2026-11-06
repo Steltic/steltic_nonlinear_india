@@ -42,8 +42,11 @@ therefore do not match any more, and stage 2 starts every analysis afresh.
   A file that appears or disappears also changes the digest.
 - The pushover journal, the DDM journal and the NLRHA record cache all use this digest together with the HR gravity
   states. The NLRHA key also covers `nlrha/site_hazard.json`.
-- The DDM writes its own block into `design/calc_package.json` (`ddm_analysis`), with a `.pre_ddm.bak` backup beside
-  it. The digest leaves both out, so the DDM's own write is not counted as an input change.
+- The DDM writes its own block into `design/calc_package.json` (`ddm_analysis`), rewriting the whole file in its own
+  indentation, and leaves a `.pre_ddm.bak` backup beside it. The digest and `sync` therefore compare this file as
+  canonical JSON without the block, whether the block is there or not, and leave the backup out. The DDM's own write
+  is thus not counted as an input change. The first real end-to-end check showed that normalising only the copy that
+  has the block reset finished steps.
 - Every key now also covers the section tables the NL reads: `is808_shapes.csv`, `is1161_tubes.csv` and
   `aisc_shapes.csv`, taken from `$IS808_CSV` / `$AISC_CSV`, the engine's copies and the NL's own copies.
 
@@ -178,6 +181,19 @@ and can be resumed.
   - the zip, the manifest and `verify`;
 - a closed window (only the runner killed): the next run waits;
 - the lock.
+
+**Real end-to-end check on this box** (Linux, one heavy slot, 2 workers). The job was IN_Ex12 unitC_gym (20
+elements) from the HR gold, with its October collected values. The NLRHA was cut to records 1–2 at DBE and MCE, and
+the DDM to 1.5DL+1.5LL (`--job-args`).
+- **Run 1** was killed after 100 s, together with every analysis it had started, as a restart would. By then the
+  gravity, pushover and DDM had finished, and the NLRHA had cached one of its four records.
+- **Run 2, the same command,** found every step current, and the one record cached. It ran the other three and the
+  report in 153 s.
+- **The results zip:** 60 files; `verify` found no problem. The DDM options record speed factor 1.0 and 2,400 s.
+- **Peak memory:** pushover 125 MB, DDM 89 MB, NLRHA (2 workers) 308 MB.
+- **Two faults it found, both fixed** and covered by the tests:
+  - a bundle folder named `stage2_*` was taken for a runner log;
+  - the calc-package comparison (above).
 
 Full suite, with `STELTIC_ENGINE_DIR` set to the HR engine: 537 passed, 6 skipped. On `main` it was 515 passed,
 6 skipped.
