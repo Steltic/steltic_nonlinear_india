@@ -12,8 +12,9 @@ def _time_limit_text(o):
     tl = float(o.get("time_limit") or 0)
     if o.get("speed_factor") is None:
         return "%.0f s" % tl
-    return "%.0f s (%.0f s on the reference machine x speed factor %g; x2, x4 for the smaller-step retries)" % (
-        tl, float(o.get("time_limit_base") or tl), float(o["speed_factor"]))
+    cal = (", calibration run %.2f s" % float(o["calibration_s"])) if o.get("calibration_s") is not None else ""
+    return ("%.0f CPU seconds (%.0f s on the reference machine x speed factor %g%s; x2, x4 for the smaller-step "
+            "retries)" % (tl, float(o.get("time_limit_base") or tl), float(o["speed_factor"]), cal))
 
 def _h(s):
     return html.escape(str(s))
@@ -321,10 +322,19 @@ def write_block(job_dir, block):
     pkg = json.load(open(p))
     bak = p + ".pre_ddm.bak"
     if not os.path.exists(bak):
-        open(bak, "w").write(json.dumps(pkg, indent=1))
+        _write_atomic(bak, json.dumps(pkg, indent=1))
     pkg["ddm_analysis"] = block
-    open(p, "w").write(json.dumps(pkg, indent=1))
+    _write_atomic(p, json.dumps(pkg, indent=1))           # review L8: never a half-written calc package
     return p
+
+
+def _write_atomic(path, text):
+    tmp = path + ".nl_sync_tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 # =====================================================================================================================

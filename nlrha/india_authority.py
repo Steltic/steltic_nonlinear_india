@@ -207,9 +207,17 @@ class NLPlanError(ValueError):
 
 
 def ddm_time_limit_shortfall(o):
-    """Stage 2: the DDM sweep time limit is a compute budget -- 2400 s on the reference machine (the owner's PC) x the
-    machine's speed factor. A reason text when the budget on the reference machine is below 2400 s (October outputs
-    carry no factor: 1.0), else None."""
+    """Stage 2: the DDM sweep time limit is a compute budget -- 2400 CPU seconds on the reference machine (the owner's
+    PC) x the machine's speed factor. With a recorded factor the limit must EQUAL 2400 x that factor (review M6: a
+    budget made with another factor, or an explicit --time-limit, is reported); without one (October outputs) it
+    must be at least 2400 s. A reason text, else None. A wrong factor itself shows against the recorded calibration
+    time (calibration_s), not here."""
+    if o.get("speed_factor") is not None and o.get("time_limit") is not None:
+        f, tl = float(o["speed_factor"]), float(o["time_limit"])
+        want = 2400.0 * f
+        if abs(tl - want) > 0.5:
+            return ("DDM time limit %.0f s is not 2400 s x the recorded speed factor %g (= %.0f s)" % (tl, f, want))
+        return None
     if o.get("time_limit_base") is not None:
         base = float(o["time_limit_base"])
     elif o.get("time_limit"):

@@ -6,6 +6,8 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     assert a[0] == "run"
     job = a[1]
+    from _common import fail_if_asked
+    fail_if_asked('pushover')
     dirs = a[a.index("--dirs") + 1:]
     dirs = [x for x in dirs[:2] if x in ("X", "Y")]
     ck = opt(a, "--checkpoint-dir")

@@ -47,8 +47,10 @@ def _env(seconds="0.2"):
 
 
 def _cmd(gold, work, res, eng, workers=3, extra=()):
+    # the stand-in golds carry no STAGE2_BUNDLE.json and the stand-in engine is no git clone: the version check is
+    # tested on its own (tests/test_stage2_review_2026_11.py); here it is accepted
     return [sys.executable, RUNNER, "run", "--gold", gold, "--work", work, "--results", res, "--workers", str(workers),
-            "--memory-gb", "64", "--engine", eng, "--poll", "0.1"] + list(extra)
+            "--memory-gb", "64", "--engine", eng, "--poll", "0.1", "--accept-versions"] + list(extra)
 
 
 def _calls(work, job):
@@ -119,7 +121,8 @@ def test_estimates_and_the_zip_root():
 def test_plan_lists_the_runs_and_the_skips(tmp_path, capsys):
     import run_stage2 as NS
     gold = _gold(tmp_path / "gold")
-    r = NS.main(["plan", "--gold", gold, "--work", str(tmp_path / "w"), "--workers", "12", "--memory-gb", "16", "--verbose"])
+    r = NS.main(["plan", "--gold", gold, "--work", str(tmp_path / "w"), "--workers", "12", "--memory-gb", "16", "--verbose",
+                 "--accept-versions"])
     out = capsys.readouterr().out
     assert r["jobs"] == ["IN_ExT", "IN_ExT/units/u1", "IN_ExU"] and r["skipped"] == ["IN_ExU"]
     assert "--speed-factor 1" in out and "--parallel 12" in out and "nlrha criteria" in out
@@ -130,7 +133,8 @@ def test_plan_lists_the_runs_and_the_skips(tmp_path, capsys):
             for f in fs:
                 p = os.path.join(base, f)
                 zf.write(p, "stage2_bundle/" + os.path.relpath(p, gold))   # a wrapper folder named like the runner files
-    r2 = NS.main(["plan", "--gold", str(z), "--work", str(tmp_path / "w"), "--workers", "12", "--memory-gb", "16"])
+    r2 = NS.main(["plan", "--gold", str(z), "--work", str(tmp_path / "w"), "--workers", "12", "--memory-gb", "16",
+                  "--accept-versions"])
     assert r2["jobs"] == r["jobs"] and r2["skipped"] == ["IN_ExU"]
 
 
@@ -197,7 +201,9 @@ def test_run_kill_and_resume_end_to_end(tmp_path):
         man = json.loads(z.read("STAGE2_MANIFEST.json"))
     assert "jobs/IN_ExT/complete_gate.json" in names and "jobs/IN_ExT/units/u1/ddm_results.json" in names
     assert not [n for n in names if "nl_checkpoints" in n] and "STAGE2_RUN.log" in names
-    assert man["settings"]["speed_factor"] == 1.0 and man["settings"]["ddm_first_rung_time_limit_s"] == 2400.0
+    assert man["settings"]["speed_factor"] == 1.0 and man["settings"]["ddm_time_limit_cpu_s"] == 2400.0
+    assert man["jobs"]["IN_ExT"]["ddm"]["speed_factor"] == 1.0 and man["fingerprints"]["libraries"]["numpy"]
+    assert man["versions"]["accepted"] is True and man["versions"]["problems"]
     assert man["fingerprints"]["hr_engine_fingerprint"] and man["fingerprints"]["nl_code_key"]
     assert man["jobs"]["IN_ExU"]["steps"]["pushover"]["state"] == "skipped"
     assert man["jobs"]["IN_ExT"]["gate"]["status"] == "COMPLETE"
@@ -243,13 +249,19 @@ def test_a_closed_window_leaves_the_step_running_and_the_next_run_waits(tmp_path
 
 
 def test_a_second_runner_on_the_same_folder_is_refused(tmp_path):
+    """The lock holds the runner's pid AND its start token (review B3): a live runner is refused; a dead one, or a
+    pid that now belongs to another process (a restart reuses pids), is taken over."""
     import run_stage2 as NS
     w = tmp_path / "w"; w.mkdir()
-    (w / "stage2.lock").write_text("%d now\n" % os.getppid())             # a live process: the parent
+    ppid = os.getppid()
+    (w / "stage2.lock").write_text("%d %s now\n" % (ppid, NS.proc_token(ppid)))      # the live parent, its token
     with pytest.raises(SystemExit):
         with NS.Lock(str(w)):
             pass
-    (w / "stage2.lock").write_text("999999 then\n")                  # a dead runner's lock is taken over
+    (w / "stage2.lock").write_text("%d proc:another-boot:123 then\n" % ppid)        # the same pid, another process
+    with NS.Lock(str(w)):
+        assert (w / "stage2.lock").read_text().startswith(str(os.getpid()))
+    (w / "stage2.lock").write_text("999999 then\n")                                 # a dead runner's lock
     with NS.Lock(str(w)):
         assert (w / "stage2.lock").read_text().startswith(str(os.getpid()))
 

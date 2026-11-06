@@ -6,6 +6,8 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     assert a[0] == "run"
     job = a[1]
+    from _common import fail_if_asked
+    fail_if_asked('ddm')
     ck = opt(a, "--checkpoint-dir")
     w = int(opt(a, "--workers", "1"))
     sf = float(opt(a, "--speed-factor", os.environ.get("SNL_SPEED_FACTOR", "1")))

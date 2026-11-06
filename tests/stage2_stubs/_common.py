@@ -37,3 +37,9 @@ def promoted(job, analysis):
 
 def speed():
     return float(os.environ.get("STUB_SECONDS", "0.2"))
+
+
+def fail_if_asked(kind):
+    """STUB_FAIL=<kind>[,<kind>...]: that stand-in exits 1 (a failed analysis)."""
+    if kind in (os.environ.get("STUB_FAIL") or "").split(","):
+        sys.exit(1)

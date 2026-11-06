@@ -26,7 +26,7 @@ def test_ddm_time_limit_is_a_compute_budget(monkeypatch):
     assert t["time_limit"] == 2400.0 and t["speed_factor"] == 1.0 and t["time_limit_base"] == 2400.0
     t = cli.resolve_time_limit(factor=1.6)                                   # this box
     assert t["time_limit"] == pytest.approx(3840.0) and t["time_limit_base"] == 2400.0
-    assert "speed factor 1.6" in t["time_limit_basis"] and "3840" in t["time_limit_basis"]
+    assert "speed factor 1.6" in t["time_limit_basis"] and "3840 CPU seconds" in t["time_limit_basis"]
     monkeypatch.setenv("SNL_SPEED_FACTOR", "1.6")
     assert cli.resolve_time_limit()["time_limit"] == pytest.approx(3840.0)
     assert cli.resolve_time_limit(factor=1.0)["time_limit"] == 2400.0      # the argument wins over the environment
@@ -78,11 +78,12 @@ def test_the_report_and_the_gate_read_the_budget():
     from nlrha.india_authority import ddm_time_limit_shortfall
     assert _time_limit_text(dict(time_limit=2400.0)) == "2400 s"                            # October
     t = _time_limit_text(dict(time_limit=3840.0, speed_factor=1.6, time_limit_base=2400.0))
-    assert t.startswith("3840 s") and "2400 s on the reference machine" in t and "1.6" in t
+    assert t.startswith("3840 CPU seconds") and "2400 s on the reference machine" in t and "1.6" in t
     assert ddm_time_limit_shortfall(dict(time_limit=2400.0)) is None
     assert ddm_time_limit_shortfall(dict(time_limit=3840.0, speed_factor=1.6, time_limit_base=2400.0)) is None
-    # a short budget is a short budget whatever the machine: 2,000 s here is 1,250 s on the owner's PC
-    assert "1250 s on the reference machine" in ddm_time_limit_shortfall(dict(time_limit=2000.0, speed_factor=1.6))
+    # review M6: with a recorded factor the budget must be 2,400 s x that factor
+    assert "not 2400 s x the recorded speed factor 1.6" in ddm_time_limit_shortfall(dict(time_limit=2000.0, speed_factor=1.6))
+    assert "1250 s on the reference machine" in ddm_time_limit_shortfall(dict(time_limit=1250.0))
     from snl import checkpoint as CK
     assert "SNL_SPEED_FACTOR" in CK.NON_MODEL_ENV                       # not a model knob: no pushover / NLRHA key
 

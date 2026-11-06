@@ -35,7 +35,6 @@ run_ddm.sh) with the checkpoint options added; nothing here changes an analysis.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import fnmatch
 import hashlib
 import json
@@ -85,13 +84,44 @@ def _now():
 
 
 def load(q):
-    return json.load(open(q, encoding="utf-8"))
+    """The queue; its backup (<q>.bak, the previous save) when the file itself is unreadable -- a power cut on NTFS can
+    leave a just-written file zero-filled (review M7)."""
+    try:
+        return json.load(open(q, encoding="utf-8"))
+    except (OSError, ValueError) as ex:
+        bak = q + ".bak"
+        if os.path.exists(bak):
+            print("!! %s unreadable (%s): continuing from its backup %s" % (q, type(ex).__name__, bak), flush=True)
+            return json.load(open(bak, encoding="utf-8"))
+        raise
+
+
+def _replace(src, dst, tries=6):
+    """os.replace, retried: on Windows an antivirus or the indexer can hold the file for a moment."""
+    for i in range(tries):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.5)
 
 
 def save(q, d):
+    """Write the queue durably: a temp file flushed to disk, the previous queue kept as <q>.bak, then the swap
+    (review M7)."""
     tmp = q + ".tmp"
-    json.dump(d, open(tmp, "w", encoding="utf-8"), indent=1)
-    os.replace(tmp, q)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    if os.path.exists(q):
+        try:
+            json.load(open(q, encoding="utf-8"))                 # only a readable queue becomes the backup
+            shutil.copyfile(q, q + ".bak")
+        except (OSError, ValueError):
+            pass
+    _replace(tmp, q)
 
 
 def _job_steps(job, analyses, py):
@@ -235,6 +265,57 @@ def _reset(s, state, reason, now=None):
     s["refresh_reason"] = reason
     s.pop("stalled_reason", None)
     s["no_gain_full_chunks"] = 0
+    if state == "pending":
+        for k in ("promotion_rounds", "promoted", "note_promotion", "started_fingerprint"):   # review M2, M5
+            s.pop(k, None)
+
+
+# Review M1: what each step writes into its job folder. When a step goes back to pending these are set aside, so a
+# failed re-run can never leave the earlier inputs' results in place (shipped in the zip, read by a report or the gate).
+STEP_OUTPUTS = {"gravity": ("nl_hr_gravity.json",),
+                "pushover": ("pushover",),
+                "nlrha": ("nlrha",),
+                "ddm": ("ddm_results.json", "ddm_report.html", "ddm_viewer_3d.html", "model_gmnia.py"),
+                "report": ("complete_gate.json", "complete_gate_disclosures.json", "four_analyses.html",
+                           "snl_summary.json", "snl_run.json", "design_criteria_16_1_4.docx",
+                           "design_criteria_16_1_4.html", "steltic_viewer_bundle.html")}
+
+
+def _aside(path, stamp):
+    to, n = path + ".before_refresh_" + stamp, 1
+    while os.path.exists(to):
+        n += 1
+        to = "%s.before_refresh_%s_%d" % (path, stamp, n)
+    _replace(path, to)
+    return to
+
+
+def set_aside_outputs(s, stamp):
+    """Move a step's outputs and its journals / record cache aside (renamed *.before_refresh_<stamp>, never deleted);
+    for the DDM also take its block out of design/calc_package.json. Returns what was moved."""
+    moved = []
+    ck = _opt(s["cmd"], "--checkpoint-dir") or _opt(s["cmd"], "--record-cache")
+    # the journals / record cache: a fresh journal starts its counters at zero, which next to the old ones would read
+    # as lost progress
+    for p in ([ck] if ck else []) + [os.path.join(s["job"], x) for x in STEP_OUTPUTS.get(s["kind"], ())]:
+        if os.path.exists(p):
+            moved.append(_aside(p, stamp))
+    if s["kind"] == "ddm":
+        cp = os.path.join(s["job"], "design", "calc_package.json")
+        try:
+            pkg = json.load(open(cp, encoding="utf-8"))
+            if isinstance(pkg, dict) and "ddm_analysis" in pkg:
+                pkg.pop("ddm_analysis")
+                tmp = cp + ".nl_sync_tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(pkg, indent=1))
+                _replace(tmp, cp)
+                moved.append(cp + " (ddm_analysis block removed)")
+        except (OSError, ValueError):
+            pass
+    if ck:
+        s["set_aside"] = next((m for m in moved if m.startswith(ck)), s.get("set_aside"))
+    return moved
 
 
 def refresh(args):
@@ -301,18 +382,8 @@ def refresh(args):
             _reset(s, state, reason)
             if state == "pending":
                 s.pop("fingerprint", None)
-                s.pop("started_fingerprint", None)
-                # the journals / record cache of the earlier inputs are set aside (not deleted): a fresh journal
-                # starts its counters at zero, which next to the old ones would read as lost progress
-                ck = _opt(s["cmd"], "--checkpoint-dir") or _opt(s["cmd"], "--record-cache")
-                if ck and os.path.isdir(ck):
-                    to, n = ck + ".before_refresh_" + stamp, 1
-                    while os.path.exists(to):
-                        n += 1
-                        to = "%s.before_refresh_%s_%d" % (ck, stamp, n)
-                    os.rename(ck, to)
-                    s["set_aside"] = to
-                    print("    set aside: %s" % to)
+                for m in set_aside_outputs(s, stamp):                # review M1: outputs too, not only journals
+                    print("    set aside: %s" % m)
     if not plan_:
         print("refresh: every step is current")
     if not getattr(args, "dry_run", False):
@@ -337,15 +408,20 @@ def reconcile_rechecks(d, job):
             s["recheck_note"] = ("rechecked %s after the engine change: the gravity states and section tables are "
                                  "unchanged, the result stands" % _now())
         else:
-            s["state"] = "pending"
+            _reset(s, "pending", "rechecked after the engine change: the gravity states or section tables changed")
             s.pop("fingerprint", None)
+            set_aside_outputs(s, time.strftime("%Y%m%d%H%M%S"))  # review M1 / M5: no old output, a fresh start print
             s["recheck_note"] = "rechecked %s: the gravity states or section tables changed -- runs again" % _now()
             went_pending = True
     went_pending = went_pending or any(s["job"] == job and s["kind"] not in ("report", "gravity") and s["state"] != "done"
                                        for s in d["steps"])
     for s in d["steps"]:
         if s["job"] == job and s["state"] == "recheck" and s["kind"] == "report":
-            s["state"] = "pending" if went_pending else "done"
+            if went_pending:
+                _reset(s, "pending", "an analysis of the job runs again")
+                set_aside_outputs(s, time.strftime("%Y%m%d%H%M%S"))
+            else:
+                s["state"] = "done"
 
 
 def _ready(d, s):
@@ -518,6 +594,7 @@ def next_steps(args, runner=None):
     call moves on to other ready steps; the next call gives it a full chunk."""
     lockf = open(args.queue + ".lock", "w")
     try:
+        import fcntl                                  # POSIX only: `next` runs on the box, never on Windows (review B1)
         fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         raise SystemExit("another `next` is running on %s" % args.queue)
@@ -611,12 +688,24 @@ def _hr_files(root, inputs=()):
     return out
 
 
-def _same(rel, a, b):
-    """The same HR content: byte equality, except a file the NL writes a block into (design/calc_package.json), which
-    is compared without that block (snl.checkpoint.hr_content)."""
+def _nl_written(rel):
+    """The NL_WRITES_IN_DESIGN name a path (relative to the folder sync walks) stands for: the building's own
+    design/calc_package.json or a nested unit's (unitC_gym/design/..., units/stem/design/...) -- review M9."""
     CK = _ck()
-    if any(rel.replace(os.sep, "/") == f for f, _ in CK.NL_WRITES_IN_DESIGN):
-        return CK.hr_content(None, rel.replace(os.sep, "/"), a) == CK.hr_content(None, rel.replace(os.sep, "/"), b)
+    r = rel.replace(os.sep, "/")
+    for f, _ in CK.NL_WRITES_IN_DESIGN:
+        if r == f or r.endswith("/" + f):
+            return f
+    return None
+
+
+def _same(rel, a, b):
+    """The same HR content: byte equality, except a file the NL writes a block into (design/calc_package.json, the
+    building's or a unit's), which is compared without that block (snl.checkpoint.hr_content)."""
+    CK = _ck()
+    f = _nl_written(rel)
+    if f:
+        return CK.hr_content(None, f, a) == CK.hr_content(None, f, b)
     if os.path.getsize(a) != os.path.getsize(b):
         return False
     import filecmp
@@ -634,7 +723,11 @@ def sync(args):
     gets .nl_sync.json (source, time, what changed, the input digest). `refresh` then finds the stale steps."""
     CK = _ck()
     src_root, dst_root = os.path.abspath(args.src), os.path.abspath(args.dst)
-    if os.path.commonpath([src_root, dst_root]) in (src_root, dst_root):
+    try:
+        nested = os.path.commonpath([src_root, dst_root]) in (src_root, dst_root)
+    except ValueError:                                           # Windows: two drives can never contain each other
+        nested = False
+    if nested:
         raise SystemExit("sync: --from and --to must not contain each other")
     names = sorted(x for x in os.listdir(src_root) if os.path.isdir(os.path.join(src_root, x)) and not _skipped(x))
     if args.jobs:
@@ -662,9 +755,9 @@ def sync(args):
                 name, len(kept), ", ".join(kept[:5]), ", ..." if len(kept) > 5 else ""))
         extra = []
         for r in changed:
-            for f, _ in CK.NL_WRITES_IN_DESIGN:
+            if _nl_written(r):
                 for suf in CK.NL_BACKUP_SUFFIXES:
-                    if r.replace(os.sep, "/") == f and os.path.exists(os.path.join(dst, r + suf)):
+                    if os.path.exists(os.path.join(dst, r + suf)):
                         extra.append(r + suf)
         summary[name] = dict(added=added, changed=changed, removed=removed + extra)
         quiet = bool(getattr(args, "quiet", False))

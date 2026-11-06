@@ -41,15 +41,28 @@ DP_NOTE = ("Dp = dead load without the roof collateral and rooftop PV (steltic_i
            "combination with a dead-load factor below 1.0")
 
 
+def engine_files(eng_dir) -> list:
+    """Review B2: every engine file the NL can load -- each module directly in the engine folder (the NL imports
+    engine3d, static_model, india_loads, design_pipeline ..., and a job's cfg.py may import sections and others) and
+    the section tables beside them -- sorted by name. ENGINE_FILES (the gravity modules) are always among them."""
+    d = str(eng_dir)
+    return sorted(f for f in os.listdir(d) if f.endswith((".py", ".csv")) and os.path.isfile(os.path.join(d, f)))
+
+
+def _text_bytes(path) -> bytes:
+    """A text file's bytes with CRLF line ends made LF (review B2: Git for Windows checks out with CRLF by default,
+    and the same commit must fingerprint the same on the PC and here)."""
+    return open(path, "rb").read().replace(b"\r\n", b"\n")
+
+
 def engine_fingerprint(eng_dir) -> str | None:
-    """sha256 (16 hex) of the HR engine files that make the gravity states, or None without an engine folder."""
+    """sha256 (16 hex) of every engine file the NL can load (engine_files: the modules and the section tables, line
+    ends normalised), or None without an engine folder."""
     if not eng_dir or not os.path.isdir(str(eng_dir)):
         return None
     h = hashlib.sha256()
-    for name in ENGINE_FILES:
-        p = os.path.join(str(eng_dir), name)
-        if os.path.exists(p):
-            h.update(name.encode()); h.update(open(p, "rb").read())
+    for name in engine_files(eng_dir):
+        h.update(name.encode()); h.update(_text_bytes(os.path.join(str(eng_dir), name)))
     return h.hexdigest()[:16]
 
 

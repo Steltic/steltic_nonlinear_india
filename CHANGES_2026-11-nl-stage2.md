@@ -202,3 +202,124 @@ passed, 4 skipped**. On `main`, with the engine of the time, it was 515 passed a
 - The two extra passes are the IN_Ex21 gold tests: the gold arrived on 2026-11-06, and these tests skip without it.
 - With the older HR engine 44b74de, those two fail on `main` too (`sections.double_angle_label` missing), so the
   failure comes from the engine version, not from this branch.
+
+## Fixes from the independent review (`briefs/NL_STAGE2_REVIEW.md`)
+
+Every journal and record-cache key changes again: the code key covers more files, the library versions are in it, and
+the journal keeps a CPU clock. Stage 2 starts fresh anyway. One decision differs from the review's suggestion (L3).
+
+**Blocking:**
+- **B1. Windows import.** `import fcntl` moved into `next_steps` (the box only). A test imports and plans with `fcntl`,
+  `resource`, `termios`, `pwd` and `grp` blocked.
+- **B2. Engine and code versions.**
+  - `run_stage2.py bundle` (the lead) writes the gold bundle with `STAGE2_BUNDLE.json`: the HR and NL commits, the
+    jobs (and those without collected values), and the sha256 of every file. It refuses unclean checkouts. The old
+    `bundle` command, which re-writes the results zip, is now `results`.
+  - `plan` and `run` compare the bundle's commits with `git rev-parse HEAD` of the engine's clone and of this
+    checkout. They refuse (exit 2) with the exact `git fetch` / `git checkout` to type when:
+    - a commit differs;
+    - a folder is not a git clone;
+    - tracked files have local changes;
+    - the bundle has no manifest.
+  - The manifest records the versions, `code_changed`, and `mixed_versions` when finished steps carry more than one
+    engine or code fingerprint.
+  - `Run-Stage2.ps1` no longer falls back to the Steltic Hub's engine.
+  - `engine_fingerprint` hashes every module and section table in the engine folder (it was 5 files), and
+    `code_key` / `section_tables_key` do the same, all with CRLF made LF. A Windows checkout of the same commit
+    therefore fingerprints the same.
+- **B3. Pids after a restart.** A step's pid and the lock's pid are stored with the process's start token (psutil's
+  start time, or the Linux boot id with the start ticks). A pid counts as the recorded process only when both match,
+  so a pid reused after a restart never makes the runner wait or refuse.
+
+**Before the PC run:**
+- **M1. Old outputs.** When `refresh` (or a recheck) puts a step back to pending, its outputs are set aside as
+  `*.before_refresh_<time>`, together with its journals:
+  - gravity: `nl_hr_gravity.json`;
+  - pushover: `pushover/`;
+  - NLRHA: `nlrha/`;
+  - DDM: `ddm_results.json`, its pages and `model_gmnia.py`, with its block taken out of `design/calc_package.json`;
+  - report: the gate files, the pages and the design criteria.
+
+  A failed re-run can no longer leave the earlier design's results in the zip or in front of the gate.
+- **M2 / L13. Promotion rounds.** The NL-21 rounds are counted from `nl_promote_fibre.json` itself (one history entry
+  per round), and that file is set aside on a design change. `_reset` also drops the queue's round fields. A new
+  design therefore starts at zero rounds, and a kill between promotion and save loses no round.
+- **M3. Recheck.** A `recheck` step whose gravity record failed ends `skipped`, with the reason. The run then ends
+  (rc 3) with the zip written.
+- **M4. Retry after a gravity failure.** `--retry-failed` also puts back the analyses skipped because of a failed
+  gravity record. A skip made while scheduling is saved at once.
+- **M5. Start fingerprints.** A step that goes back to pending loses its old start fingerprint, and a fresh start takes
+  a new one.
+- **M6. The DDM compute budget.**
+  - The sweep's time limit is now CPU time of the sweep's process (`time.process_time`; a sweep starts no child
+    processes). The journal records it beside the wall clock, so a replay repeats it, and a pause or other load no
+    longer moves a DDM result.
+  - Each sweep, run row and retry rung records `cpu_seconds`, and each run row its `time_limit_s`.
+  - Each DDM output, and every retry or B-1.2 refresh record, carries the speed factor and `calibration_s`: the CPU
+    time of a fixed small OpenSees run, best of 3. The manifest gives the host's calibration and each job's DDM
+    settings. A wrong factor thus shows as a calibration time that does not fit it.
+  - The gate requires the limit to equal 2,400 × the recorded factor. The PC uses 1.0.
+- **M7. Queue robustness.**
+  - The queue is written with flush and fsync, and the previous one is kept as `.bak`; an unreadable queue falls
+    back to it.
+  - `os.replace` is retried on a PermissionError.
+  - An error in one step's bookkeeping, or when starting a step, marks that step failed and the others carry on.
+- **M8. Library versions.**
+  - `windows/constraints.txt` pins the box's versions: openseespy / openseespywin / openseespylinux 3.8.0.0, numpy
+    2.5.4, scipy 1.18.1, psutil 7.0.0. Each was checked on PyPI to have a CPython 3.12 Windows x64 wheel;
+    openseespy itself is pure Python.
+  - The launcher installs with `-c`.
+  - The versions are in `run_key()` and in the manifest.
+- **M9. Nested units.** `sync` matches `design/calc_package.json` by its tail, so a nested unit's file is compared
+  without the DDM block too, and never overwritten because of the DDM's own write. When the HR content of a calc
+  package really changes, the gold's copy still comes in; the DDM then runs again and writes its block anew.
+
+**Low:**
+- **L1.** RUN_STAGE2.md quotes every path.
+- **L2.** RUN_STAGE2.md now says what a restart really loses: up to 5 minutes for a pushover or DDM, and the running
+  NLRHA records from their beginning. Closing the window ends the analyses too.
+- **L3.** `plan` states this PC's CPUs and RAM; the estimate uses 80 % of the RAM. For the current 25 jobs on 12
+  workers it gives 27.1 h with 16 GB and 15.9 h with 32 GB.
+  - Not done: reserving memory for a held-back longest job. Simulated, it made the whole run 30 % longer (34.9 h at
+    16 GB).
+- **L4.** RUN_STAGE2.md covers existing clones, plain-copy folders and local changes.
+- **L5.** The launcher gives a plain message for a missing bundle. Exit code 2 now means "put it right and run again",
+  distinct from an unexpected error.
+- **L6.** `.gitattributes`: `*.bat` and `*.ps1` are checked out with CRLF.
+- **L7.** uv is installed with `UV_UNMANAGED_INSTALL`, so nothing is written outside the stage-2 folder.
+- **L8.** `report_ddm.write_block` writes atomically.
+- **L9.** `pushover/fbc_concentrated.py` and `rbs_remesh.py` are in the code key.
+- **L10.** A watchdog stops a step whose processes gain no CPU time for 30 minutes (`--watchdog-minutes`). Gaps
+  between polls longer than a minute, such as a sleep, are not counted. The step is marked failed with the reason.
+- **L11.**
+  - A half-written results zip is removed.
+  - The side manifest is written atomically.
+  - The gold extraction folder is `gold\<sha12>`.
+- **L12.**
+  - `sync` across two drives no longer raises.
+  - A malformed `--job-args` gets a plain message.
+  - The bundle manifest fixes the gold root, so a bundle holding only a unit keeps the unit's full id.
+- **L14. The pushover's Y curve after a restart.**
+  - **Cause.** The eigen solver's start vector depends on the eigen solves made earlier in the process. The second
+    direction's period differed by 1e-11, which changed the step schedule and the curve.
+  - **Fix.** The pushover CLI now computes each direction in a process of its own (`--dirs <d> --direction-child`, on
+    the same journal), and the parent only assembles. A direction is always the first analysis in its process, with
+    or without a restart.
+  - The journal key no longer holds the direction list.
+  - `SNL_PUSHOVER_ONE_PROCESS=1` keeps the old in-process path; the tests use it for the CLI's journal path.
+- **L15.** CPU time that could not be measured is recorded as null, not 0.
+
+**Tests.** `tests/test_stage2_review_2026_11.py`, 18 tests, one or more per finding. They include end-to-end runs
+with stand-ins that:
+- change the design and then fail the pushover (M1);
+- change the engine, then fail and retry the gravity record (M3, M4);
+- raise in a step's bookkeeping (M7).
+
+The earlier stage-2 tests were adapted:
+- the version check is accepted for the stand-ins;
+- the lock with a start token;
+- the CPU-seconds wording;
+- the gate's factor rule;
+- the journal tests' fake clock now has `process_time`.
+
+**Full suite** with HR main e927f35 as the engine: **558 passed, 4 skipped** (540 / 4 before the review fixes).

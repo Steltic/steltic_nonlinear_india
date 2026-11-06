@@ -881,7 +881,9 @@ def test_ddm_resume_returns_finished_sweeps_whole_and_builds_nothing(tmp_path, m
 def _clocked(monkeypatch, CK, start):
     import time as _t, types
     clock = [float(start)]
-    monkeypatch.setattr(CK, "time", types.SimpleNamespace(time=lambda: clock[0], strftime=_t.strftime))
+    # (review M6: the journal keeps a CPU clock too; here it follows the same fake clock)
+    monkeypatch.setattr(CK, "time", types.SimpleNamespace(time=lambda: clock[0], strftime=_t.strftime,
+                                                          process_time=lambda: clock[0]))
     monkeypatch.delenv("SNL_DEADLINE", raising=False)
     return clock
 
@@ -1213,6 +1215,9 @@ def test_pushover_cli_restores_a_finished_direction(tmp_path, monkeypatch):
     from pushover import cli as PC, nonlinear_model as NM, member_response as MR, postprocess as PP, report_india as RI
     from nlrha import india_hazard as IH
     monkeypatch.setenv("PYTHONHASHSEED", "0")
+    # the in-process journal path (the stand-ins below live in this process); each direction in a child process of
+    # its own (review L14) is tested in tests/test_stage2_review_2026_11.py
+    monkeypatch.setenv("SNL_PUSHOVER_ONE_PROCESS", "1")
     ops = _FakeOps(set())
     monkeypatch.setattr(NM, "ops", ops)
     pushed = []

@@ -36,12 +36,24 @@ def resolve_time_limit(explicit=None, factor=None, base=None):
     f = speed_factor(factor)
     if explicit is not None:
         return dict(time_limit=float(explicit), speed_factor=f, time_limit_base=float(explicit) / f,
-                    time_limit_basis="given (--time-limit %.0f s)" % float(explicit))
+                    time_limit_basis="given (--time-limit %.0f CPU seconds)" % float(explicit))
     b = float(base if base is not None else BASE_TIME_LIMIT_S)
     return dict(time_limit=b * f, speed_factor=f, time_limit_base=b,
                 time_limit_basis="compute budget: %.0f s on the reference machine (the owner's PC, speed factor 1.0) x "
-                                 "this machine's speed factor %g = %.0f s for the first step size (x2, x4 for the "
-                                 "NL-30 retries)" % (b, f, b * f))
+                                 "this machine's speed factor %g = %.0f CPU seconds of the sweep's process for the first "
+                                 "step size (x2, x4 for the NL-30 retries); a pause or other programs do not count"
+                                 % (b, f, b * f))
+
+
+def CK_calibration():
+    """Review M6: the CPU seconds of the fixed calibration run on this machine (snl.checkpoint.calibration_benchmark)."""
+    from snl import checkpoint as CK
+    return CK.calibration_benchmark()
+
+
+def _calibration_basis():
+    from snl import checkpoint as CK
+    return CK.CALIBRATION_BASIS
 
 
 def _stored_time_limit(o, factor=None):
@@ -173,6 +185,7 @@ def _worker(args):
     kk = (float(opts["dlam"]) / float(res["retries"][-1]["dlam"])) if res.get("retries") else 1.0
     res_small["time_limit_s"] = round(float(opts["time_limit"]) * kk, 1)   # stage 2: the limit this result's rung had
     res_small["speed_factor"] = float(opts.get("speed_factor") or 1.0)
+    res_small["cpu_seconds"] = res.get("cpu_seconds")         # review M6: the CPU time the limit was taken on
     out = dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state,
                section_log=(g.builder.log if getattr(g, "builder", None) is not None else (slog or [])), b12=b12,
                forces_at_1=packed)
@@ -256,7 +269,7 @@ def _journal_for(job, combo_label, imp, opts):
     # stage 2: every input file of the job (snl.checkpoint.hr_input_files, the nl_plan.json material overrides the fy
     # reading uses among them) and the HR gravity states
     h.update(CK.hr_digest(job, extra=("nl_hr_gravity.json",)).encode())
-    o = {k: v for k, v in opts.items() if not k.startswith("_")}
+    o = {k: v for k, v in opts.items() if not k.startswith("_") and k not in ("calibration_s", "calibration_basis")}
     # review M4 / M5: the code (the worker and the B-1.2 check included), the engine, the SNL_* knobs, the hash seed
     plans = "in the input digest"
     key = (json.dumps(CK.run_key(), sort_keys=True), h.hexdigest()[:16], plans, combo_label, imp.get("tag"),
@@ -280,7 +293,8 @@ def sweep_with_retries(do_sweep, dlam, factors=(2, 4), what="", time_limit=None)
         res = do_sweep(dlam / k, k)
         retries.append(dict(dlam=dlam / k, status=res.get("status"), termination=res.get("termination"),
                             lambda_end=round(res.get("lambda_end") or 0.0, 4), steps=res.get("steps"),
-                            seconds=round(res.get("seconds") or 0.0, 1)))
+                            seconds=round(res.get("seconds") or 0.0, 1),
+                            cpu_seconds=(round(res["cpu_seconds"], 1) if res.get("cpu_seconds") is not None else None)))
         if time_limit:                                   # stage 2: the rung's own limit (the compute budget x k)
             retries[-1]["time_limit_s"] = round(float(time_limit) * k, 1)
         if res.get("status") != "SOLVER_FAILURE" or i == len(ks) - 1:
@@ -396,9 +410,11 @@ def run(args):
         print("!! --time-limit %.0f s is below the reference %.0f s x the speed factor %g: runs that stop on the clock are "
               "NO_LIMIT_POINT, not capacities" % (tl["time_limit"], BASE_TIME_LIMIT_S, tl["speed_factor"]))
     print(">> sweep time limit: %s" % tl["time_limit_basis"], flush=True)
+    cal = CK_calibration()                              # review M6: a wrong speed factor shows against this
     opts = dict(nsub=list(args.nsub), residual=args.residual, Fy=args.fy, hardening=args.hardening, fast=args.fast, nip=args.nip,
                 bow=bow, psi=psi, dlam=args.dlam, max_steps=args.max_steps, time_limit=tl["time_limit"],
                 speed_factor=tl["speed_factor"], time_limit_base=tl["time_limit_base"], time_limit_basis=tl["time_limit_basis"],
+                calibration_s=cal, calibration_basis=_calibration_basis(),
                 rigid_end_offset=rigid_off, india=india, strain_cap=args.strain_cap,
                 n_combos_default=n_default, n_combos_run=len(kept),
                 bow_hollow=(args.bow_hollow if args.bow_hollow is not None else (1 / 500.0 if india else None)),
@@ -650,7 +666,9 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
                               retries=r["res"].get("retries"), runaway=r["res"].get("runaway"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
                                                                    steps=r["res"]["steps"], fails=r["res"].get("fails"), lam_at_1p25d=r["res"].get("lam_at_1p25d"),
-                                                                   seconds=r["res"]["seconds"], log=r["res"]["log"], state=r["state"],
+                                                                   seconds=r["res"]["seconds"], cpu_seconds=r["res"].get("cpu_seconds"),
+                                                                   time_limit_s=r["res"].get("time_limit_s"),
+                                                                   log=r["res"]["log"], state=r["state"],
                                                                    snapshot=r["res"]["snapshot"], control=r["res"].get("control"), lateral=r["res"].get("lateral"),
                                                                    d_at_max=r["res"].get("d_at_max"), frames=r["res"].get("frames", [])) for r in runs],
                    sensitivity=sens, member_table=member_table, elapsed_s=(elapsed if elapsed is not None else round(time.time() - t0))),
@@ -787,7 +805,8 @@ def _runs_from_results(d):
             print("   NL-36: %s reclassified SOLVER_FAILURE (%s)" % (r.get("label"), r["runaway"]["criterion"]), flush=True)
         res = dict(lambda_u=r["lambda_u"], lambda_end=r.get("lambda_end", r["lambda_u"]), status=r.get("status"),
                    termination=r.get("termination"), first_yield=r.get("first_yield"), hist=r["hist"], steps=r["steps"], fails=r.get("fails"), lam_at_1p25d=r.get("lam_at_1p25d"),
-                   seconds=r["seconds"], snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
+                   seconds=r["seconds"], cpu_seconds=r.get("cpu_seconds"), time_limit_s=r.get("time_limit_s"),
+                   snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
                    log=r.get("log", []), frames=r.get("frames", []), stop_tangent_ratio=r.get("stop_tangent_ratio"),
                    control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"), retries=r.get("retries"),
                    runaway=r.get("runaway"))
@@ -942,6 +961,7 @@ def retry(args):
     opts_rep.setdefault("n_cases", len(cases))
     rec_ = dict(code="NL-30" if not getattr(args, "combos", None) else "NL-30 / re-run of named combinations", combos=bad,
                 sweeps=len(tasks), seconds=round(time.time() - t0), result={lab: gov[lab]["res"].get("status") for lab in gov},
+                speed_factor=opts.get("speed_factor"), time_limit=opts.get("time_limit"), calibration_s=CK_calibration(),
                 date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=getattr(args, "_code_version", None) or code_version())
     _record_rerun(opts_rep, "ddm_rerun" if getattr(args, "combos", None) else "ddm_retry", rec_)
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
@@ -1077,6 +1097,8 @@ def _b12_refresh(args, job, engine_dir, out_dir, d, t0):
     opts_rep.setdefault("n_cases", len(cases))
     _record_rerun(opts_rep, "ddm_b12_refresh", dict(code="second wave: B-1.2 refresh to lambda = 1", combos=list(done),
                                                     seconds=round(time.time() - t0), date=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                                    speed_factor=opts.get("speed_factor"), time_limit=opts.get("time_limit"),
+                                                    calibration_s=CK_calibration(),
                                                     code_version=getattr(args, "_code_version", None) or code_version(),
                                                     result={k: ("replaced" if v["replaced"] else "kept: " + v["reason"][:80]) for k, v in done.items()}))
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
