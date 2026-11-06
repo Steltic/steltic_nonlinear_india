@@ -1,0 +1,10 @@
+# Stage-2 analysis library versions (review M8): the versions the box runs and the stage-2 checks used, pinned so the
+# owner's PC gets the same OpenSees build whatever is newest on install day. Checked on PyPI (2026-11-06): each has a
+# wheel for CPython 3.12 on Windows x64 (openseespy itself is pure Python and pulls openseespywin there).
+# Used by windows/Run-Stage2.ps1 (uv pip install -c). Change only together with the lead.
+openseespy==3.8.0.0
+openseespywin==3.8.0.0
+openseespylinux==3.8.0.0
+numpy==2.5.4
+scipy==1.18.1
+psutil==7.0.0

@@ -206,6 +206,30 @@ class NLPlanError(ValueError):
     """cfg['nl_plan'] / job nl_plan.json missing or not RAG-backed for an India claim."""
 
 
+def ddm_time_limit_shortfall(o):
+    """Stage 2: the DDM sweep time limit is a compute budget -- 2400 CPU seconds on the reference machine (the owner's
+    PC) x the machine's speed factor. With a recorded factor the limit must EQUAL 2400 x that factor (review M6: a
+    budget made with another factor, or an explicit --time-limit, is reported); without one (October outputs) it
+    must be at least 2400 s. A reason text, else None. A wrong factor itself shows against the recorded calibration
+    time (calibration_s), not here."""
+    if o.get("speed_factor") is not None and o.get("time_limit") is not None:
+        f, tl = float(o["speed_factor"]), float(o["time_limit"])
+        want = 2400.0 * f
+        if abs(tl - want) > 0.5:
+            return ("DDM time limit %.0f s is not 2400 s x the recorded speed factor %g (= %.0f s)" % (tl, f, want))
+        return None
+    if o.get("time_limit_base") is not None:
+        base = float(o["time_limit_base"])
+    elif o.get("time_limit"):
+        base = float(o["time_limit"]) / float(o.get("speed_factor") or 1.0)
+    else:
+        return None
+    if base < 2400:
+        return "DDM time limit %.0f s (%.0f s on the reference machine) below the default 2400 s" % (
+            float(o.get("time_limit") or base), base)
+    return None
+
+
 def _as_plan(obj: Any) -> dict | None:
     if isinstance(obj, dict) and (
         obj.get("jurisdiction") or obj.get("retrieval") or obj.get("rules")
@@ -1465,8 +1489,9 @@ def artefact_gate(job_dir: str | None) -> dict:
         elif b12.get("ok") is None:                           # NL-36: not evaluated (numerical stop before lambda = 1)
             reasons.append("IS 800 B-1.2 section check not evaluated for %s combination(s) (numerical stop before "
                            "lambda = 1): %s" % (b12.get("n_not_evaluated"), "; ".join(b12.get("not_evaluated") or [])[:200]))
-        if ddm.get("options", {}).get("time_limit") and float(ddm["options"]["time_limit"]) < 2400:
-            reasons.append("DDM time limit %.0f s below the default 2400 s" % float(ddm["options"]["time_limit"]))
+        _r = ddm_time_limit_shortfall(ddm.get("options") or {})
+        if _r:
+            reasons.append(_r)
     # freshness
     summ = _read_json(os.path.join(job_dir, "snl_summary.json"))
     if not summ:

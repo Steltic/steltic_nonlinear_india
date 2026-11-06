@@ -205,15 +205,16 @@ def _journal(args, pkg):
     import hashlib
     from snl import checkpoint as CK
     h = hashlib.sha256()
-    for rel in ("model_opensees.py", "nl_hr_gravity.json", "cfg.py", "hinge_params_collected.json"):
-        p_ = os.path.join(str(pkg.root), rel)
-        if os.path.exists(p_):
-            h.update(open(p_, "rb").read())
+    # stage 2: every input file of the job (snl.checkpoint.hr_input_files: design/*, the load plan, the IS 1893
+    # calculation, ...), the HR gravity states and the NL-21 fibre promotions
+    h.update(CK.hr_digest(str(pkg.root), extra=("nl_hr_gravity.json", "nl_promote_fibre.json")).encode())
     # review M4 / M5: the code (drivers and post-processing included), the engine, the SNL_* model knobs, the hash seed
     # and an outside --params file are part of the key
+    # (the directions are not in the key: the journal holds one piece per direction, and review L14 computes each
+    # direction in a child process of its own, with --dirs <that direction>, on the same journal)
     key = (json.dumps(CK.run_key(getattr(args, "params", None)), sort_keys=True), h.hexdigest()[:16], args.max_drift,
            getattr(args, "stop_at", None), args.tail, getattr(args, "member_nseg", None),
-           getattr(args, "gravity_elastic", None), getattr(args, "plasticity", None), tuple(args.dirs))
+           getattr(args, "gravity_elastic", None), getattr(args, "plasticity", None))
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     return CK.Journal(os.path.join(args.checkpoint_dir, "pushover.ckpt"), key, budget_s=getattr(args, "chunk_seconds", None),
                       t_start=t0_process())
@@ -224,6 +225,47 @@ _T0 = __import__("time").time()
 
 def t0_process():
     return _T0
+
+
+def _strip_opts(argv, flags):
+    """argv without the given options and their values (up to the next '--' token)."""
+    out, skip = [], False
+    for t in argv:
+        if t.startswith("--"):
+            skip = t in flags
+        if not skip:
+            out.append(t)
+    return out
+
+
+def _directions_in_children(args, pkg, J):
+    """Review L14: every direction is computed in a process of its own (`--dirs <d> --direction-child`, on the same
+    journal), and this process only assembles the stored results. The OpenSees eigen solver's start vector depends
+    on the eigen solves made earlier in the process, so a second direction in one process came out with a slightly
+    different period (1e-11), a different step schedule and a different curve from the same direction run after a
+    restart. Each direction now always runs first in its process: the result is the same whether or not the run was
+    interrupted. Without --checkpoint-dir a temporary journal carries the results. Returns (journal, temporary dir)."""
+    import subprocess
+    import tempfile
+    tmp = None
+    if J is None:
+        tmp = tempfile.mkdtemp(prefix="pushover_dirs_")
+        args.checkpoint_dir = tmp
+        J = _journal(args, pkg)
+    base = _strip_opts(list(args._argv), ("--dirs", "--checkpoint-dir", "--chunk-seconds"))
+    for d in args.dirs:
+        if J.done("push %s" % d) is not None:
+            continue
+        cmd = [sys.executable, "-m", "pushover"] + base + ["--dirs", d, "--checkpoint-dir", args.checkpoint_dir,
+                                                         "--direction-child"]
+        if getattr(args, "chunk_seconds", None) is not None:      # what is left of this process's budget
+            cmd += ["--chunk-seconds", "%.0f" % max(1.0, args.chunk_seconds - (time.time() - t0_process()))]
+        print("  [%s] computed in a process of its own" % d, flush=True)
+        rc = subprocess.call(cmd)
+        if rc != 0:                                              # 75 / 76 / a failure: passed on as is
+            raise SystemExit(rc)
+        J = _journal(args, pkg)                                  # the child stored the direction
+    return J, tmp
 
 
 def _run_india(args, pkg, t0):
@@ -265,6 +307,10 @@ def _run_india(args, pkg, t0):
         return out_
 
     J = _journal(args, pkg)                                         # third wave (P2): resumable directions
+    tmp_ck = None
+    if not getattr(args, "direction_child", False) and len(args.dirs) > 1 and getattr(args, "_argv", None) \
+            and os.environ.get("SNL_PUSHOVER_ONE_PROCESS") != "1":
+        J, tmp_ck = _directions_in_children(args, pkg, J)          # review L14
     for d in args.dirs:
         name = "push %s" % d
         if J is not None and J.done(name) is not None:              # a direction finished in an earlier chunk
@@ -323,6 +369,11 @@ def _run_india(args, pkg, t0):
                                                    100 * n["target_over_H"], a["base_shear_kN"], a["V_over_VB"] or 0,
                                                    100 * a["max_story_drift"], a.get("census")))
         print("  [%s capacity] Vmax=%.0f kN Vmax/VB=%.2f stop=%s" % (d, cap["Vmax_kN"], cap["Vmax_over_VB"] or 0, run["stop_reason"]))
+    if getattr(args, "direction_child", False):                     # review L14: the parent writes the package
+        return results
+    if tmp_ck:
+        import shutil
+        shutil.rmtree(tmp_ck, ignore_errors=True)
     html_path = RI.write(out, pkg, prm, runs, results, gtable, stats, time.time() - t0)
     for d, run in runs.items():
         with open(os.path.join(out, "curve_%s.csv" % d), "w") as f:
@@ -357,8 +408,10 @@ def main(argv=None):
     r.add_argument("--checkpoint-dir", default=None, help="third wave: journal the run there (snl/checkpoint.py); with "
                    "--chunk-seconds the process stops at the budget and exits 75 -- run the same command again to resume")
     r.add_argument("--chunk-seconds", type=float, default=None, help="wall-clock budget of this process (with --checkpoint-dir)")
+    r.add_argument("--direction-child", action="store_true", help=argparse.SUPPRESS)   # review L14
     i = sub.add_parser("inspect"); i.add_argument("package")
     args = ap.parse_args(argv)
+    args._argv = list(argv if argv is not None else sys.argv[1:])
     if args.cmd == "inspect":
         from . import package_reader as PR
         print(PR.summary(PR.load(args.package)))

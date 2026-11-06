@@ -164,7 +164,8 @@ class Journal:
         """The time the converged calls of a journaled segment took (what a replay recomputes)."""
         seg = self.data["segments"].get(name or self.seg_name) or []
         out, prev = 0.0, 0.0
-        for ok, _t, _s, el in seg:
+        for e in seg:
+            ok, el = e[0], e[3]
             if ok == 0:
                 out += max(0.0, el - prev)
             prev = el
@@ -198,6 +199,10 @@ class Journal:
         self._live_t0 = time.time() if not self.seg else None   # a fresh segment: the clock runs from here
         self._live_base = 0.0
         self.t_seg0 = time.time()
+        # review M6: the CPU clock beside the wall clock -- journaled the same way, so a replay repeats a CPU-time limit
+        self._live_c0 = time.process_time() if not self.seg else None
+        self._live_cbase = 0.0
+        self.c_seg0 = time.process_time()
         journal = self
 
         def analyze(*a):
@@ -245,6 +250,15 @@ class Journal:
             return self.seg[self.pos - 1][3] if self.pos > 0 else 0.0
         return self._live_base + (time.time() - self._live_t0)
 
+    def cpu_elapsed(self):
+        """Review M6: the segment's CPU clock (this process's CPU time): journaled values while replaying, then the
+        journaled base + live CPU time. A pause of the machine does not advance it."""
+        if self.seg is None:
+            return time.process_time() - (getattr(self, "c_seg0", None) or time.process_time())
+        if self.replaying or getattr(self, "_live_c0", None) is None:
+            return _cpu_of(self.seg[self.pos - 1]) if self.pos > 0 else 0.0
+        return self._live_cbase + (time.process_time() - self._live_c0)
+
     def _analyze(self, *a):
         ops = self._ops
         if self.replaying:
@@ -255,7 +269,7 @@ class Journal:
                 self.save()
                 raise ChunkExpired("%s: the chunk ran out during the replay (call %d of %d; the replay is slower than "
                                    "recorded)" % (self.seg_name, self.pos, len(self.seg)))
-            ok0, t0, s0, el = self.seg[self.pos]
+            ok0, t0, s0, el = self.seg[self.pos][:4]
             self.pos += 1
             self.data["replayed_calls"] = int(self.data.get("replayed_calls") or 0) + 1
             if ok0 != 0:
@@ -269,6 +283,9 @@ class Journal:
         if self._live_t0 is None:                        # first live call of this process: the clock continues
             self._live_base = self.seg[-1][3] if self.seg else 0.0
             self._live_t0 = time.time()
+        if getattr(self, "_live_c0", None) is None:
+            self._live_cbase = _cpu_of(self.seg[-1]) if self.seg else 0.0
+            self._live_c0 = time.process_time()
         now = time.time()
         if now - self._last_save > SAVE_EVERY_S:              # a killed process loses at most this much live work
             self.save()
@@ -279,7 +296,7 @@ class Journal:
                                % (self.seg_name, len(self.seg), int(self.data.get("replayed_calls") or 0), self._live_here))
         ok = self._real(*a)
         t, s = _fingerprint(ops)
-        self.seg.append((ok, t, s, self.elapsed()))
+        self.seg.append((ok, t, s, self.elapsed(), self.cpu_elapsed()))
         self.pos = len(self.seg)                             # live: the journal's end moves with the run
         self.data["live_calls"] = int(self.data.get("live_calls") or 0) + 1
         self._live_here += 1
@@ -312,7 +329,9 @@ ANALYSIS_FILES = ("pushover/nonlinear_model.py", "pushover/fibre_model.py", "pus
                   # review M5: the drivers and the post-processing whose results the journals store
                   "pushover/postprocess.py", "pushover/cli.py", "nlrha/cli.py", "nlrha/india_hazard.py",
                   "steltic_ddm/cli.py", "steltic_ddm/india_checks.py", "steltic_ddm/imposed_reduction.py",
-                  "steltic_ddm/portal_adapter.py")
+                  "steltic_ddm/portal_adapter.py",
+                  # review L9: the hinge-path modules nonlinear_model.py imports
+                  "pushover/fbc_concentrated.py", "pushover/rbs_remesh.py")
 
 
 def code_key() -> str:
@@ -324,11 +343,36 @@ def code_key() -> str:
     for rel in ANALYSIS_FILES:
         p = os.path.join(root, rel)
         if os.path.exists(p):
-            h.update(rel.encode()); h.update(open(p, "rb").read())
+            h.update(rel.encode()); h.update(_text_bytes(p))       # review B2: CRLF and LF checkouts alike
     return h.hexdigest()[:16]
 
 
-NON_MODEL_ENV = ("SNL_DEADLINE", "SNL_JOBS", "SNL_FULL_CHUNK")   # scheduling, not model knobs
+def _text_bytes(path) -> bytes:
+    """A text file's bytes with CRLF line ends made LF: a Windows checkout of the same commit hashes the same."""
+    return open(path, "rb").read().replace(b"\r\n", b"\n")
+
+
+LIBRARIES = ("openseespy", "numpy", "scipy")
+
+
+def library_versions() -> dict:
+    """Review M8: the installed versions of the analysis libraries (part of every key and of the PC manifest), so
+    results of two OpenSees builds never mix."""
+    out = {}
+    try:
+        from importlib import metadata
+    except ImportError:                                          # noqa: BLE001
+        return out
+    for n in LIBRARIES:
+        try:
+            out[n] = metadata.version(n)
+        except Exception:                                        # noqa: BLE001
+            out[n] = None
+    return out
+
+
+NON_MODEL_ENV = ("SNL_DEADLINE", "SNL_JOBS", "SNL_FULL_CHUNK", "SNL_SPEED_FACTOR")   # scheduling, not model knobs
+# (SNL_SPEED_FACTOR scales the DDM sweep time limit, which is in the DDM journal key through its options)
 
 
 def model_env() -> dict:
@@ -372,16 +416,164 @@ def require_hash_seed() -> str:
 
 
 def run_key(params_path=None) -> dict:
-    """The parts every journal / cache key carries: the analysis code, the engine, the model knobs, the hash seed and
-    an outside --params file."""
-    return dict(code=code_key(), engine=engine_key(), env=model_env(), hashseed=require_hash_seed(),
-                params=file_digest(params_path) if params_path else None)
+    """The parts every journal / cache key carries: the analysis code, the engine, the section tables, the model knobs,
+    the hash seed and an outside --params file."""
+    return dict(code=code_key(), engine=engine_key(), tables=section_tables_key(), env=model_env(),
+                hashseed=require_hash_seed(), params=file_digest(params_path) if params_path else None,
+                libraries=library_versions())
+
+
+# ---------------------------------------------------------------------------------------------------------- stage 2
+# Every input file of a job that the NL analyses read. The HR files: the model, the configuration, the load plan, the
+# IS 1893 calculation, the design of record and everything under design/; the NL inputs beside them: the NL plan (of
+# the job and, for a unit, of its building) and the collected hinge parameters. They are in every journal / cache key
+# (hr_digest) and in the orchestrator's step fingerprint. Files the NL analyses WRITE are not inputs: the HR gravity
+# states and the site hazard are added to a key by name where an analysis reads them (NL_DERIVED_INPUTS), and the
+# DDM block the DDM writes into design/calc_package.json ("ddm_analysis", with its backup) is left out of the digest.
+HR_INPUT_FILES = ("model_opensees.py", "cfg.py", "load_plan.json", "seismic_calc.json", "design_of_record.json",
+                  "nl_plan.json", "hinge_params_collected.json")
+HR_INPUT_DIRS = ("design",)
+NL_DERIVED_INPUTS = ("nl_hr_gravity.json", "nlrha/site_hazard.json", "nl_promote_fibre.json")
+# nl_promote_fibre.json: the gravity members the NL-21 yield check promoted to fibre (pushover / NLRHA). A promotion
+# changes the model, so a journal or a cached record from before it must not be reused.
+NL_WRITES_IN_DESIGN = (("design/calc_package.json", "ddm_analysis"),)     # (file, the key the NL writes into it)
+NL_BACKUP_SUFFIXES = (".pre_ddm.bak",)
+SECTION_TABLES = ("is808_shapes.csv", "is1161_tubes.csv", "aisc_shapes.csv")
+
+
+def hr_input_files(job) -> list:
+    """(name relative to the job, path) of every input file of the job (HR_INPUT_FILES, the parent folder's nl_plan.json
+    as '../nl_plan.json', and every file under design/ in sorted order, the NL backups left out). Files that are
+    not there are listed too: a file that appears or disappears changes the digest."""
+    job = os.path.normpath(str(job))
+    out = [(rel, os.path.join(job, rel)) for rel in HR_INPUT_FILES]
+    out.append(("../nl_plan.json", os.path.join(os.path.dirname(job), "nl_plan.json")))
+    for d in HR_INPUT_DIRS:
+        for root, dirs, files in os.walk(os.path.join(job, d)):
+            dirs.sort()
+            for f in sorted(files):
+                if f.endswith(NL_BACKUP_SUFFIXES):
+                    continue
+                p = os.path.join(root, f)
+                out.append((os.path.relpath(p, job).replace(os.sep, "/"), p))
+    return out
+
+
+def hr_content(job, rel, path) -> bytes:
+    """The bytes of one input file as the digest sees them: a file the NL writes a block into (design/calc_package.json)
+    as its JSON content without that block, in one canonical form whether the block is there or not (the DDM rewrites
+    the whole file with its own indentation), so the DDM's own write is not an input change; b'<missing>' when the
+    file is not there."""
+    if not os.path.isfile(path):
+        return b"<missing>"
+    raw = open(path, "rb").read()
+    for f, key in NL_WRITES_IN_DESIGN:
+        if rel == f:
+            try:
+                import json as _json
+                d = _json.loads(raw.decode("utf-8"))
+                if isinstance(d, dict):
+                    d.pop(key, None)
+                    return _json.dumps(d, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            except Exception:                            # noqa: BLE001 -- unreadable: the bytes as they are
+                pass
+    return raw
+
+
+def hr_digest(job, extra=()) -> str:
+    """sha256 (16 hex) of the job's input files (hr_input_files) by relative name and content, plus the named `extra`
+    files of the job (NL_DERIVED_INPUTS an analysis reads)."""
+    import hashlib
+    h = hashlib.sha256()
+    files = hr_input_files(job) + [(rel, os.path.join(str(job), rel)) for rel in extra]
+    for rel, p in files:
+        h.update(rel.encode() + b"\0")
+        h.update(hr_content(job, rel, p))
+        h.update(b"\0")
+    return h.hexdigest()[:16]
+
+
+def section_tables_key(engine_dir=None) -> str:
+    """sha256 (16 hex) of the section tables the NL reads (pushover/sections_db.py, steltic_ddm/sections_fiber.py):
+    $IS808_CSV and $AISC_CSV when set, the engine's tables, and the NL's own copies."""
+    import hashlib
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    eng = engine_dir if engine_dir is not None else os.environ.get("STELTIC_ENGINE_DIR")
+    paths = [os.environ.get("IS808_CSV"), os.environ.get("AISC_CSV")]
+    paths += [os.path.join(eng, t) for t in SECTION_TABLES] if eng else []
+    paths += [os.path.join(root, "steltic_ddm", "data", t) for t in SECTION_TABLES]
+    paths.append(os.path.join(root, "pushover", "aisc_shapes.csv"))
+    h = hashlib.sha256()
+    for p in paths:
+        if p and os.path.isfile(p):
+            h.update(os.path.basename(p).encode()); h.update(_text_bytes(p))
+    return h.hexdigest()[:16]
 
 
 def clock(t0):
     """Elapsed seconds of a run: the active journal's clock (replayed times, then live), else wall time since t0."""
     j = ACTIVE
     return j.elapsed() if j is not None and j.seg is not None else time.time() - t0
+
+
+def _cpu_of(entry):
+    """The CPU clock of a journal entry (ok, t, s, wall[, cpu]); a journal from before review M6 has the wall time."""
+    return entry[4] if len(entry) > 4 else entry[3]
+
+
+def cpu_clock(c0):
+    """Review M6: CPU seconds of a run -- the active journal's CPU clock (replayed values, then live), else this
+    process's CPU time since c0 (time.process_time). A pause or another program's load does not advance it, so a
+    limit on it is a compute budget."""
+    j = ACTIVE
+    return j.cpu_elapsed() if j is not None and j.seg is not None else time.process_time() - c0
+
+
+CALIBRATION_BASIS = ("a fixed OpenSees run (a 30-element fibre cantilever, Steel01, 2,000 displacement steps), CPU seconds, "
+                     "the best of 3 (about 0.5 s on the 2-core box): about twice as long on a machine with half the speed")
+
+
+def calibration_benchmark(repeats=3):
+    """Review M6: CPU seconds of a fixed small OpenSees analysis (the best of `repeats`), recorded with the speed
+    factor in every DDM output, so a wrong factor is visible: the ratio of two machines' benchmark times is their
+    speed factor. Never raises: None when it cannot run."""
+    try:
+        import openseespy.opensees as ops
+    except Exception:                                            # noqa: BLE001
+        return None
+    best = None
+    try:
+        for _ in range(repeats):
+            c0 = time.process_time()
+            ops.wipe(); ops.model("basic", "-ndm", 2, "-ndf", 3)
+            n = 30
+            for i in range(n + 1):
+                ops.node(i + 1, 0.0, 1000.0 * i / n)
+            ops.fix(1, 1, 1, 1)
+            ops.uniaxialMaterial("Steel01", 1, 50.0, 29000.0, 0.01)
+            ops.section("Fiber", 1)
+            ops.patch("rect", 1, 8, 2, -5.0, -0.5, 5.0, 0.5)
+            ops.geomTransf("PDelta", 1)
+            ops.beamIntegration("Lobatto", 1, 1, 5)
+            for i in range(n):
+                ops.element("forceBeamColumn", i + 1, i + 1, i + 2, 1, 1)
+            ops.timeSeries("Linear", 1); ops.pattern("Plain", 1, 1); ops.load(n + 1, 1.0, 0.0, 0.0)
+            ops.constraints("Plain"); ops.numberer("RCM"); ops.system("BandGeneral")
+            ops.test("NormDispIncr", 1e-8, 50); ops.algorithm("Newton")
+            ops.integrator("DisplacementControl", n + 1, 1, 0.05); ops.analysis("Static")
+            for _ in range(2000):
+                if ops.analyze(1) != 0:
+                    break
+            ops.wipe()
+            dt = time.process_time() - c0
+            best = dt if best is None else min(best, dt)
+        return round(best, 3)
+    except Exception:                                            # noqa: BLE001
+        try:
+            ops.wipe()
+        except Exception:                                        # noqa: BLE001
+            pass
+        return None
 
 
 def progress_possible(replay_seconds, budget_s, margin=0.8):

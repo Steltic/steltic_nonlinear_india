@@ -453,10 +453,9 @@ def record_cache_key(pkg, level, job) -> str:
     from snl import checkpoint as CK
     h = hashlib.sha256()
     h.update(CK.code_key().encode())
-    for rel in ("model_opensees.py", "nl_hr_gravity.json", "cfg.py", "hinge_params_collected.json"):
-        p_ = os.path.join(str(pkg.root), rel)
-        if os.path.exists(p_):
-            h.update(open(p_, "rb").read())
+    # stage 2: every input file of the job (snl.checkpoint.hr_input_files), the HR gravity states, the site hazard
+    # and the NL-21 fibre promotions
+    h.update(CK.hr_digest(str(pkg.root), extra=CK.NL_DERIVED_INPUTS).encode())
     rec = job[5]
     # review M4: the record's own data (not only its length), an outside --params file, the SNL_* model knobs (member
     # subdivisions, fibre settings, gravity-elastic members, plasticity) and the HR engine fingerprint are in the key
@@ -468,7 +467,8 @@ def record_cache_key(pkg, level, job) -> str:
     h.update(json.dumps(dict(level=level, id=rec.get("id"), sf=rec.get("sf"), x_comp=rec.get("x_comp"), dt_rec=rec.get("dt"),
                              xi=job[6], dt=job[7], free_vib=job[8],
                              integrator=job[10] if len(job) > 10 else None, torsion=job[11] if len(job) > 11 else None,
-                             params=CK.file_digest(job[1]) if job[1] else None, env=CK.model_env(), engine=CK.engine_key()),
+                             params=CK.file_digest(job[1]) if job[1] else None, env=CK.model_env(), engine=CK.engine_key(),
+                             tables=CK.section_tables_key()),
                         sort_keys=True, default=str).encode())
     return "%s_%s_%s" % (level, rec.get("id"), h.hexdigest()[:16])
 

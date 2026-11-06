@@ -14,6 +14,57 @@ from .model_gmnia import GMNIAModel
 
 TASK_DONE = "task"           # review H1: the journal entry holding a finished sweep's whole _worker result
 
+BASE_TIME_LIMIT_S = 2400.0   # stage 2: seconds per sweep (first step size) on the REFERENCE machine (the owner's PC)
+
+
+def speed_factor(arg=None):
+    """Stage 2: how much slower this machine is than the reference machine (the owner's PC: 1.0; this 2-core box: 1.6),
+    from --speed-factor or $SNL_SPEED_FACTOR; 1.0 when neither is set."""
+    v = arg if arg is not None else os.environ.get("SNL_SPEED_FACTOR")
+    try:
+        f = float(v) if v not in (None, "") else 1.0
+    except (TypeError, ValueError):
+        f = 1.0
+    return f if f > 0 else 1.0
+
+
+def resolve_time_limit(explicit=None, factor=None, base=None):
+    """Stage 2: the sweep time limit as a COMPUTE budget -- base x speed factor, so that a sweep stopped on its time
+    limit (reported as having no limit point, not a capacity) had the same computing as on the reference machine. An
+    explicit --time-limit is taken as given. Returns the limit, the factor, the reference-machine base and the basis
+    text, all written into the DDM output."""
+    f = speed_factor(factor)
+    if explicit is not None:
+        return dict(time_limit=float(explicit), speed_factor=f, time_limit_base=float(explicit) / f,
+                    time_limit_basis="given (--time-limit %.0f CPU seconds)" % float(explicit))
+    b = float(base if base is not None else BASE_TIME_LIMIT_S)
+    return dict(time_limit=b * f, speed_factor=f, time_limit_base=b,
+                time_limit_basis="compute budget: %.0f s on the reference machine (the owner's PC, speed factor 1.0) x "
+                                 "this machine's speed factor %g = %.0f CPU seconds of the sweep's process for the first "
+                                 "step size (x2, x4 for the NL-30 retries); a pause or other programs do not count, "
+                                 "so this gives somewhat more compute than the October wall-clock limit"
+                                 % (b, f, b * f))
+
+
+def CK_calibration():
+    """Review M6: the CPU seconds of the fixed calibration run on this machine (snl.checkpoint.calibration_benchmark)."""
+    from snl import checkpoint as CK
+    return CK.calibration_benchmark()
+
+
+def _calibration_basis():
+    from snl import checkpoint as CK
+    return CK.CALIBRATION_BASIS
+
+
+def _stored_time_limit(o, factor=None):
+    """The time limit for a retry / refresh of stored sweeps: the stored reference-machine base (or the stored limit
+    over its stored factor, 1.0 for October outputs) x this machine's factor."""
+    base = o.get("time_limit_base")
+    if base is None:
+        base = float(o.get("time_limit", BASE_TIME_LIMIT_S)) / float(o.get("speed_factor") or 1.0)
+    return resolve_time_limit(None, factor, base=base)
+
 
 def _worker(args):
     """One sweep in its own process (openseespy is a process singleton)."""
@@ -75,7 +126,8 @@ def _worker(args):
     from snl import checkpoint as CK
     try:
         with contextlib.redirect_stderr(buf):
-            res = sweep_with_retries(one, opts["dlam"], opts.get("retry_factors", (2, 4)), "%s imp %s" % (combo_label[:40], imp["tag"]))
+            res = sweep_with_retries(one, opts["dlam"], opts.get("retry_factors", (2, 4)), "%s imp %s" % (combo_label[:40], imp["tag"]),
+                                     time_limit=opts["time_limit"])
     except CK.ChunkExpired as ex:
         print("   RESUME %-40s imp %s: %s" % (combo_label[:40], imp["tag"], ex), flush=True)
         return dict(label=combo_label, imp=imp["tag"], resume=True, checkpoint=J.path, journal=J.summary())
@@ -131,6 +183,10 @@ def _worker(args):
                                 disp={str(t): [round(v, 4) for v in dd] for t, dd in f["disp"].items()},
                                 mem={str(m): [round(r, 2), round(fr, 2)] for m, (r, fr) in f["mem"].items()},
                                 buckled=[int(t) for t in f["buckled"]]) for f in res.get("frames", [])]
+    kk = (float(opts["dlam"]) / float(res["retries"][-1]["dlam"])) if res.get("retries") else 1.0
+    res_small["time_limit_s"] = round(float(opts["time_limit"]) * kk, 1)   # stage 2: the limit this result's rung had
+    res_small["speed_factor"] = float(opts.get("speed_factor") or 1.0)
+    res_small["cpu_seconds"] = res.get("cpu_seconds")         # review M6: the CPU time the limit was taken on
     out = dict(label=combo_label, imp=imp["tag"], res=res_small, cls=cls, state=state,
                section_log=(g.builder.log if getattr(g, "builder", None) is not None else (slog or [])), b12=b12,
                forces_at_1=packed)
@@ -211,14 +267,12 @@ def _journal_for(job, combo_label, imp, opts):
     import hashlib, re
     from snl import checkpoint as CK
     h = hashlib.sha256()
-    for rel in ("model_opensees.py", "nl_hr_gravity.json", "cfg.py"):
-        p_ = os.path.join(job, rel)
-        if os.path.exists(p_):
-            h.update(open(p_, "rb").read())
-    o = {k: v for k, v in opts.items() if not k.startswith("_")}
-    # review M4 / M5: the code (the worker and the B-1.2 check included), the engine, the SNL_* knobs, the hash seed and
-    # the nl_plan.json material overrides the fy reading uses (_india_fy_fn)
-    plans = CK.file_digest(os.path.join(job, "nl_plan.json"), os.path.join(os.path.dirname(job), "nl_plan.json"))
+    # stage 2: every input file of the job (snl.checkpoint.hr_input_files, the nl_plan.json material overrides the fy
+    # reading uses among them) and the HR gravity states
+    h.update(CK.hr_digest(job, extra=("nl_hr_gravity.json",)).encode())
+    o = {k: v for k, v in opts.items() if not k.startswith("_") and k not in ("calibration_s", "calibration_basis")}
+    # review M4 / M5: the code (the worker and the B-1.2 check included), the engine, the SNL_* knobs, the hash seed
+    plans = "in the input digest"
     key = (json.dumps(CK.run_key(), sort_keys=True), h.hexdigest()[:16], plans, combo_label, imp.get("tag"),
            json.dumps(o, sort_keys=True, default=str, ensure_ascii=False))
     os.makedirs(ck["dir"], exist_ok=True)
@@ -226,7 +280,7 @@ def _journal_for(job, combo_label, imp, opts):
     return CK.Journal(os.path.join(ck["dir"], fn), key, budget_s=ck.get("budget_s"), t_start=ck.get("t0"))
 
 
-def sweep_with_retries(do_sweep, dlam, factors=(2, 4), what=""):
+def sweep_with_retries(do_sweep, dlam, factors=(2, 4), what="", time_limit=None):
     """NL-30: a sweep that ends in SOLVER_FAILURE (a numerical stop with the structure still stiff) is re-run from the
     start with a smaller load step -- dlam/2, then dlam/4 (the caller scales max steps and the time limit with it). The
     first sweep that ends in a structural status (LIMIT_POINT / PLASTIC_PLATEAU / DUCTILITY_CAP / NO_LIMIT_POINT) is
@@ -240,7 +294,10 @@ def sweep_with_retries(do_sweep, dlam, factors=(2, 4), what=""):
         res = do_sweep(dlam / k, k)
         retries.append(dict(dlam=dlam / k, status=res.get("status"), termination=res.get("termination"),
                             lambda_end=round(res.get("lambda_end") or 0.0, 4), steps=res.get("steps"),
-                            seconds=round(res.get("seconds") or 0.0, 1)))
+                            seconds=round(res.get("seconds") or 0.0, 1),
+                            cpu_seconds=(round(res["cpu_seconds"], 1) if res.get("cpu_seconds") is not None else None)))
+        if time_limit:                                   # stage 2: the rung's own limit (the compute budget x k)
+            retries[-1]["time_limit_s"] = round(float(time_limit) * k, 1)
         if res.get("status") != "SOLVER_FAILURE" or i == len(ks) - 1:
             break
         print("   retry %-50s SOLVER_FAILURE at lambda %.3f -> re-run with dlam %.4g" % (
@@ -349,10 +406,16 @@ def run(args):
     india = _is_india_cfg(cfg)
     psi = args.psi if args.psi is not None else (1 / 200.0 if india else 1 / 500.0)
     bow = args.bow if args.bow is not None else 1 / 1000.0
-    if args.time_limit < 2400:
-        print("!! --time-limit %.0f s is below the default 2400 s: runs that stop on the clock are NO_LIMIT_POINT, not capacities" % args.time_limit)
+    tl = resolve_time_limit(args.time_limit, getattr(args, "speed_factor", None))
+    if tl["time_limit_base"] < BASE_TIME_LIMIT_S:
+        print("!! --time-limit %.0f s is below the reference %.0f s x the speed factor %g: runs that stop on the clock are "
+              "NO_LIMIT_POINT, not capacities" % (tl["time_limit"], BASE_TIME_LIMIT_S, tl["speed_factor"]))
+    print(">> sweep time limit: %s" % tl["time_limit_basis"], flush=True)
+    cal = CK_calibration()                              # review M6: a wrong speed factor shows against this
     opts = dict(nsub=list(args.nsub), residual=args.residual, Fy=args.fy, hardening=args.hardening, fast=args.fast, nip=args.nip,
-                bow=bow, psi=psi, dlam=args.dlam, max_steps=args.max_steps, time_limit=args.time_limit,
+                bow=bow, psi=psi, dlam=args.dlam, max_steps=args.max_steps, time_limit=tl["time_limit"],
+                speed_factor=tl["speed_factor"], time_limit_base=tl["time_limit_base"], time_limit_basis=tl["time_limit_basis"],
+                calibration_s=cal, calibration_basis=_calibration_basis(),
                 rigid_end_offset=rigid_off, india=india, strain_cap=args.strain_cap,
                 n_combos_default=n_default, n_combos_run=len(kept),
                 bow_hollow=(args.bow_hollow if args.bow_hollow is not None else (1 / 500.0 if india else None)),
@@ -604,7 +667,9 @@ def _finish(job, out_dir, nm, cfg, gate, runs, sens, opts_rep, member_table, t0,
                               retries=r["res"].get("retries"), runaway=r["res"].get("runaway"),
                                                                    first_yield=r["res"]["first_yield"], phi=r["phi"], check=r["check"], cls=r["cls"], hist=r["res"]["hist"],
                                                                    steps=r["res"]["steps"], fails=r["res"].get("fails"), lam_at_1p25d=r["res"].get("lam_at_1p25d"),
-                                                                   seconds=r["res"]["seconds"], log=r["res"]["log"], state=r["state"],
+                                                                   seconds=r["res"]["seconds"], cpu_seconds=r["res"].get("cpu_seconds"),
+                                                                   time_limit_s=r["res"].get("time_limit_s"),
+                                                                   log=r["res"]["log"], state=r["state"],
                                                                    snapshot=r["res"]["snapshot"], control=r["res"].get("control"), lateral=r["res"].get("lateral"),
                                                                    d_at_max=r["res"].get("d_at_max"), frames=r["res"].get("frames", [])) for r in runs],
                    sensitivity=sens, member_table=member_table, elapsed_s=(elapsed if elapsed is not None else round(time.time() - t0))),
@@ -741,7 +806,8 @@ def _runs_from_results(d):
             print("   NL-36: %s reclassified SOLVER_FAILURE (%s)" % (r.get("label"), r["runaway"]["criterion"]), flush=True)
         res = dict(lambda_u=r["lambda_u"], lambda_end=r.get("lambda_end", r["lambda_u"]), status=r.get("status"),
                    termination=r.get("termination"), first_yield=r.get("first_yield"), hist=r["hist"], steps=r["steps"], fails=r.get("fails"), lam_at_1p25d=r.get("lam_at_1p25d"),
-                   seconds=r["seconds"], snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
+                   seconds=r["seconds"], cpu_seconds=r.get("cpu_seconds"), time_limit_s=r.get("time_limit_s"),
+                   snapshot=r.get("snapshot"), control=r.get("control"), lateral=r.get("lateral"), d_at_max=r.get("d_at_max"),
                    log=r.get("log", []), frames=r.get("frames", []), stop_tangent_ratio=r.get("stop_tangent_ratio"),
                    control_mode=r.get("control_mode"), ladder_used=r.get("ladder_used"), retries=r.get("retries"),
                    runaway=r.get("runaway"))
@@ -821,9 +887,11 @@ def retry(args):
     cfg = nm.cfg
     india = _is_india_cfg(cfg)
     o = dict(d.get("options") or {})
+    tl = _stored_time_limit(o, getattr(args, "speed_factor", None))
     opts = dict(nsub=list(o.get("nsub") or (2, 2, 4)), residual=o.get("residual", "lehigh"), Fy=o.get("Fy") if not india else None,
                 hardening=o.get("hardening", 0.002), fast=bool(o.get("fast")), nip=o.get("nip", 5), bow=o.get("bow"), psi=o.get("psi"),
-                dlam=o.get("dlam", 0.05), max_steps=o.get("max_steps", 250), time_limit=o.get("time_limit", 2400.0),
+                dlam=o.get("dlam", 0.05), max_steps=o.get("max_steps", 250), time_limit=tl["time_limit"],
+                speed_factor=tl["speed_factor"], time_limit_base=tl["time_limit_base"], time_limit_basis=tl["time_limit_basis"],
                 rigid_end_offset=o.get("rigid_end_offset", False), india=india, strain_cap=o.get("strain_cap"),
                 bow_hollow=o.get("bow_hollow"))
     if india:
@@ -894,6 +962,7 @@ def retry(args):
     opts_rep.setdefault("n_cases", len(cases))
     rec_ = dict(code="NL-30" if not getattr(args, "combos", None) else "NL-30 / re-run of named combinations", combos=bad,
                 sweeps=len(tasks), seconds=round(time.time() - t0), result={lab: gov[lab]["res"].get("status") for lab in gov},
+                speed_factor=opts.get("speed_factor"), time_limit=opts.get("time_limit"), calibration_s=CK_calibration(),
                 date=time.strftime("%Y-%m-%dT%H:%M:%S"), code_version=getattr(args, "_code_version", None) or code_version())
     _record_rerun(opts_rep, "ddm_rerun" if getattr(args, "combos", None) else "ddm_retry", rec_)
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
@@ -936,10 +1005,12 @@ def _record_rerun(opts_rep, key, rec):
     return hist
 
 
-def _retry_opts(o, india):
+def _retry_opts(o, india, factor=None):
+    tl = _stored_time_limit(o, factor)
     return dict(nsub=list(o.get("nsub") or (2, 2, 4)), residual=o.get("residual", "lehigh"), Fy=o.get("Fy") if not india else None,
                 hardening=o.get("hardening", 0.002), fast=bool(o.get("fast")), nip=o.get("nip", 5), bow=o.get("bow"), psi=o.get("psi"),
-                dlam=o.get("dlam", 0.05), max_steps=o.get("max_steps", 250), time_limit=o.get("time_limit", 2400.0),
+                dlam=o.get("dlam", 0.05), max_steps=o.get("max_steps", 250), time_limit=tl["time_limit"],
+                speed_factor=tl["speed_factor"], time_limit_base=tl["time_limit_base"], time_limit_basis=tl["time_limit_basis"],
                 rigid_end_offset=o.get("rigid_end_offset", False), india=india, strain_cap=o.get("strain_cap"),
                 bow_hollow=o.get("bow_hollow"))
 
@@ -970,7 +1041,7 @@ def _b12_refresh(args, job, engine_dir, out_dir, d, t0):
     if not india:
         raise SystemExit("retry --b12-only: India packages only (IS 800 Annex B-1.2)")
     o = dict(d.get("options") or {})
-    opts = _retry_opts(o, india)
+    opts = _retry_opts(o, india, getattr(args, "speed_factor", None))
     _llr_setup(nm, cfg, opts, tuple(opts["nsub"]), opts["rigid_end_offset"], (o.get("imposed_load_reduction") or {}).get("mode") or "hr")
     cases = loads.steltic_combos(cfg, nm=nm)
     by_combo = {c[0]: c for c in cases}
@@ -1027,6 +1098,8 @@ def _b12_refresh(args, job, engine_dir, out_dir, d, t0):
     opts_rep.setdefault("n_cases", len(cases))
     _record_rerun(opts_rep, "ddm_b12_refresh", dict(code="second wave: B-1.2 refresh to lambda = 1", combos=list(done),
                                                     seconds=round(time.time() - t0), date=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                                    speed_factor=opts.get("speed_factor"), time_limit=opts.get("time_limit"),
+                                                    calibration_s=CK_calibration(),
                                                     code_version=getattr(args, "_code_version", None) or code_version(),
                                                     result={k: ("replaced" if v["replaced"] else "kept: " + v["reason"][:80]) for k, v in done.items()}))
     rep, block = _finish(job, out_dir, nm, cfg, d.get("gate", {}), runs, d.get("sensitivity", []), opts_rep,
@@ -1081,7 +1154,11 @@ def main(argv=None):
     r.add_argument("--strain-cap", type=float, default=20.0, help="ductility cap: stop at max fibre strain = cap x eps_y (lambda at the cap is reported as DUCTILITY_CAP)")
     r.add_argument("--dlam", type=float, default=0.05)
     r.add_argument("--max-steps", type=int, default=250)
-    r.add_argument("--time-limit", type=float, default=2400.0, help="seconds per sweep")
+    r.add_argument("--time-limit", type=float, default=None,
+                   help="seconds per sweep (default: 2400 s on the reference machine x --speed-factor)")
+    r.add_argument("--speed-factor", type=float, default=None,
+                   help="stage 2: this machine against the reference machine (owner's PC 1.0; the 2-core box 1.6); default "
+                        "$SNL_SPEED_FACTOR or 1.0")
     r.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2))))
     r.add_argument("--fast", action="store_true", help="dispBeamColumn instead of forceBeamColumn")
     r.add_argument("--sensitivity", action="store_true")
@@ -1114,6 +1191,8 @@ def main(argv=None):
                         "repeat each stored governing sweep up to lambda = 1, check that the curve repeats the stored one, "
                         "replace the B-1.2 row; lambda_u, status and curve are kept")
     t.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2)))); t.add_argument("--no-block", action="store_true")
+    t.add_argument("--speed-factor", type=float, default=None,
+                   help="stage 2: this machine against the reference machine (the stored budget is rescaled)")
     t.add_argument("--checkpoint-dir", default=None,
                    help="third wave: journal every sweep there (deterministic replay, snl/checkpoint.py) so a sweep longer "
                         "than one process can finish over several; with --chunk-seconds the process stops at the budget "

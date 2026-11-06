@@ -5,6 +5,19 @@ import datetime, hashlib, html, json, os
 from . import phi_s
 
 
+
+def _time_limit_text(o):
+    """Stage 2: the sweep time limit as a compute budget -- the limit, and (when recorded) the reference-machine base
+    and this machine's speed factor; October outputs carry the limit alone (the owner's PC, factor 1.0)."""
+    tl = float(o.get("time_limit") or 0)
+    if o.get("speed_factor") is None:
+        return "%.0f s" % tl
+    cal = (", calibration run %.2f s" % float(o["calibration_s"])) if o.get("calibration_s") is not None else ""
+    return ("%.0f CPU seconds (%.0f s on the reference machine x speed factor %g%s; x2, x4 for the smaller-step "
+            "retries). The CPU-time budget gives somewhat more compute than October's wall-clock limit (which also "
+            "counted time spent waiting for a processor), so a sweep stopped on the limit is not directly comparable "
+            "with an October one" % (tl, float(o.get("time_limit_base") or tl), float(o["speed_factor"]), cal))
+
 def _h(s):
     return html.escape(str(s))
 
@@ -311,10 +324,19 @@ def write_block(job_dir, block):
     pkg = json.load(open(p))
     bak = p + ".pre_ddm.bak"
     if not os.path.exists(bak):
-        open(bak, "w").write(json.dumps(pkg, indent=1))
+        _write_atomic(bak, json.dumps(pkg, indent=1))
     pkg["ddm_analysis"] = block
-    open(p, "w").write(json.dumps(pkg, indent=1))
+    _write_atomic(p, json.dumps(pkg, indent=1))           # review L8: never a half-written calc package
     return p
+
+
+def _write_atomic(path, text):
+    tmp = path + ".nl_sync_tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 # =====================================================================================================================
@@ -524,8 +546,8 @@ def build_india(out_dir, nm, cfg, gate, runs, sensitivity, options, member_table
              'A converged step beyond the plausibility bounds — |λ| &gt; 10, a λ change &gt; 1.0 in one step, drift from the '
              'base &gt; 10 %%, max fibre strain &gt; 1 000 ε<sub>y</sub> — is a numerical runaway: the step is discarded '
              '(not in the curve, the peak or the forces at λ = 1) and the sweep is SOLVER_FAILURE, never a capacity. '
-             'Time limit per sweep %.0f s.</li></ul>' % (
-                 o.get("strain_cap") or 0, o.get("time_limit") or 0))
+             'Time limit per sweep %s.</li></ul>' % (
+                 o.get("strain_cap") or 0, _h(_time_limit_text(o))))
     b11 = o.get("b11") or {}
     if b11:
         P.append('<p>B-1.1 preconditions: sections %s (IS 800 Table 2); lateral restraint: %s. <i>%s</i></p>' % (

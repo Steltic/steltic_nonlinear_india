@@ -17,21 +17,30 @@ in the queue and resumes from its checkpoint in the next chunk:
 
     python scripts/nl_orchestrate.py plan   --queue Q.json --jobs <job> [<job> ...] [--analyses pushover nlrha ddm]
                                             [--engine <steel_engine>] [--python <py>] [--heavy <heavy>]
+                                            [--speed-factor F] [--job-args "JOB:KIND=ARGS" ...]
     python scripts/nl_orchestrate.py next   --queue Q.json [--budget 6900] [--max-steps N] [--dry-run]
     python scripts/nl_orchestrate.py status --queue Q.json
     python scripts/nl_orchestrate.py unstall --queue Q.json (--step <id> | --job <job name>)
+    python scripts/nl_orchestrate.py refresh --queue Q.json [--engine <steel_engine>] [--include-code] [--dry-run]
+    python scripts/nl_orchestrate.py sync   --from <gold jobs root> --to <work jobs root> [--jobs NAME ...] [--dry-run]
 
-Files next to the queue: Q.json.runtime.log (one line per chunk: start, end, step, exit code, seconds) and
-Q.json.lock (one `next` at a time). The analysis commands are the October re-run commands (tools/step.sh,
+Stage 2: a finished step keeps the fingerprint of what it read (fingerprint()); `refresh` compares it with the files
+now on disk and puts back the steps whose inputs changed, with everything after them. `sync` brings the HR files of
+the gold into the work tree and leaves the NL outputs there alone. Each chunk records the peak memory of its analysis.
+
+Files next to the queue: Q.json.runtime.log (one line per chunk: start, end, step, exit code, seconds, peak memory)
+and Q.json.lock (one `next` at a time). The analysis commands are the October re-run commands (tools/step.sh,
 run_ddm.sh) with the checkpoint options added; nothing here changes an analysis.
 """
 from __future__ import annotations
 
 import argparse
-import fcntl
+import fnmatch
+import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -49,6 +58,25 @@ FULL_SHARE = 0.9                    # a chunk is "full" when it had at least thi
 DEFAULT_PY = "/home/claude/venv312/bin/python"
 DEFAULT_HEAVY = "/home/claude/bin/heavy"
 NL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ANALYSIS_KINDS = ("pushover", "nlrha", "ddm")
+# Stage 2, `sync`: files and folders the NL writes into a job (at any depth: a unit's own outputs too). `sync` never
+# copies, replaces or removes them. Taken from the October NL golds against the HR golds, plus the stage-2 files.
+NL_OUTPUTS = ("pushover", "nlrha", "nl_checkpoints", "nlrha_probe", "pushover_proof", "ddm_*", "_ddm_before_*",
+              "model_gmnia.py", "four_analyses.html", "snl_*", "complete_gate*", "design_criteria_16_1_4.*",
+              "nl_hr_gravity.json", "steltic_viewer_bundle.html", "pushover_review.json", "nl_orchestrate_*",
+              ".nl_orchestrate_*", "nl_promote_fibre.json", "nl_plan.json", "hinge_params*.json", "collect_*",
+              ".batch_step_*", "batch.log", "batch_done.json", "merge_report.log", "retrieval_log.md", "*.pre_ddm.bak",
+              ".nl_sync.json", "stage2_*.log", "*.before_refresh_*")
+SYNC_SKIP = ("__pycache__", "*.pyc")          # neither copied nor removed
+GRAVITY_META = ("engine_sha", "engine", "inputs_sha256", "source", "note", "dp_note", "job")
+
+
+def _ck():
+    """snl.checkpoint of this checkout (the orchestrator runs as a script)."""
+    if NL_ROOT not in sys.path:
+        sys.path.insert(0, NL_ROOT)
+    from snl import checkpoint as CK
+    return CK
 
 
 def _now():
@@ -56,13 +84,44 @@ def _now():
 
 
 def load(q):
-    return json.load(open(q, encoding="utf-8"))
+    """The queue; its backup (<q>.bak, the previous save) when the file itself is unreadable -- a power cut on NTFS can
+    leave a just-written file zero-filled (review M7)."""
+    try:
+        return json.load(open(q, encoding="utf-8"))
+    except (OSError, ValueError) as ex:
+        bak = q + ".bak"
+        if os.path.exists(bak):
+            print("!! %s unreadable (%s): continuing from its backup %s" % (q, type(ex).__name__, bak), flush=True)
+            return json.load(open(bak, encoding="utf-8"))
+        raise
+
+
+def _replace(src, dst, tries=6):
+    """os.replace, retried: on Windows an antivirus or the indexer can hold the file for a moment."""
+    for i in range(tries):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.5)
 
 
 def save(q, d):
+    """Write the queue durably: a temp file flushed to disk, the previous queue kept as <q>.bak, then the swap
+    (review M7)."""
     tmp = q + ".tmp"
-    json.dump(d, open(tmp, "w", encoding="utf-8"), indent=1)
-    os.replace(tmp, q)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    if os.path.exists(q):
+        try:
+            json.load(open(q, encoding="utf-8"))                 # only a readable queue becomes the backup
+            shutil.copyfile(q, q + ".bak")
+        except (OSError, ValueError):
+            pass
+    _replace(tmp, q)
 
 
 def _job_steps(job, analyses, py):
@@ -100,19 +159,302 @@ def _job_steps(job, analyses, py):
     return steps
 
 
+def _merge_args(cmd, extra):
+    """The command with the options of `extra` put in: an option already in the command is replaced (the option and
+    its values, up to the next '--' token), anything else is added at the end."""
+    flags = {t for t in extra if t.startswith("--")}
+    out, skip = [], False
+    for t in cmd:
+        if t.startswith("--"):
+            skip = t in flags
+        if not skip:
+            out.append(t)
+    return out + list(extra)
+
+
+def apply_job_args(steps, specs):
+    """Stage 2, `plan --job-args "JOB:KIND=ARGS"`: per-job options of one analysis -- JOB a step's job name (the part
+    of its id before the last '/') or the job folder's name, KIND gravity / pushover / nlrha / ddm / report, both
+    with '*' wildcards; ARGS shell words merged into the command (_merge_args). A spec that matches no step is an
+    error, so a typing slip is not silently ignored."""
+    for spec in specs or ():
+        if ":" not in spec or "=" not in spec.split(":", 1)[1]:
+            raise SystemExit("--job-args %r: expected JOB:KIND=ARGS" % spec)
+        pat, rest = spec.split(":", 1)
+        kind, argstr = rest.split("=", 1)
+        extra = shlex.split(argstr)
+        hit = 0
+        for st in steps:
+            name = st["id"].rsplit("/", 1)[0]
+            if (fnmatch.fnmatchcase(name, pat) or fnmatch.fnmatchcase(os.path.basename(st["job"]), pat)) \
+                    and fnmatch.fnmatchcase(st["kind"], kind):
+                st["cmd"] = _merge_args(st["cmd"], extra)
+                st.setdefault("job_args", []).append(argstr)
+                hit += 1
+        if not hit:
+            raise SystemExit("--job-args %r matches no step" % spec)
+    return steps
+
+
 def plan(args):
     if os.path.exists(args.queue) and not args.force:
         raise SystemExit("queue %s exists (use --force to rewrite it)" % args.queue)
     steps = []
     for j in args.jobs:
         steps += _job_steps(os.path.abspath(j), set(args.analyses), args.python)
+    apply_job_args(steps, getattr(args, "job_args", None))
+    sf = getattr(args, "speed_factor", None)
+    if sf is None:
+        sf = float(os.environ.get("SNL_SPEED_FACTOR") or 1.0)
     d = dict(version=1, created=_now(), nl_root=NL_ROOT, heavy=args.heavy, python=args.python,
              env=dict(STELTIC_ENGINE_DIR=os.path.abspath(args.engine) if args.engine else os.environ.get("STELTIC_ENGINE_DIR", ""),
-                      MPLBACKEND="Agg", RAG_API_URL="", PYTHONDONTWRITEBYTECODE="1", PYTHONHASHSEED="0"),
+                      MPLBACKEND="Agg", RAG_API_URL="", PYTHONDONTWRITEBYTECODE="1", PYTHONHASHSEED="0",
+                      OMP_NUM_THREADS="1",
+                      SNL_SPEED_FACTOR="%g" % float(sf)),
              steps=steps)
     save(args.queue, d)
     print("planned %d steps for %d job(s) -> %s" % (len(steps), len(args.jobs), args.queue))
+    if any(st["kind"] == "ddm" for st in steps):
+        print("DDM sweep time limit: 2400 s on the reference machine x speed factor %g = %.0f s" % (float(sf), 2400.0 * float(sf)))
     return d
+
+
+def _engine_dir(d):
+    return (d.get("env") or {}).get("STELTIC_ENGINE_DIR") or None
+
+
+def gravity_digest(job):
+    """sha256 (16 hex) of the HR gravity record's content (the states, the column load reduction, the roof share), its
+    provenance fields left out; None without a record."""
+    try:
+        g = json.load(open(os.path.join(job, "nl_hr_gravity.json"), encoding="utf-8"))
+    except Exception:                                            # noqa: BLE001
+        return None
+    g = {k: v for k, v in g.items() if k not in GRAVITY_META}
+    return hashlib.sha256(json.dumps(g, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def fingerprint(d, s):
+    """Stage 2: what a step read, taken when it finishes -- the job's input files (snl.checkpoint.hr_digest: the HR
+    model, cfg, load plan, IS 1893 calculation, design of record, design/*, the NL plan and hinge parameters), the HR
+    engine, the analysis code, and for an analysis or report step the HR gravity states it used and the section
+    tables."""
+    CK = _ck()
+    eng = _engine_dir(d)
+    from snl.hr_gravity import engine_fingerprint
+    fp = dict(inputs=CK.hr_digest(s["job"]), engine=engine_fingerprint(eng) if eng else None, code=CK.code_key())
+    if s["kind"] != "gravity":
+        fp.update(gravity=gravity_digest(s["job"]), tables=CK.section_tables_key(eng or ""))
+    return fp
+
+
+def _dependents(d, sid):
+    """Every step that runs after `sid` through `after` (transitively)."""
+    out, todo = [], [sid]
+    while todo:
+        cur = todo.pop()
+        for x in d["steps"]:
+            if cur in (x.get("after") or []) and x["id"] not in out:
+                out.append(x["id"]); todo.append(x["id"])
+    return out
+
+
+def _reset(s, state, reason, now=None):
+    s.setdefault("refresh_history", []).append(dict(time=now or _now(), from_state=s["state"], to=state, reason=reason,
+                                                    fingerprint=s.get("fingerprint")))
+    s["state"] = state
+    s["refresh_reason"] = reason
+    s.pop("stalled_reason", None)
+    s["no_gain_full_chunks"] = 0
+    if state == "pending":
+        for k in ("promotion_rounds", "promoted", "note_promotion", "started_fingerprint"):   # review M2, M5
+            s.pop(k, None)
+
+
+# Review M1: what each step writes into its job folder. When a step goes back to pending these are set aside, so a
+# failed re-run can never leave the earlier inputs' results in place (shipped in the zip, read by a report or the gate).
+STEP_OUTPUTS = {"gravity": ("nl_hr_gravity.json",),
+                "pushover": ("pushover",),
+                "nlrha": ("nlrha",),
+                "ddm": ("ddm_results.json", "ddm_report.html", "ddm_viewer_3d.html", "model_gmnia.py"),
+                "report": ("complete_gate.json", "complete_gate_disclosures.json", "four_analyses.html",
+                           "snl_summary.json", "snl_run.json", "design_criteria_16_1_4.docx",
+                           "design_criteria_16_1_4.html", "steltic_viewer_bundle.html")}
+
+
+def _aside(path, stamp):
+    to, n = path + ".before_refresh_" + stamp, 1
+    while os.path.exists(to):
+        n += 1
+        to = "%s.before_refresh_%s_%d" % (path, stamp, n)
+    _replace(path, to)
+    return to
+
+
+def set_aside_outputs(s, stamp):
+    """Move a step's outputs and its journals / record cache aside (renamed *.before_refresh_<stamp>, never deleted);
+    for the DDM also take its block out of design/calc_package.json. Returns what was moved."""
+    moved = []
+    ck = _opt(s["cmd"], "--checkpoint-dir") or _opt(s["cmd"], "--record-cache")
+    # the journals / record cache: a fresh journal starts its counters at zero, which next to the old ones would read
+    # as lost progress
+    for p in ([ck] if ck else []) + [os.path.join(s["job"], x) for x in STEP_OUTPUTS.get(s["kind"], ())]:
+        if os.path.exists(p):
+            moved.append(_aside(p, stamp))
+    if s["kind"] == "ddm":
+        cp = os.path.join(s["job"], "design", "calc_package.json")
+        try:
+            pkg = json.load(open(cp, encoding="utf-8"))
+            if isinstance(pkg, dict) and "ddm_analysis" in pkg:
+                pkg.pop("ddm_analysis")
+                tmp = cp + ".nl_sync_tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(pkg, indent=1))
+                _replace(tmp, cp)
+                moved.append(cp + " (ddm_analysis block removed)")
+        except (OSError, ValueError):
+            pass
+    if ck:
+        s["set_aside"] = next((m for m in moved if m.startswith(ck)), s.get("set_aside"))
+    s.setdefault("set_aside_paths", []).extend(m for m in moved if ".before_refresh_" in m)
+    return moved
+
+
+def drop_set_aside(s):
+    """Re-check (low): once a step's re-run has finished, the outputs and journals set aside for it are removed --
+    only what set_aside_outputs moved for this step (names with .before_refresh_)."""
+    for p in s.pop("set_aside_paths", None) or []:
+        if ".before_refresh_" not in os.path.basename(p):
+            continue
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            elif os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+    s.pop("set_aside", None)
+
+
+def refresh(args):
+    """Stage 2: compare each finished (or started) step's fingerprint with the files now on disk and put back what is
+    stale. A change of the job's input files resets the step and every step after it; an HR engine change alone resets
+    the gravity step, resets the DDM (it reads the engine's load combinations directly) and sets the pushover, NLRHA
+    and report steps to `recheck`: after the gravity step has run again they are done again when the gravity states
+    and the section tables are unchanged, else pending (reconcile_rechecks). A change of the gravity states or the
+    section tables under a finished analysis resets it. An analysis-code change is reported only, unless
+    --include-code. A step without a fingerprint (finished before stage 2) is reset."""
+    d = load(args.queue)
+    if getattr(args, "engine", None):
+        d.setdefault("env", {})["STELTIC_ENGINE_DIR"] = os.path.abspath(args.engine)
+    by_id = {s["id"]: s for s in d["steps"]}
+    plan_ = {}                                                   # step id -> (new state, reason)
+
+    def mark(sid, state, reason):
+        old = plan_.get(sid)
+        if old is None or (old[0] == "recheck" and state == "pending"):
+            plan_[sid] = (state, reason)
+    for s in d["steps"]:
+        # a finished step: what it read; a started one (resume / stalled / failed): what its first chunk began with;
+        # a step that has not run since it was planned or reset has nothing to compare
+        old = s.get("fingerprint") if s["state"] in ("done", "recheck") else s.get("started_fingerprint")
+        if old is None:
+            if s["state"] == "done":
+                mark(s["id"], "pending", "finished without a fingerprint (before stage 2)")
+                for x in _dependents(d, s["id"]):
+                    mark(x, "pending", "after %s, which is reset" % s["id"])
+            continue
+        new = fingerprint(d, s)
+        why = [k for k in ("inputs", "gravity", "tables") if k in new and old.get(k) != new.get(k)]
+        if why:
+            words = {"inputs": "the job's input files changed", "gravity": "the HR gravity states changed",
+                     "tables": "the section tables changed"}
+            r = "; ".join(words[w] for w in why)
+            mark(s["id"], "pending", r)
+            for x in _dependents(d, s["id"]):
+                mark(x, "pending", "after %s (%s)" % (s["id"], r))
+            continue
+        if old.get("engine") != new.get("engine") and s["kind"] == "gravity":
+            r = "the HR engine changed (%s -> %s)" % (old.get("engine"), new.get("engine"))
+            mark(s["id"], "pending", r)
+            for x in _dependents(d, s["id"]):
+                kind = by_id[x]["kind"]
+                if kind == "ddm":
+                    mark(x, "pending", r + "; the DDM reads the engine's load combinations directly")
+                elif by_id[x]["state"] == "done" or by_id[x]["chunks"]:
+                    mark(x, "recheck", r + "; done again if the gravity states and section tables are unchanged")
+            continue
+        if old.get("code") != new.get("code"):
+            if getattr(args, "include_code", False):
+                mark(s["id"], "pending", "the analysis code changed (--include-code)")
+                for x in _dependents(d, s["id"]):
+                    mark(x, "pending", "after %s (the analysis code changed)" % s["id"])
+            else:
+                s["code_changed"] = "the analysis code changed since this step ran (%s -> %s); kept (refresh " \
+                                    "--include-code to run it again)" % (old.get("code"), new.get("code"))
+    stamp = time.strftime("%Y%m%d%H%M%S")
+    for sid, (state, reason) in plan_.items():
+        s = by_id[sid]
+        print("%-52s %-8s -> %-8s %s" % (sid, s["state"], state, reason))
+        if not getattr(args, "dry_run", False):
+            _reset(s, state, reason)
+            if state == "pending":
+                s.pop("fingerprint", None)
+                for m in set_aside_outputs(s, stamp):                # review M1: outputs too, not only journals
+                    print("    set aside: %s" % m)
+    if not plan_:
+        print("refresh: every step is current")
+    if not getattr(args, "dry_run", False):
+        save(args.queue, d)
+    return plan_
+
+
+def reconcile_rechecks(d, job):
+    """After the gravity step of `job` has run again (refresh after an engine change): each `recheck` step of the job
+    is done again when its job inputs, gravity states and section tables are those it ran with, else pending; the
+    report step is done again only when nothing before it went back to pending."""
+    went_pending = False
+    for s in d["steps"]:
+        if s["job"] != job or s["state"] != "recheck" or s["kind"] == "report":
+            continue
+        old = s.get("fingerprint") or {}
+        new = fingerprint(d, s)
+        same = all(old.get(k) == new.get(k) for k in ("inputs", "gravity", "tables"))
+        if same and old:
+            s["state"] = "done"
+            s["fingerprint"] = dict(old, engine=new.get("engine"))
+            s["recheck_note"] = ("rechecked %s after the engine change: the gravity states and section tables are "
+                                 "unchanged, the result stands" % _now())
+        else:
+            _reset(s, "pending", "rechecked after the engine change: the gravity states or section tables changed")
+            s.pop("fingerprint", None)
+            set_aside_outputs(s, time.strftime("%Y%m%d%H%M%S"))  # review M1 / M5: no old output, a fresh start print
+            s["recheck_note"] = "rechecked %s: the gravity states or section tables changed -- runs again" % _now()
+            went_pending = True
+    # re-check R2: a step that had started but not finished (resume / running, no recheck because it had no finished
+    # run) carries the start fingerprint of the earlier gravity record. Gravity states or tables changed: it starts
+    # again from nothing (its partial outputs set aside); only the engine changed: its start fingerprint is renewed,
+    # so a later refresh never sets aside what it computes from now on.
+    for s in d["steps"]:
+        if s["job"] != job or s["kind"] in ("gravity", "report") or s["state"] in ("done", "skipped", "recheck") \
+                or not s.get("started_fingerprint"):
+            continue
+        old, new = s["started_fingerprint"], fingerprint(d, s)
+        if any(old.get(k) != new.get(k) for k in ("inputs", "gravity", "tables")):
+            _reset(s, "pending", "the HR gravity record was redone with other states while this step was part-way")
+            set_aside_outputs(s, time.strftime("%Y%m%d%H%M%S"))
+            went_pending = True
+        else:
+            s["started_fingerprint"] = new
+    went_pending = went_pending or any(s["job"] == job and s["kind"] not in ("report", "gravity") and s["state"] != "done"
+                                       for s in d["steps"])
+    for s in d["steps"]:
+        if s["job"] == job and s["state"] == "recheck" and s["kind"] == "report":
+            if went_pending:
+                _reset(s, "pending", "an analysis of the job runs again")
+                set_aside_outputs(s, time.strftime("%Y%m%d%H%M%S"))
+            else:
+                s["state"] = "done"
 
 
 def _ready(d, s):
@@ -194,6 +536,11 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
         return 0
     logp = os.path.join(s["job"], "nl_orchestrate_%s.log" % s["id"].split("/")[-1])
     before = progress_of(s)
+    if "started_fingerprint" not in s:
+        try:
+            s["started_fingerprint"] = fingerprint(d, s)         # stage 2: what a partly-run step began with
+        except Exception as ex:                                   # noqa: BLE001
+            s["started_fingerprint"] = dict(error=type(ex).__name__)
     try:
         os.remove(stamp)
     except OSError:
@@ -206,15 +553,26 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
         st = json.load(open(stamp, encoding="utf-8"))
         had = float(st["deadline"]) - float(st["slot_start"])          # analysis time this chunk really had
     except Exception:                                                  # noqa: BLE001
-        had = None
+        had, st = None, {}
+    peak = st.get("peak_rss_mb") if isinstance(st, dict) else None    # stage 2: the analysis's peak memory
+    cpu = st.get("cpu_s") if isinstance(st, dict) else None           # ... and its CPU time
     after = progress_of(s)
     is_full = (had if had is not None else chunk) >= FULL_SHARE * full_chunk
     ch = dict(start=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0)), end=_now(), rc=rc, seconds=round(sec),
-              progress=after, had_s=round(had) if had is not None else None, full=bool(is_full))
+              progress=after, had_s=round(had) if had is not None else None, full=bool(is_full), peak_rss_mb=peak,
+              cpu_s=cpu)
     s["chunks"].append(ch)
     s.pop("stalled_reason", None)
     if rc == 0:
         s["state"] = "done"
+        drop_set_aside(s)                                        # the re-run succeeded: the old outputs go
+        try:
+            s["fingerprint"] = fingerprint(d, s)                 # stage 2: what the finished step read
+        except Exception as ex:                                   # noqa: BLE001 -- never lose the finished state
+            s["fingerprint"] = dict(error="%s: %s" % (type(ex).__name__, ex))
+        s.pop("code_changed", None)
+        if s["kind"] == "gravity":
+            reconcile_rechecks(d, s["job"])
     elif rc == EXIT_NO_PROGRESS:
         s["state"] = "stalled"
         s["stalled_reason"] = _last_line(logp, "NO PROGRESS") or "the step cannot advance in chunks (exit 76)"
@@ -232,8 +590,10 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
                                        "cached record: %s)" % (s["no_gain_full_chunks"], after))
     else:
         s["state"] = "failed"
-    _log(q, "%s  %s  %-48s rc=%s seconds=%.0f state=%s%s" % (ch["start"], ch["end"], s["id"], rc, sec, s["state"],
-                                                             (" (%s)" % s["stalled_reason"]) if s.get("stalled_reason") else ""))
+    _log(q, "%s  %s  %-48s rc=%s seconds=%.0f cpu=%s peak_rss=%s state=%s%s" % (
+        ch["start"], ch["end"], s["id"], rc, sec, ("%.0f" % cpu) if cpu is not None else "n/a",
+        ("%.0fMB" % peak) if peak is not None else "n/a", s["state"],
+        (" (%s)" % s["stalled_reason"]) if s.get("stalled_reason") else ""))
     save(q, d)
     return rc
 
@@ -241,15 +601,25 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
 def _exec(a):
     """Inside the heavy slot: the chunk's deadline from now (never past the outer deadline), stamped for run_step, and
     the command run under it with a timeout (exit 124 when it is killed)."""
+    import resource
     t0 = time.time()
     dl = min(float(a.deadline), t0 + float(a.chunk))
     with open(a.stamp, "w", encoding="utf-8") as f:
         json.dump(dict(slot_start=t0, deadline=dl), f)
     env = dict(os.environ, SNL_DEADLINE="%.0f" % dl)
+    u0 = resource.getrusage(resource.RUSAGE_CHILDREN)
     try:
-        return subprocess.call(a.command, env=env, timeout=max(1.0, dl - t0 + MARGIN_S / 2))
+        rc = subprocess.call(a.command, env=env, timeout=max(1.0, dl - t0 + MARGIN_S / 2))
     except subprocess.TimeoutExpired:
-        return 124
+        rc = 124
+    # stage 2: the peak resident memory of the analysis and the processes it waited for (Linux: kB; a killed command
+    # is waited for too), and their CPU time beside the wall time (a pause of the machine shows as wall >> CPU)
+    u = resource.getrusage(resource.RUSAGE_CHILDREN)
+    peak = u.ru_maxrss / 1024.0
+    with open(a.stamp, "w", encoding="utf-8") as f:
+        json.dump(dict(slot_start=t0, deadline=dl, end=time.time(), rc=rc, peak_rss_mb=round(peak, 1),
+                       cpu_s=round(u.ru_utime + u.ru_stime - u0.ru_utime - u0.ru_stime, 1)), f)
+    return rc
 
 
 def next_steps(args, runner=None):
@@ -258,6 +628,7 @@ def next_steps(args, runner=None):
     call moves on to other ready steps; the next call gives it a full chunk."""
     lockf = open(args.queue + ".lock", "w")
     try:
+        import fcntl                                  # POSIX only: `next` runs on the box, never on Windows (review B1)
         fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         raise SystemExit("another `next` is running on %s" % args.queue)
@@ -314,12 +685,140 @@ def unstall(args):
 
 def status(args):
     d = load(args.queue)
-    print("%-52s %-8s %6s %8s" % ("step", "state", "chunks", "seconds"))
+    print("%-52s %-8s %6s %8s %8s" % ("step", "state", "chunks", "seconds", "peak MB"))
     for s in d["steps"]:
-        print("%-52s %-8s %6d %8d" % (s["id"], s["state"], len(s["chunks"]), sum(c["seconds"] for c in s["chunks"])))
-        if s.get("stalled_reason"):
-            print("    stalled: %s" % s["stalled_reason"])
+        pk = [c.get("peak_rss_mb") for c in s["chunks"] if c.get("peak_rss_mb") is not None]
+        print("%-52s %-8s %6d %8d %8s" % (s["id"], s["state"], len(s["chunks"]), sum(c["seconds"] for c in s["chunks"]),
+                                          ("%.0f" % max(pk)) if pk else "-"))
+        for k, w in (("stalled_reason", "stalled"), ("refresh_reason", "refresh"), ("code_changed", "note"),
+                     ("recheck_note", "recheck")):
+            if s.get(k) and (k != "refresh_reason" or s["state"] != "done"):
+                print("    %s: %s" % (w, s[k]))
     return d
+
+
+def _is_nl(rel):
+    """A path (relative to a job folder) that is an NL output or inside one, at any depth."""
+    return any(fnmatch.fnmatchcase(part, pat) for part in rel.replace(os.sep, "/").split("/") for pat in NL_OUTPUTS)
+
+
+def _skipped(rel):
+    return any(fnmatch.fnmatchcase(part, pat) for part in rel.replace(os.sep, "/").split("/") for pat in SYNC_SKIP)
+
+
+def _hr_files(root, inputs=()):
+    """Relative paths of the HR files under one job folder (NL outputs and SYNC_SKIP left out; links not followed).
+    `inputs`: file names (at any depth) taken although they match NL_OUTPUTS -- the NL inputs a gold bundle carries
+    (the PC runner: hinge_params_collected.json, nl_plan.json)."""
+    out = []
+    for r, dirs, files in os.walk(root):
+        rel_r = os.path.relpath(r, root)
+        dirs[:] = sorted(x for x in dirs if not _is_nl(os.path.normpath(os.path.join(rel_r, x)))
+                         and not _skipped(os.path.normpath(os.path.join(rel_r, x))))
+        for f in sorted(files):
+            rel = os.path.normpath(os.path.join(rel_r, f))
+            if (not _is_nl(rel) or f in inputs) and not _skipped(rel) and not os.path.islink(os.path.join(r, f)):
+                out.append(rel)
+    return out
+
+
+def _nl_written(rel):
+    """The NL_WRITES_IN_DESIGN name a path (relative to the folder sync walks) stands for: the building's own
+    design/calc_package.json or a nested unit's (unitC_gym/design/..., units/stem/design/...) -- review M9."""
+    CK = _ck()
+    r = rel.replace(os.sep, "/")
+    for f, _ in CK.NL_WRITES_IN_DESIGN:
+        if r == f or r.endswith("/" + f):
+            return f
+    return None
+
+
+def _same(rel, a, b):
+    """The same HR content: byte equality, except a file the NL writes a block into (design/calc_package.json, the
+    building's or a unit's), which is compared without that block (snl.checkpoint.hr_content)."""
+    CK = _ck()
+    f = _nl_written(rel)
+    if f:
+        return CK.hr_content(None, f, a) == CK.hr_content(None, f, b)
+    if os.path.getsize(a) != os.path.getsize(b):
+        return False
+    import filecmp
+    return filecmp.cmp(a, b, shallow=False)
+
+
+def sync(args):
+    """Stage 2: bring the HR files of the gold (`--from`, a folder of job folders; read only) into the work tree
+    (`--to`). Per job: HR files new or changed at the source are copied (with their times); a file is removed only
+    when the previous sync of the job brought it in (its .nl_sync.json lists it) and the source no longer has it, so
+    an NL file under a name NL_OUTPUTS does not know (a log, a 'before' copy) is never removed; NL outputs
+    (NL_OUTPUTS, at any depth) are never copied, replaced or removed. When
+    design/calc_package.json changes at the source the NL's DDM block in the work copy goes with it (the DDM writes it
+    again) and so does the stale backup beside it. A job folder only in the work tree is left alone. Each synced job
+    gets .nl_sync.json (source, time, what changed, the input digest). `refresh` then finds the stale steps."""
+    CK = _ck()
+    src_root, dst_root = os.path.abspath(args.src), os.path.abspath(args.dst)
+    try:
+        nested = os.path.commonpath([src_root, dst_root]) in (src_root, dst_root)
+    except ValueError:                                           # Windows: two drives can never contain each other
+        nested = False
+    if nested:
+        raise SystemExit("sync: --from and --to must not contain each other")
+    names = sorted(x for x in os.listdir(src_root) if os.path.isdir(os.path.join(src_root, x)) and not _skipped(x))
+    if args.jobs:
+        missing = [j for j in args.jobs if j not in names]
+        if missing:
+            raise SystemExit("sync: not in %s: %s" % (src_root, ", ".join(missing)))
+        names = [x for x in names if x in args.jobs]
+    dry = bool(getattr(args, "dry_run", False))
+    summary = {}
+    for name in names:
+        src, dst = os.path.join(src_root, name), os.path.join(dst_root, name)
+        inputs = tuple(getattr(args, "inputs", None) or ())
+        s_files, d_files = _hr_files(src, inputs), (_hr_files(dst, inputs) if os.path.isdir(dst) else [])
+        added = [r for r in s_files if r not in set(d_files)]
+        changed = [r for r in s_files if r in set(d_files) and not _same(r, os.path.join(src, r), os.path.join(dst, r))]
+        try:
+            prev = set(json.load(open(os.path.join(dst, ".nl_sync.json"), encoding="utf-8")).get("files") or [])
+        except Exception:                                        # noqa: BLE001 -- no earlier sync of this job
+            prev = None
+        gone = [r for r in d_files if r not in set(s_files)]
+        removed = [r for r in gone if prev is not None and r in prev]
+        kept = [r for r in gone if r not in set(removed)]
+        if kept:
+            print("kept     %s: %d file(s) not at the source and not brought in by a sync (%s%s)" % (
+                name, len(kept), ", ".join(kept[:5]), ", ..." if len(kept) > 5 else ""))
+        extra = []
+        for r in changed:
+            if _nl_written(r):
+                for suf in CK.NL_BACKUP_SUFFIXES:
+                    if os.path.exists(os.path.join(dst, r + suf)):
+                        extra.append(r + suf)
+        summary[name] = dict(added=added, changed=changed, removed=removed + extra)
+        quiet = bool(getattr(args, "quiet", False))
+        for r in added + changed:
+            if not quiet:
+                print("%-8s %s/%s" % ("add" if r in added else "update", name, r))
+            if not dry:
+                os.makedirs(os.path.dirname(os.path.join(dst, r)), exist_ok=True)
+                tmp = os.path.join(dst, r) + ".nl_sync_tmp"
+                shutil.copy2(os.path.join(src, r), tmp)
+                os.replace(tmp, os.path.join(dst, r))
+        for r in removed + extra:                                # removals are always listed
+            print("%-8s %s/%s" % ("remove", name, r))
+            if not dry:
+                os.remove(os.path.join(dst, r))
+        if not dry and (added or changed or removed or extra or not os.path.exists(os.path.join(dst, ".nl_sync.json"))):
+            os.makedirs(dst, exist_ok=True)
+            json.dump(dict(source=src, time=_now(), added=added, changed=changed, removed=removed + extra,
+                           inputs=CK.hr_digest(dst), files=s_files),
+                      open(os.path.join(dst, ".nl_sync.json"), "w", encoding="utf-8"), indent=1)
+        print("%s: %d added, %d updated, %d removed%s" % (name, len(added), len(changed), len(removed) + len(extra),
+                                                         " (dry run)" if dry else ""))
+    others = sorted(x for x in (os.listdir(dst_root) if os.path.isdir(dst_root) else [])
+                    if os.path.isdir(os.path.join(dst_root, x)) and x not in names and not args.jobs)
+    if others:
+        print("left alone (not in the source): %s" % ", ".join(others))
+    return summary
 
 
 def main(argv=None):
@@ -329,6 +828,11 @@ def main(argv=None):
     p.add_argument("--analyses", nargs="+", default=["pushover", "nlrha", "ddm"], choices=["pushover", "nlrha", "ddm"])
     p.add_argument("--engine"); p.add_argument("--python", default=DEFAULT_PY); p.add_argument("--heavy", default=DEFAULT_HEAVY)
     p.add_argument("--force", action="store_true")
+    p.add_argument("--speed-factor", type=float, default=None,
+                   help="this machine against the reference machine for the DDM time limit (the owner's PC 1.0, the "
+                        "2-core box 1.6); default $SNL_SPEED_FACTOR or 1.0")
+    p.add_argument("--job-args", nargs="+", default=[], metavar="JOB:KIND=ARGS",
+                   help="per-job options, e.g. 'IN_Ex19*:pushover=--dirs Y --tail none' (JOB and KIND take * wildcards)")
     n = sub.add_parser("next"); n.add_argument("--queue", required=True)
     n.add_argument("--budget", type=float, default=6900.0, help="seconds this call may take (default 6 900: under 2 h)")
     n.add_argument("--max-steps", type=int, default=0); n.add_argument("--dry-run", action="store_true")
@@ -336,6 +840,10 @@ def main(argv=None):
     s = sub.add_parser("status"); s.add_argument("--queue", required=True)
     u = sub.add_parser("unstall"); u.add_argument("--queue", required=True)
     g = u.add_mutually_exclusive_group(required=True); g.add_argument("--step"); g.add_argument("--job")
+    rf = sub.add_parser("refresh"); rf.add_argument("--queue", required=True); rf.add_argument("--engine")
+    rf.add_argument("--include-code", action="store_true"); rf.add_argument("--dry-run", action="store_true")
+    sy = sub.add_parser("sync"); sy.add_argument("--from", dest="src", required=True); sy.add_argument("--to", dest="dst", required=True)
+    sy.add_argument("--jobs", nargs="+", default=[]); sy.add_argument("--dry-run", action="store_true")
     x = sub.add_parser("_exec", help="internal: one chunk inside the heavy slot")
     x.add_argument("--deadline", required=True); x.add_argument("--chunk", required=True); x.add_argument("--stamp", required=True)
     x.add_argument("command", nargs=argparse.REMAINDER)
@@ -343,8 +851,8 @@ def main(argv=None):
     if a.cmd == "_exec":
         a.command = a.command[1:] if a.command[:1] == ["--"] else a.command
         return _exec(a)
-    r = {"plan": plan, "next": next_steps, "status": status, "unstall": unstall}[a.cmd](a)
-    return r if isinstance(r, int) else 0          # plan / status return the queue (for callers), the CLI exits 0
+    r = {"plan": plan, "next": next_steps, "status": status, "unstall": unstall, "refresh": refresh, "sync": sync}[a.cmd](a)
+    return r if isinstance(r, int) else 0          # plan / status / refresh / sync return data (for callers); exit 0
 
 
 if __name__ == "__main__":
