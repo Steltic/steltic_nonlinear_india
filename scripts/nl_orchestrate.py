@@ -614,8 +614,10 @@ def _same(rel, a, b):
 
 def sync(args):
     """Stage 2: bring the HR files of the gold (`--from`, a folder of job folders; read only) into the work tree
-    (`--to`). Per job: HR files new or changed at the source are copied (with their times), HR files no longer at the
-    source are removed; NL outputs (NL_OUTPUTS, at any depth) are never copied, replaced or removed. When
+    (`--to`). Per job: HR files new or changed at the source are copied (with their times); a file is removed only
+    when the previous sync of the job brought it in (its .nl_sync.json lists it) and the source no longer has it, so
+    an NL file under a name NL_OUTPUTS does not know (a log, a 'before' copy) is never removed; NL outputs
+    (NL_OUTPUTS, at any depth) are never copied, replaced or removed. When
     design/calc_package.json changes at the source the NL's DDM block in the work copy goes with it (the DDM writes it
     again) and so does the stale backup beside it. A job folder only in the work tree is left alone. Each synced job
     gets .nl_sync.json (source, time, what changed, the input digest). `refresh` then finds the stale steps."""
@@ -636,7 +638,16 @@ def sync(args):
         s_files, d_files = _hr_files(src), (_hr_files(dst) if os.path.isdir(dst) else [])
         added = [r for r in s_files if r not in set(d_files)]
         changed = [r for r in s_files if r in set(d_files) and not _same(r, os.path.join(src, r), os.path.join(dst, r))]
-        removed = [r for r in d_files if r not in set(s_files)]
+        try:
+            prev = set(json.load(open(os.path.join(dst, ".nl_sync.json"), encoding="utf-8")).get("files") or [])
+        except Exception:                                        # noqa: BLE001 -- no earlier sync of this job
+            prev = None
+        gone = [r for r in d_files if r not in set(s_files)]
+        removed = [r for r in gone if prev is not None and r in prev]
+        kept = [r for r in gone if r not in set(removed)]
+        if kept:
+            print("kept     %s: %d file(s) not at the source and not brought in by a sync (%s%s)" % (
+                name, len(kept), ", ".join(kept[:5]), ", ..." if len(kept) > 5 else ""))
         extra = []
         for r in changed:
             for f, _ in CK.NL_WRITES_IN_DESIGN:
@@ -658,7 +669,8 @@ def sync(args):
         if not dry and (added or changed or removed or extra or not os.path.exists(os.path.join(dst, ".nl_sync.json"))):
             os.makedirs(dst, exist_ok=True)
             json.dump(dict(source=src, time=_now(), added=added, changed=changed, removed=removed + extra,
-                           inputs=CK.hr_digest(dst)), open(os.path.join(dst, ".nl_sync.json"), "w", encoding="utf-8"), indent=1)
+                           inputs=CK.hr_digest(dst), files=s_files),
+                      open(os.path.join(dst, ".nl_sync.json"), "w", encoding="utf-8"), indent=1)
         print("%s: %d added, %d updated, %d removed%s" % (name, len(added), len(changed), len(removed) + len(extra),
                                                          " (dry run)" if dry else ""))
     others = sorted(x for x in (os.listdir(dst_root) if os.path.isdir(dst_root) else [])

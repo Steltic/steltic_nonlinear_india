@@ -414,7 +414,9 @@ def test_sync_brings_the_hr_files_and_leaves_the_nl_outputs(tmp_path):
                  "IN_ExS/pushover/pushover_package.json": "nl", "IN_ExS/nl_hr_gravity.json": "nl",
                  "IN_ExS/ddm_results.json": "nl", "IN_ExS/hinge_params_collected.json": "nl", "IN_ExS/nl_plan.json": "nl",
                  "IN_ExS/nl_checkpoints/ddm/a.ckpt": "nl", "IN_ExS/nl_orchestrate_ddm.log": "nl",
-                 "IN_ExS/.nl_orchestrate_ddm.stamp": "nl", "IN_ExW/cfg.py": "work only\n"})
+                 "IN_ExS/.nl_orchestrate_ddm.stamp": "nl", "IN_ExW/cfg.py": "work only\n",
+                 "IN_ExS/pushover_before/pushover_package.json": "nl, a name sync does not know",
+                 "IN_ExS/regress_pushover.log": "nl, a name sync does not know"})
     gold0 = _snapshot(gold)
     nl = {k: v for k, v in _snapshot(work).items() if NO._is_nl(k)}
     s = NO.sync(ns(src=str(gold), dst=str(work), jobs=[], dry_run=True))
@@ -425,14 +427,22 @@ def test_sync_brings_the_hr_files_and_leaves_the_nl_outputs(tmp_path):
     w = _snapshot(work)
     assert _snapshot(gold) == gold0                                             # the gold is only read
     assert w["IN_ExS/cfg.py"] == b"cfg = 2\n" and w["IN_ExS/units/stem/cfg.py"] == b"u = 2\n"
-    assert w["IN_ExS/design/member_schedule.csv"] == b"new\n" and "IN_ExS/old_hr.json" not in w
-    assert s["IN_ExS"]["removed"] == ["old_hr.json"]
+    assert w["IN_ExS/design/member_schedule.csv"] == b"new\n"
+    # nothing is removed without an earlier sync record: old_hr.json and the unknown NL files stay
+    assert s["IN_ExS"]["removed"] == [] and w["IN_ExS/old_hr.json"] == b"{}"
+    assert w["IN_ExS/pushover_before/pushover_package.json"] and w["IN_ExS/regress_pushover.log"]
     assert all(w[k] == v for k, v in nl.items())                                # NL outputs untouched
     assert "ddm_analysis" in json.loads(w["IN_ExS/design/calc_package.json"])   # the same HR content: kept as it is
     assert "IN_ExS/design/calc_package.json.pre_ddm.bak" in w
     assert "IN_ExS/__pycache__/x.pyc" not in w and w["IN_ExN/cfg.py"] == b"n\n" and w["IN_ExW/cfg.py"] == b"work only\n"
     m = json.load(open(work / "IN_ExS" / ".nl_sync.json"))
-    assert m["source"] == str(gold / "IN_ExS") and m["inputs"]
+    assert m["source"] == str(gold / "IN_ExS") and m["inputs"] and "design/member_schedule.csv" in m["files"]
+    # an HR file the gold drops after a sync is removed; files the sync never brought in stay
+    os.remove(gold / "IN_ExS" / "design" / "member_schedule.csv")
+    s = NO.sync(ns(src=str(gold), dst=str(work), jobs=["IN_ExS"], dry_run=False))
+    w = _snapshot(work)
+    assert s["IN_ExS"]["removed"] == ["design/member_schedule.csv"] and "IN_ExS/design/member_schedule.csv" not in w
+    assert w["IN_ExS/old_hr.json"] == b"{}" and w["IN_ExS/regress_pushover.log"]
     # the HR calc package changes: the gold's copy comes in, the DDM block and its stale backup go
     _tree(gold, {"IN_ExS/design/calc_package.json": json.dumps({"members": [1, 2]})})
     s = NO.sync(ns(src=str(gold), dst=str(work), jobs=["IN_ExS"], dry_run=False))

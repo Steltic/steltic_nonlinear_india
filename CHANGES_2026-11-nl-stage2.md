@@ -81,7 +81,9 @@ therefore do not match any more, and stage 2 starts every analysis afresh.
   compute-budget limit. `plan` prints the resulting limit.
 - **`sync --from <gold jobs> --to <work jobs>`** is pure Python; rsync is not on the box. For each job it:
   - copies HR files that are new or changed at the source, keeping their file times;
-  - removes HR files that are no longer at the source;
+  - removes a file only when the previous sync of the job brought it in (`.nl_sync.json` lists it) and the source no
+    longer has it. NL files under names the list does not know (a log, a "before" copy) are therefore never removed.
+    A dry run against the sandbox copies found such files, for example `pushover_before/` and `regress_*.log`;
   - never copies, replaces or removes NL outputs (`NL_OUTPUTS`, matched at any depth, so a unit's own outputs are kept
     too);
   - handles `design/calc_package.json` by HR content. If only the DDM block differs, the work copy is kept. If the HR
@@ -100,7 +102,8 @@ therefore do not match any more, and stage 2 starts every analysis afresh.
 - `--job-args` and `--speed-factor`;
 - `refresh` after an HR change, an engine change (states the same, then different), a code change, and a partly run
   step;
-- `sync` (dry run, NL outputs kept, the calc package, removals, the gold left unchanged), and `sync` followed by
+- `sync` (dry run, NL outputs kept, unknown NL files kept, the calc package, removals only of files a sync brought
+  in, the gold left unchanged), and `sync` followed by
   `refresh`.
 
 Full suite, with `STELTIC_ENGINE_DIR` set to the HR engine: 530 passed, 6 skipped. On `main` it was 515 passed,
