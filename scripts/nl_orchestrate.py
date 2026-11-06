@@ -454,7 +454,10 @@ def run_step(q, d, s, remaining, full_chunk=None, dry=False, runner=None):
     s.pop("stalled_reason", None)
     if rc == 0:
         s["state"] = "done"
-        s["fingerprint"] = fingerprint(d, s)                     # stage 2: what the finished step read
+        try:
+            s["fingerprint"] = fingerprint(d, s)                 # stage 2: what the finished step read
+        except Exception as ex:                                   # noqa: BLE001 -- never lose the finished state
+            s["fingerprint"] = dict(error="%s: %s" % (type(ex).__name__, ex))
         s.pop("code_changed", None)
         if s["kind"] == "gravity":
             reconcile_rechecks(d, s["job"])
