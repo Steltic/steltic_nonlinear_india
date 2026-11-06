@@ -396,8 +396,8 @@ SECTION_TABLES = ("is808_shapes.csv", "is1161_tubes.csv", "aisc_shapes.csv")
 
 
 def hr_input_files(job) -> list:
-    """(name relative to the job, path) of every input file of the job (HR_INPUT_FILES, the building's nl_plan.json for
-    a unit as '../nl_plan.json', and every file under design/ in sorted order, the NL backups left out). Files that are
+    """(name relative to the job, path) of every input file of the job (HR_INPUT_FILES, the parent folder's nl_plan.json
+    as '../nl_plan.json', and every file under design/ in sorted order, the NL backups left out). Files that are
     not there are listed too: a file that appears or disappears changes the digest."""
     job = os.path.normpath(str(job))
     out = [(rel, os.path.join(job, rel)) for rel in HR_INPUT_FILES]

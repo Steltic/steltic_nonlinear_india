@@ -115,7 +115,7 @@ def _keys(tmp_path, job, monkeypatch):
 
 def test_every_hr_input_is_in_the_journal_and_cache_keys(tmp_path, monkeypatch):
     """design/*, the load plan, the IS 1893 calculation, the design of record, the NL plans (the unit's and the
-    building's) change all three keys; the site hazard changes the NLRHA record key; the DDM's own block in
+    parent folder's) change all three keys; the site hazard changes the NLRHA record key; the DDM's own block in
     design/calc_package.json and its backup change nothing."""
     from snl import checkpoint as CK
     monkeypatch.setenv("PYTHONHASHSEED", "0")

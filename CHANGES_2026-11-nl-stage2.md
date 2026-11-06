@@ -37,7 +37,7 @@ therefore do not match any more, and stage 2 starts every analysis afresh.
   - `model_opensees.py`, `cfg.py` and `load_plan.json`;
   - `seismic_calc.json` and `design_of_record.json`;
   - every file under `design/`;
-  - the NL plan (the unit's, and its building's as `../nl_plan.json`);
+  - the NL plan (the job's, and the parent folder's as `../nl_plan.json`, as the fy reading takes them);
   - `hinge_params_collected.json`.
   A file that appears or disappears also changes the digest.
 - The pushover journal, the DDM journal and the NLRHA record cache all use this digest together with the HR gravity
