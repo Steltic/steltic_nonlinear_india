@@ -95,7 +95,7 @@ def _job(tmp_path, name="job"):
     (job / "cfg.py").write_text("cfg = {}\n")
     (job / "load_plan.json").write_text('{"cases": []}')
     (job / "design" / "member_schedule.csv").write_text("tag,section\n1,ISMB300\n")
-    (job / "design" / "calc_package.json").write_text(json.dumps({"members": [1]}))
+    (job / "design" / "calc_package.json").write_text(json.dumps({"members": [1], "units": "kN"}, indent=2))   # as HR
     return job
 
 
@@ -148,10 +148,10 @@ def test_every_hr_input_is_in_the_journal_and_cache_keys(tmp_path, monkeypatch):
     assert k[0] != base[0] and k[1:] == base[1:]                            # read by the NLRHA only
     p.unlink()
     cp = job / "design" / "calc_package.json"
-    cp.write_text(json.dumps({"members": [1], "ddm_analysis": {"lambda_u": 1.4}}, indent=1))   # the DDM's own write
+    cp.write_text(json.dumps({"units": "kN", "members": [1], "ddm_analysis": {"lambda_u": 1.4}}, indent=1))   # the DDM's write
     (job / "design" / "calc_package.json.pre_ddm.bak").write_text("{}")
     assert _keys(tmp_path, job, monkeypatch) == base
-    cp.write_text(json.dumps({"members": [1, 2], "ddm_analysis": {"lambda_u": 1.4}}))          # an HR change in it
+    cp.write_text(json.dumps({"members": [1, 2], "units": "kN", "ddm_analysis": {"lambda_u": 1.4}}))   # an HR change
     assert all(a != b for a, b in zip(_keys(tmp_path, job, monkeypatch), base))
 
 
@@ -312,7 +312,7 @@ def test_refresh_resets_a_job_whose_hr_inputs_changed(tmp_path, monkeypatch):
     assert NO.refresh(ns(queue=q, engine=None, include_code=False, dry_run=False)) == {}
     # the DDM's own write into design/calc_package.json is not an input change
     cp = a / "design" / "calc_package.json"
-    cp.write_text(json.dumps(dict(json.load(open(cp)), ddm_analysis={"x": 1})))
+    cp.write_text(json.dumps(dict(json.load(open(cp)), ddm_analysis={"x": 1}), indent=1))   # as report_ddm.write_block
     assert NO.refresh(ns(queue=q, engine=None, include_code=False, dry_run=False)) == {}
 
 
@@ -404,11 +404,12 @@ def test_sync_brings_the_hr_files_and_leaves_the_nl_outputs(tmp_path):
     import nl_orchestrate as NO
     gold, work = tmp_path / "gold", tmp_path / "work"
     _tree(gold, {"IN_ExS/cfg.py": "cfg = 2\n", "IN_ExS/model_opensees.py": "# m\n",
-                 "IN_ExS/design/calc_package.json": json.dumps({"members": [1]}),
+                 "IN_ExS/design/calc_package.json": json.dumps({"members": [1], "units": "kN"}, indent=2),
                  "IN_ExS/design/member_schedule.csv": "new\n", "IN_ExS/units/stem/cfg.py": "u = 2\n",
                  "IN_ExS/__pycache__/x.pyc": "", "IN_ExN/cfg.py": "n\n"})
     _tree(work, {"IN_ExS/cfg.py": "cfg = 1\n", "IN_ExS/model_opensees.py": "# m\n", "IN_ExS/old_hr.json": "{}",
-                 "IN_ExS/design/calc_package.json": json.dumps({"members": [1], "ddm_analysis": {"l": 1}}),
+                 "IN_ExS/design/calc_package.json": json.dumps({"units": "kN", "members": [1], "ddm_analysis": {"l": 1}},
+                                                               indent=1),
                  "IN_ExS/design/calc_package.json.pre_ddm.bak": "{}", "IN_ExS/design/member_schedule.csv": "old\n",
                  "IN_ExS/units/stem/cfg.py": "u = 1\n", "IN_ExS/units/stem/pushover/r.json": "nl",
                  "IN_ExS/pushover/pushover_package.json": "nl", "IN_ExS/nl_hr_gravity.json": "nl",

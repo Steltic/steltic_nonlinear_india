@@ -417,7 +417,9 @@ def hr_input_files(job) -> list:
 
 def hr_content(job, rel, path) -> bytes:
     """The bytes of one input file as the digest sees them: a file the NL writes a block into (design/calc_package.json)
-    without that block, so the DDM's own write is not an input change; b'<missing>' when the file is not there."""
+    as its JSON content without that block, in one canonical form whether the block is there or not (the DDM rewrites
+    the whole file with its own indentation), so the DDM's own write is not an input change; b'<missing>' when the
+    file is not there."""
     if not os.path.isfile(path):
         return b"<missing>"
     raw = open(path, "rb").read()
@@ -426,8 +428,8 @@ def hr_content(job, rel, path) -> bytes:
             try:
                 import json as _json
                 d = _json.loads(raw.decode("utf-8"))
-                if isinstance(d, dict) and key in d:
-                    d.pop(key)
+                if isinstance(d, dict):
+                    d.pop(key, None)
                     return _json.dumps(d, sort_keys=True, ensure_ascii=False).encode("utf-8")
             except Exception:                            # noqa: BLE001 -- unreadable: the bytes as they are
                 pass
